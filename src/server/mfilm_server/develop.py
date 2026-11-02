@@ -1,0 +1,226 @@
+# SPDX-License-Identifier: GPL-2.0-only
+"""mfilm-develop: one RAW/DNG -> film JPEG + provenance sidecar (docs/05, docs/06).
+
+    mfilm-develop --input IMG.DNG --profile portra400 --output out.jpg [--recipe r.json] [--json]
+
+Pipeline: LibRaw (rawpy) decode -> linear sRGB -> shared C film core ->
+optional crop/downscale (never upscale) -> 8-bit sRGB JPEG with ICC.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import io
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+
+from . import core
+from .ids import frame_seed, render_id, sha256_file
+
+RAW_ADAPTER_VERSION = "rawpy-libraw-v1"
+INPUT_NORMALIZATION = "mfilm-linear-rgb-v1"
+DEMOSAIC = {"reference": "AHD", "fast": "LINEAR"}
+
+
+class DevelopError(Exception):
+    def __init__(self, code: str, detail: str = ""):
+        super().__init__(f"{code}: {detail}")
+        self.code, self.detail = code, detail
+
+
+def core_commit() -> str:
+    try:
+        rev = subprocess.run(["git", "-C", str(core.REPO), "rev-parse", "HEAD"], capture_output=True, text=True,
+                             check=True).stdout.strip()
+        dirty = subprocess.run(["git", "-C", str(core.REPO), "status", "--porcelain", "src/shared/film_core"],
+                               capture_output=True, text=True).stdout.strip()
+        return rev + ("-dirty" if dirty else "")
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def default_recipe(profile: str, bundle_hash: str) -> dict:
+    return {"schema_version": 1, "recipe_id": f"default-{profile}-v1", "film_profile_id": profile,
+            "profile_bundle_hash": bundle_hash, "film_core_abi_version": core.abi_version(),
+            "input_normalization_version": INPUT_NORMALIZATION, "white_balance_mode": "daylight",
+            "demosaic_mode": "reference", "exposure_compensation_ev": 0.0, "grain_seed_mode": "derived-per-frame",
+            "user_seed": 0, "look_controls": {"grain_scale": 1.0, "halation_scale": 1.0, "softness_scale": 1.0},
+            "output_spec": {"format": "image/jpeg", "colorspace": "sRGB", "width": 0, "height": 0,
+                            "jpeg_quality": 92, "orientation_policy": "normalize-pixels"}}
+
+
+def decode_raw(path: Path, wb_mode: str, demosaic: str) -> np.ndarray:
+    import rawpy
+    try:
+        raw = rawpy.imread(str(path))
+    except (rawpy.LibRawError, OSError) as e:
+        raise DevelopError("BAD_DNG", str(e)) from None
+    with raw:
+        if wb_mode not in ("as-shot", "daylight"):
+            raise DevelopError("UNSUPPORTED_RECIPE", f"white_balance_mode={wb_mode}")
+        try:
+            algo = getattr(rawpy.DemosaicAlgorithm, DEMOSAIC[demosaic])
+        except KeyError:
+            raise DevelopError("UNSUPPORTED_RECIPE", f"demosaic_mode={demosaic}") from None
+        img = raw.postprocess(gamma=(1, 1), no_auto_bright=True, output_bps=16, user_wb=None,
+                              use_camera_wb=wb_mode == "as-shot", use_auto_wb=False,
+                              output_color=rawpy.ColorSpace.sRGB, highlight_mode=rawpy.HighlightMode.Clip,
+                              demosaic_algorithm=algo)
+    return img.astype(np.float32) / 65535.0
+
+
+def fit_output(img: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Centre-crop to the requested aspect, then downscale. Never upscale."""
+    from PIL import Image
+    h, w, _ = img.shape
+    if not width and not height:
+        return img
+    if width > w or height > h:
+        raise DevelopError("OUTPUT_LARGER_THAN_SOURCE", f"requested {width}x{height}, source {w}x{h}")
+    if width * h != height * w:
+        if width * h > height * w:
+            ch = round(w * height / width)
+            y0 = (h - ch) // 2
+            img = img[y0:y0 + ch]
+        else:
+            cw = round(h * width / height)
+            x0 = (w - cw) // 2
+            img = img[:, x0:x0 + cw]
+    if img.shape[1] == width and img.shape[0] == height:
+        return img
+    chans = [np.asarray(Image.fromarray(img[..., c], "F").resize((width, height), Image.LANCZOS)) for c in range(3)]
+    return np.clip(np.stack(chans, -1), 0, 1)
+
+
+def srgb_icc() -> bytes:
+    """LittleCMS sRGB profile with its creation date and profile ID zeroed,
+    so identical renders give identical bytes."""
+    from PIL import ImageCms
+    icc = bytearray(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+    icc[24:36] = bytes(12)          # dateTimeNumber
+    icc[84:100] = bytes(16)         # profile ID (MD5), optional: 0 = not computed
+    return bytes(icc)
+
+
+def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str) -> None:
+    from PIL import Image
+    px = (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
+    icc = srgb_icc()
+    im = Image.fromarray(px, "RGB")
+    exif = Image.Exif()
+    exif[0x0131] = "M-Film CHDK Edition (mfilm-develop)"     # Software
+    exif[0x010E] = comment                                    # ImageDescription
+    tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
+    im.save(tmp, "JPEG", quality=quality, icc_profile=icc, exif=exif, optimize=True)
+    with Image.open(tmp) as chk:                             # decode back before promoting
+        chk.load()
+        if chk.size != (px.shape[1], px.shape[0]):
+            tmp.unlink()
+            raise DevelopError("OUTPUT_VALIDATION_FAILED", f"{chk.size}")
+    os.replace(tmp, out)
+
+
+def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict | None,
+            device_id: str | None = None, roll_id: str | None = None, frame_id: str | None = None,
+            bundle: core.Bundle | None = None) -> dict:
+    bundle = bundle or core.Bundle()
+    if recipe is None:
+        if not profile:
+            raise DevelopError("USAGE", "--profile or --recipe required")
+        recipe = default_recipe(profile, bundle.sha256)
+    elif profile and profile != recipe["film_profile_id"]:
+        raise DevelopError("USAGE", "--profile disagrees with the recipe")
+    profile = recipe["film_profile_id"]
+    if recipe.get("profile_bundle_hash", "").lower() != bundle.sha256:
+        raise DevelopError("PROFILE_BUNDLE_MISMATCH",
+                           f"recipe wants {recipe.get('profile_bundle_hash')}, available {bundle.sha256}")
+    if profile not in bundle.keys:
+        raise DevelopError("UNSUPPORTED_PROFILE", profile)
+    if recipe.get("grain_seed_mode", "derived-per-frame") != "derived-per-frame":
+        raise DevelopError("UNSUPPORTED_RECIPE", f"grain_seed_mode={recipe.get('grain_seed_mode')}")
+    src_sha, src_bytes = sha256_file(input_path)
+    device_id = device_id or "standalone"
+    roll_id = roll_id or "standalone"
+    frame_id = frame_id or src_sha
+    seed = frame_seed(device_id, roll_id, frame_id, profile, recipe["recipe_id"], int(recipe.get("user_seed", 0)))
+
+    t0 = dt.datetime.now(dt.timezone.utc)
+    lin = decode_raw(input_path, recipe.get("white_balance_mode", "as-shot"), recipe.get("demosaic_mode", "reference"))
+    look = recipe.get("look_controls", {})
+    img, scanner_ev = bundle.develop(profile, lin, seed=seed, grain_scale=look.get("grain_scale", 1.0),
+                                     halation_scale=look.get("halation_scale", 1.0),
+                                     softness_scale=look.get("softness_scale", 1.0),
+                                     exposure_ev=recipe.get("exposure_compensation_ev", 0.0))
+    spec = recipe.get("output_spec", {})
+    if spec.get("format", "image/jpeg") != "image/jpeg" or spec.get("colorspace", "sRGB") != "sRGB":
+        raise DevelopError("UNSUPPORTED_RECIPE", "only image/jpeg sRGB output")
+    img = fit_output(img, int(spec.get("width") or 0), int(spec.get("height") or 0))
+    out_h, out_w = img.shape[:2]
+    out_spec = dict(spec, width=out_w, height=out_h)
+    commit = core_commit()
+    rid = render_id(original_sha256=src_sha, recipe=recipe, film_core_version=f"{commit}/abi{core.abi_version()}",
+                    profile_bundle_hash=bundle.sha256, output_spec=out_spec,
+                    input_normalization_version=INPUT_NORMALIZATION)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    write_jpeg(img, output, int(spec.get("jpeg_quality", 92)), f"{profile} render {rid[:16]}")
+    t1 = dt.datetime.now(dt.timezone.utc)
+    prov = {
+        "render_id": rid, "film_profile_id": profile, "profile_bundle_hash": bundle.sha256,
+        "film_core_git_commit": commit, "film_core_abi_version": core.abi_version(),
+        "recipe_schema_version": recipe.get("schema_version", 1), "recipe": recipe, "grain_seed": f"{seed:016x}",
+        "raw_adapter_version": RAW_ADAPTER_VERSION, "demosaic_mode": recipe.get("demosaic_mode", "reference"),
+        "wb_mode": recipe.get("white_balance_mode", "as-shot"), "scanner_ev": round(scanner_ev, 4),
+        "source_width": int(lin.shape[1]), "source_height": int(lin.shape[0]),
+        "output_width": out_w, "output_height": out_h, "jpeg_quality": int(spec.get("jpeg_quality", 92)),
+        "developed_by": "linux", "development_timestamp": t1.isoformat(timespec="seconds"),
+        "elapsed_s": round((t1 - t0).total_seconds(), 3), "original_sha256": src_sha, "original_bytes": src_bytes,
+        "device_id": device_id, "roll_id": roll_id, "frame_id": frame_id,
+        "output": str(output), "output_sha256": sha256_file(output)[0],
+    }
+    side = output.with_suffix(output.suffix + ".json")
+    tmp = side.with_name(f".{side.name}.part")
+    tmp.write_text(json.dumps(prov, indent=2) + "\n")
+    os.replace(tmp, side)
+    return prov
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="mfilm-develop", description=__doc__.split("\n")[0])
+    ap.add_argument("--input", required=True, type=Path)
+    ap.add_argument("--output", required=True, type=Path)
+    ap.add_argument("--profile", help="film key, e.g. portra400 (mfilm-develop --list-films)")
+    ap.add_argument("--recipe", type=Path, help="render recipe JSON (contracts/render-recipe.example.json)")
+    ap.add_argument("--device-id"), ap.add_argument("--roll-id"), ap.add_argument("--frame-id")
+    ap.add_argument("--json", action="store_true", help="machine-readable result/error")
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "--list-films":
+        b = core.Bundle()
+        print("\n".join(b.keys))
+        return 0
+    a = ap.parse_args(argv)
+    try:
+        recipe = json.loads(a.recipe.read_text()) if a.recipe else None
+        prov = develop(a.input, a.output, profile=a.profile, recipe=recipe, device_id=a.device_id,
+                       roll_id=a.roll_id, frame_id=a.frame_id)
+    except (DevelopError, core.CoreError) as e:
+        if a.json:
+            print(json.dumps({"ok": False, "error_code": e.code, "detail": e.detail}))
+        else:
+            print(f"mfilm-develop: {e.code}: {e.detail}", file=sys.stderr)
+        return 1
+    if a.json:
+        print(json.dumps({"ok": True, **prov}))
+    else:
+        print(f"{prov['output']}: {prov['output_width']}x{prov['output_height']} {prov['film_profile_id']} "
+              f"in {prov['elapsed_s']} s (render {prov['render_id'][:16]})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

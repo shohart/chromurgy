@@ -2,3 +2,4 @@
 # Re-pin only deliberately; every bump needs a re-run of the parity tests.
 m-film      https://github.com/HNGSeries/M-Film.git   7c6cd7ee78a51182ae211818a59bb1bad80b234c  VERSION=0.1.3, commit 2026-11-02
 chdk-trunk  https://github.com/eoschdk/trunk.git      3d8aa1082ed57a04efa556103e49da751ba1e44c  BUILD_NUMBER=1.7.0, SVN mirror, commit 2026-02-03
+film-luts   https://github.com/YahiaAngelo/Film-Luts.git  af957b631a304e6be94778b96cb3395de3438e9f  MIT, colour LUTs for 63 M-Film stocks

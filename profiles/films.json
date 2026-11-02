@@ -1,0 +1,728 @@
+{
+ "bundle": "mfilm-films.bin",
+ "profile_bundle_hash": "56e7dc7fe8326acb02d14655ceb81095cb8656b3f469d3cbe529911329776e05",
+ "format_version": 1,
+ "grid": 33,
+ "films": [
+  {
+   "key": "portra400",
+   "name": "Kodak Portra 400",
+   "short": "Portra400",
+   "iso": 400,
+   "kind": "neg",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "cinestill800t",
+   "name": "CineStill 800T",
+   "short": "CineStill800T",
+   "iso": 800,
+   "kind": "cine",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "ektar100",
+   "name": "Kodak Ektar 100",
+   "short": "Ektar100",
+   "iso": 100,
+   "kind": "neg",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "gold200",
+   "name": "Kodak Gold 200",
+   "short": "Gold200",
+   "iso": 200,
+   "kind": "neg",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "superia400",
+   "name": "Fujicolor Superia 400",
+   "short": "Superia400",
+   "iso": 400,
+   "kind": "neg",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "velvia50",
+   "name": "Fujichrome Velvia 50",
+   "short": "Velvia50",
+   "iso": 50,
+   "kind": "slide",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "hp5",
+   "name": "Ilford HP5 Plus 400",
+   "short": "HP5",
+   "iso": 400,
+   "kind": "bw",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "trix400",
+   "name": "Kodak Tri-X 400",
+   "short": "TriX400",
+   "iso": 400,
+   "kind": "bw",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "cinestill400t",
+   "name": "CineStill 400T",
+   "short": "CineStill400T",
+   "iso": 400,
+   "kind": "cine",
+   "colour": "model",
+   "lut": null,
+   "lut_wanted_missing": true
+  },
+  {
+   "key": "portra160",
+   "name": "Kodak Portra 160",
+   "short": "Portra160",
+   "iso": 160,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_new/kodak_portra_160.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "portra800",
+   "name": "Kodak Portra 800",
+   "short": "Portra800",
+   "iso": 800,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_new/kodak_portra_800.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "portra160nc",
+   "name": "Kodak Portra 160NC",
+   "short": "Portra160NC",
+   "iso": 160,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_old/kodak_portra_160_nc.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "portra160vc",
+   "name": "Kodak Portra 160VC",
+   "short": "Portra160VC",
+   "iso": 160,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_old/kodak_portra_160_vc.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "portra400nc",
+   "name": "Kodak Portra 400NC",
+   "short": "Portra400NC",
+   "iso": 400,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_old/kodak_portra_400_nc.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "portra400vc",
+   "name": "Kodak Portra 400VC",
+   "short": "Portra400VC",
+   "iso": 400,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_old/kodak_portra_400_vc.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "portra400uc",
+   "name": "Kodak Portra 400UC",
+   "short": "Portra400UC",
+   "iso": 400,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_old/kodak_portra_400_uc.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "elite200",
+   "name": "Kodak Elite Color 200",
+   "short": "EliteColor200",
+   "iso": 200,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/kodak_elite_color_200.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "elite400",
+   "name": "Kodak Elite Color 400",
+   "short": "EliteColor400",
+   "iso": 400,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/kodak_elite_color_400.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "pro160c",
+   "name": "Fujifilm Pro 160C",
+   "short": "Pro160C",
+   "iso": 160,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_new/fuji_160c.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "pro400h",
+   "name": "Fujifilm Pro 400H",
+   "short": "Pro400H",
+   "iso": 400,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_new/fuji_400h.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "pro800z",
+   "name": "Fujifilm Pro 800Z",
+   "short": "Pro800Z",
+   "iso": 800,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_new/fuji_800z.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "reala100",
+   "name": "Fujifilm Reala 100",
+   "short": "Reala100",
+   "iso": 100,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/fuji_superia_reala_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "superia100",
+   "name": "Fujifilm Superia 100",
+   "short": "Superia100",
+   "iso": 100,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_old/fuji_superia_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "superia200",
+   "name": "Fujifilm Superia 200",
+   "short": "Superia200",
+   "iso": 200,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/fuji_superia_200.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "superia800",
+   "name": "Fujifilm Superia 800",
+   "short": "Superia800",
+   "iso": 800,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_old/fuji_superia_800.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "superia1600",
+   "name": "Fujifilm Superia 1600",
+   "short": "Superia1600",
+   "iso": 1600,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_old/fuji_superia_1600.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "xtra800",
+   "name": "Fujifilm X-TRA 800",
+   "short": "XTRA800",
+   "iso": 800,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/fuji_superia_x-tra_800.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "vista200",
+   "name": "Agfa Vista 200",
+   "short": "Vista200",
+   "iso": 200,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/agfa_vista_200.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "ultra100",
+   "name": "Agfa Ultra 100",
+   "short": "Ultra100",
+   "iso": 100,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/agfa_ultra_color_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "redscale100",
+   "name": "Lomography Redscale 100",
+   "short": "Redscale100",
+   "iso": 100,
+   "kind": "neg",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/lomography_redscale_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "velvia100",
+   "name": "Fujifilm Velvia 100",
+   "short": "Velvia100",
+   "iso": 100,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/fuji_velvia_100_generic.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "provia100f",
+   "name": "Fujifilm Provia 100F",
+   "short": "Provia100F",
+   "iso": 100,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/fuji_provia_100f.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "provia400f",
+   "name": "Fujifilm Provia 400F",
+   "short": "Provia400F",
+   "iso": 400,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/fuji_provia_400f.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "provia400x",
+   "name": "Fujifilm Provia 400X",
+   "short": "Provia400X",
+   "iso": 400,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/fuji_provia_400x.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "astia100f",
+   "name": "Fujifilm Astia 100F",
+   "short": "Astia100F",
+   "iso": 100,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/fuji_astia_100f.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "sensia100",
+   "name": "Fujifilm Sensia 100",
+   "short": "Sensia100",
+   "iso": 100,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/fuji_sensia_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "kodachrome25",
+   "name": "Kodak Kodachrome 25",
+   "short": "Kodachrome25",
+   "iso": 25,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/kodak_kodachrome_25.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "kodachrome64",
+   "name": "Kodak Kodachrome 64",
+   "short": "Kodachrome64",
+   "iso": 64,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/kodak_kodachrome_64.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "kodachrome200",
+   "name": "Kodak Kodachrome 200",
+   "short": "Kodachrome200",
+   "iso": 200,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/kodak_kodachrome_200.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "e100gx",
+   "name": "Kodak Ektachrome E100GX",
+   "short": "EktachromeE100GX",
+   "iso": 100,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/kodak_e-100_gx_ektachrome_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "e100vs",
+   "name": "Kodak Ektachrome E100VS",
+   "short": "EktachromeE100VS",
+   "iso": 100,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/kodak_ektachrome_100_vs.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "elitechrome200",
+   "name": "Kodak Elite Chrome 200",
+   "short": "EliteChrome200",
+   "iso": 200,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/kodak_elite_chrome_200.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "elitechrome400",
+   "name": "Kodak Elite Chrome 400",
+   "short": "EliteChrome400",
+   "iso": 400,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/kodak_elite_chrome_400.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "extracolor100",
+   "name": "Kodak ExtraColor 100",
+   "short": "ExtraColor100",
+   "iso": 100,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/kodak_elite_extracolor_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "precisa100",
+   "name": "Agfa Precisa 100",
+   "short": "Precisa100",
+   "iso": 100,
+   "kind": "slide",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/agfa_precisa_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "elite100xpro",
+   "name": "Kodak Elite 100 X-Pro",
+   "short": "Elite100XPro",
+   "iso": 100,
+   "kind": "xpro",
+   "colour": "lut",
+   "lut": "profiles/luts/negative_color/kodak_elite_100_xpro.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "superia200xpro",
+   "name": "Fujifilm Superia 200 X-Pro",
+   "short": "Superia200XPro",
+   "iso": 200,
+   "kind": "xpro",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/fuji_superia_200_xpro.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "xproslide200",
+   "name": "Lomography X-Pro Slide 200",
+   "short": "XProSlide200",
+   "iso": 200,
+   "kind": "xpro",
+   "colour": "lut",
+   "lut": "profiles/luts/colorslide/lomography_x-pro_slide_200.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "tmax100",
+   "name": "Kodak T-MAX 100",
+   "short": "TMAX100",
+   "iso": 100,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/kodak_t-max_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "tmax400",
+   "name": "Kodak T-MAX 400",
+   "short": "TMAX400",
+   "iso": 400,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/kodak_t-max_400.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "tmax3200",
+   "name": "Kodak T-MAX P3200",
+   "short": "TMAXP3200",
+   "iso": 3200,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/kodak_t-max_3200.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "bw400cn",
+   "name": "Kodak BW400CN",
+   "short": "BW400CN",
+   "iso": 400,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/kodak_bw_400_cn.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "hie",
+   "name": "Kodak HIE Infrared",
+   "short": "HIEInfrared",
+   "iso": 400,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/kodak_hie_hs_infra.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "delta100",
+   "name": "Ilford Delta 100",
+   "short": "Delta100",
+   "iso": 100,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/ilford_delta_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "delta400",
+   "name": "Ilford Delta 400",
+   "short": "Delta400",
+   "iso": 400,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/ilford_delta_400.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "delta3200",
+   "name": "Ilford Delta 3200",
+   "short": "Delta3200",
+   "iso": 3200,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/ilford_delta_3200.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "fp4",
+   "name": "Ilford FP4 Plus",
+   "short": "FP4Plus",
+   "iso": 125,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/ilford_fp_4_plus_125.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "panf50",
+   "name": "Ilford Pan F Plus",
+   "short": "PanFPlus",
+   "iso": 50,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/ilford_pan_f_plus_50.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "hps800",
+   "name": "Ilford HPS 800",
+   "short": "HPS800",
+   "iso": 800,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/ilford_hps_800.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "xp2",
+   "name": "Ilford XP2 Super",
+   "short": "XP2Super",
+   "iso": 400,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/ilford_xp_2.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "acros100",
+   "name": "Fujifilm Acros 100",
+   "short": "Acros100",
+   "iso": 100,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/fuji_neopan_acros_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "neopan1600",
+   "name": "Fujifilm Neopan 1600",
+   "short": "Neopan1600",
+   "iso": 1600,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/fuji_neopan_1600.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "apx25",
+   "name": "Agfa APX 25",
+   "short": "APX25",
+   "iso": 25,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/agfa_apx_25.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "apx100",
+   "name": "Agfa APX 100",
+   "short": "APX100",
+   "iso": 100,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/agfa_apx_100.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "retro80s",
+   "name": "Rollei Retro 80S",
+   "short": "Retro80S",
+   "iso": 80,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/rollei_retro_80s.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "retro100",
+   "name": "Rollei Retro 100 Tonal",
+   "short": "Retro100Tonal",
+   "iso": 100,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/rollei_retro_100_tonal.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "ortho25",
+   "name": "Rollei Ortho 25",
+   "short": "Ortho25",
+   "iso": 25,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/rollei_ortho_25.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "ir400",
+   "name": "Rollei Infrared 400",
+   "short": "Infrared400",
+   "iso": 400,
+   "kind": "bw",
+   "colour": "lut",
+   "lut": "profiles/luts/bw/rollei_ir_400.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "kodak2383",
+   "name": "Kodak Vision 2383",
+   "short": "Vision2383",
+   "iso": 200,
+   "kind": "print",
+   "colour": "lut",
+   "lut": "profiles/luts/print/kodak_2383_constlmap.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "kodak2393",
+   "name": "Kodak Vision 2393",
+   "short": "Vision2393",
+   "iso": 200,
+   "kind": "print",
+   "colour": "lut",
+   "lut": "profiles/luts/print/kodak_2393_constlmap.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "fuji3510",
+   "name": "Fujifilm Eterna 3510",
+   "short": "Eterna3510",
+   "iso": 200,
+   "kind": "print",
+   "colour": "lut",
+   "lut": "profiles/luts/print/fuji_3510_constlmap.cube",
+   "lut_wanted_missing": false
+  },
+  {
+   "key": "fuji3513",
+   "name": "Fujifilm Eterna 3513",
+   "short": "Eterna3513",
+   "iso": 200,
+   "kind": "print",
+   "colour": "lut",
+   "lut": "profiles/luts/print/fuji_3513_constlmap.cube",
+   "lut_wanted_missing": false
+  }
+ ]
+}

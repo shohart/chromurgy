@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "recipe_id": "recipe-portra400-demo-v1",
-  "film_profile_id": "kodak-portra-400",
+  "film_profile_id": "portra400",
   "profile_bundle_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "film_core_abi_version": 1,
   "film_core_commit": "UNPINNED_EXAMPLE_REPLACE_WITH_GIT_HASH",
