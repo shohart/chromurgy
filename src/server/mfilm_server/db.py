@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: GPL-2.0-only
+"""SQLite catalog (docs/08 data model) with versioned migrations.
+
+State machines stay separate (docs/04): a roll's server intake state, each
+frame original's state, each render's state, each job and each publication
+have their own column. There is deliberately no single "SYNCED" status.
+"""
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+ROLL_SERVER_STATES = ("RECEIVING", "INPUTS_COMPLETE")
+FRAME_ORIGINAL_STATES = ("DECLARED", "VERIFIED", "ERROR")
+RENDER_STATES = ("WAITING_FOR_INPUTS", "QUEUED", "RUNNING", "COMMITTED", "PUBLISHED",
+                 "FAILED_RETRYABLE", "FAILED_TERMINAL")
+UPLOAD_STATES = ("OPEN", "COMPLETE", "ABORTED")
+PUBLICATION_STATES = ("PENDING", "EXPORTED", "INDEXED", "FAILED")
+
+
+def _enum(col: str, values: tuple[str, ...]) -> str:
+    return f"CHECK ({col} IN ({', '.join(repr(v) for v in values)}))"
+
+
+MIGRATIONS: list[str] = [
+    # 1: initial catalog
+    f"""
+    CREATE TABLE devices (
+        id            TEXT PRIMARY KEY,
+        key_id        TEXT,
+        status        TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'REVOKED')),
+        created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        last_seen_at  TEXT
+    );
+    CREATE TABLE assets (
+        id            INTEGER PRIMARY KEY,
+        sha256        TEXT NOT NULL UNIQUE CHECK (length(sha256) = 64),
+        bytes         INTEGER NOT NULL CHECK (bytes > 0),
+        mime          TEXT NOT NULL,
+        kind          TEXT NOT NULL CHECK (kind IN ('original_dng', 'render_jpeg', 'offline_jpeg', 'manifest')),
+        path          TEXT NOT NULL UNIQUE,
+        created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE TABLE rolls (
+        id                 TEXT NOT NULL,
+        device_id          TEXT NOT NULL REFERENCES devices(id),
+        film_profile_id    TEXT NOT NULL,
+        profile_bundle_hash TEXT NOT NULL,
+        render_recipe_id   TEXT,
+        roll_length        INTEGER NOT NULL CHECK (roll_length IN (12, 24, 36)),
+        expected_frames    INTEGER NOT NULL,
+        camera_state       TEXT NOT NULL,
+        manifest_sha256    TEXT NOT NULL,
+        created_at         TEXT,
+        sealed_at          TEXT,
+        state              TEXT NOT NULL {_enum('state', ROLL_SERVER_STATES)},
+        received_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        PRIMARY KEY (device_id, id)
+    );
+    CREATE TABLE frames (
+        id                 TEXT NOT NULL,
+        device_id          TEXT NOT NULL,
+        roll_id            TEXT NOT NULL,
+        ordinal            INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 36),
+        capture_time       TEXT,
+        declared_sha256    TEXT NOT NULL,
+        declared_bytes     INTEGER NOT NULL,
+        source_path        TEXT NOT NULL,
+        original_asset_id  INTEGER REFERENCES assets(id),
+        original_state     TEXT NOT NULL {_enum('original_state', FRAME_ORIGINAL_STATES)},
+        error_code         TEXT,
+        PRIMARY KEY (device_id, id),
+        UNIQUE (device_id, roll_id, ordinal),
+        FOREIGN KEY (device_id, roll_id) REFERENCES rolls(device_id, id)
+    );
+    CREATE TABLE uploads (
+        id               TEXT PRIMARY KEY,
+        device_id        TEXT NOT NULL REFERENCES devices(id),
+        roll_id          TEXT NOT NULL,
+        frame_id         TEXT,
+        media_role       TEXT NOT NULL,
+        declared_sha256  TEXT NOT NULL,
+        declared_bytes   INTEGER NOT NULL,
+        offset_bytes     INTEGER NOT NULL DEFAULT 0,
+        state            TEXT NOT NULL {_enum('state', UPLOAD_STATES)},
+        updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE TABLE recipes (
+        id               TEXT PRIMARY KEY,
+        json             TEXT NOT NULL,
+        core_revision    TEXT NOT NULL,
+        bundle_hash      TEXT NOT NULL
+    );
+    CREATE TABLE renders (
+        id               TEXT PRIMARY KEY,            -- render_id (sha256)
+        device_id        TEXT NOT NULL,
+        frame_id         TEXT NOT NULL,
+        recipe_id        TEXT NOT NULL REFERENCES recipes(id),
+        output_spec      TEXT NOT NULL,
+        asset_id         INTEGER REFERENCES assets(id),
+        origin           TEXT NOT NULL CHECK (origin IN ('linux', 'camera')),
+        state            TEXT NOT NULL {_enum('state', RENDER_STATES)},
+        FOREIGN KEY (device_id, frame_id) REFERENCES frames(device_id, id)
+    );
+    CREATE TABLE jobs (
+        id               INTEGER PRIMARY KEY,
+        render_id        TEXT NOT NULL REFERENCES renders(id),
+        attempt          INTEGER NOT NULL DEFAULT 0,
+        state            TEXT NOT NULL {_enum('state', RENDER_STATES)},
+        error_code       TEXT,
+        created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        started_at       TEXT,
+        finished_at      TEXT
+    );
+    CREATE TABLE publications (
+        id               INTEGER PRIMARY KEY,
+        render_id        TEXT NOT NULL REFERENCES renders(id),
+        destination      TEXT NOT NULL,
+        status           TEXT NOT NULL {_enum('status', PUBLICATION_STATES)},
+        UNIQUE (render_id, destination)
+    );
+    """,
+]
+
+
+def connect(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(path, isolation_level=None)   # explicit BEGIN/COMMIT
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA synchronous=FULL")
+    return conn
+
+
+def migrate(conn: sqlite3.Connection) -> int:
+    """Apply pending migrations; returns the resulting schema version."""
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    for i, sql in enumerate(MIGRATIONS[version:], start=version + 1):
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for stmt in filter(str.strip, sql.split(";")):
+                conn.execute(stmt)
+            conn.execute(f"PRAGMA user_version = {i}")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        version = i
+    return version
