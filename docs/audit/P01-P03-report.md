@@ -40,6 +40,7 @@ Films: 63 take their colour from the Film-Luts LUT baked into a uint16 table; 9 
 | Card → archive → queue → full-size JPEG → PhotoPrism folder, idempotent, crash recovery, bundle mismatch terminal | `pytest test_worker.py test_publisher.py` | PASS (37 pytest total) |
 | Sync API: idempotent manifest/uploads/finalize, receipts replay, conflicts, device isolation, revocation, hash mismatch 422, offset 409 | `pytest test_api.py` | PASS |
 | Power loss after 100 chunks of a 26 MB original, resume from server offset, develop, return JPEG to camera gallery with hash check | `pytest test_api.py::test_power_loss_resume_develop_and_return`; live run over HTTP with uvicorn + simulator | PASS (resumed with exactly the remaining chunks) |
+| Fresh clone → `scripts/fetch-upstream.sh` → `ci/check.sh` (incl. upstream devtest print + LUT table parity) → bundle rebuild | 2026-11-03 | PASS: 5/5 ctest, 43 pytest **0 skipped**, rebuilt bundle byte-identical (sha `56e7dc7f…`) with numpy 2.4.4 and 2.5.4 |
 | Real PhotoPrism instance indexes the export | — | NOT TESTED (owner consent needed to write into the live library) |
 | SX510 HS DNG | — | BLOCKED: no sample |
 
@@ -61,6 +62,7 @@ Films: 63 take their colour from the Film-Luts LUT baked into a uint16 table; 9 
 
 - Cannot yet claim: anything about SX510 HS files; PhotoPrism indexing on the live instance; that the camera can speak HTTP at all (G5); camera-rendered (offline) uploads (`media_role=camera_render` returns 422 for now); tiled/streaming core for the camera.
 - render_id v2 includes the grain seed (found during the live run: the same DNG developed as two different frames had one id but different grain).
+- Single bundle: the server holds one profile bundle; a roll recorded with another bundle fails terminally with PROFILE_BUNDLE_MISMATCH instead of rendering with its archived bundle (docs/05 option a). Needed before the bundle ever changes.
 - Risks: grain/softness scaling is a modelling choice; LibRaw's scale vs the camera's changes the scanner key by ~0.2 EV; full-size test suite takes ~3 min.
 - Next tasks: (1) camera_render uploads + reconciliation (P06); (2) `mfilmctl reprocess` with new renditions; (3) tiled fixed-point core variant and ARM cross-build (P05 prep); (4) SX510 colour calibration once DNGs exist.
 - Owner action: SX510 HS firmware version and 2–3 CHDK DNGs; consent + path to publish into the live PhotoPrism library.
