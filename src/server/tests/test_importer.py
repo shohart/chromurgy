@@ -92,4 +92,4 @@ def test_cli_json_roundtrip(make_card, store, capsys):
     roll = rows[0]["id"]
     assert main(["verify", roll, "--data-dir", str(store.root)]) == 0
     capsys.readouterr()
-    assert main(["develop", roll]) == 3
+    assert main(["publish", roll]) == 3

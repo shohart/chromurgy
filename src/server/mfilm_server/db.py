@@ -120,6 +120,11 @@ MIGRATIONS: list[str] = [
         UNIQUE (render_id, destination)
     );
     """,
+    # 2: queue lookups
+    """
+    CREATE INDEX jobs_state ON jobs(state, id);
+    CREATE INDEX renders_frame ON renders(device_id, frame_id)
+    """,
 ]
 
 

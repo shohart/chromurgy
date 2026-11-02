@@ -142,6 +142,8 @@ float mf_scanner_ev(const struct mf_film *film, const float *rgb, int w, int h);
 /* ------------------------------------------------------------ flat FFI (mf_api.c)
  * For ctypes callers: plain types only. */
 int mf_abi_version(void);
+/* SHA-256 over the core sources this library was built from */
+const char *mf_core_version(void);
 int mf_bundle_info(const uint8_t *data, size_t len, int *nfilms, uint8_t sha256_out[MF_SHA256_LEN]);
 int mf_bundle_key(const uint8_t *data, size_t len, int i, char *buf, size_t n);
 int mf_develop_simple(const uint8_t *bundle, size_t len, const char *key, float *rgb, int w, int h,

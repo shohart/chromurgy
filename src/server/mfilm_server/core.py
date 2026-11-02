@@ -39,6 +39,7 @@ def _lib() -> ctypes.CDLL:
     lib = ctypes.CDLL(str(p))
     u8p, f32p = ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_float)
     lib.mf_abi_version.restype = ctypes.c_int
+    lib.mf_core_version.restype = ctypes.c_char_p
     lib.mf_bundle_info.argtypes = [u8p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_int), u8p]
     lib.mf_bundle_key.argtypes = [u8p, ctypes.c_size_t, ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
     lib.mf_develop_simple.argtypes = [u8p, ctypes.c_size_t, ctypes.c_char_p, f32p, ctypes.c_int, ctypes.c_int,
@@ -50,6 +51,11 @@ def _lib() -> ctypes.CDLL:
 
 def abi_version() -> int:
     return _lib().mf_abi_version()
+
+
+def core_version() -> str:
+    """Source hash of the film core build (film_core_version in render ids)."""
+    return _lib().mf_core_version().decode()
 
 
 class Bundle:

@@ -8,6 +8,16 @@ set(MF_CORE_SOURCES
   src/mf_table.c
   src/mf_develop.c
   src/mf_api.c)
+# content hash of the film core sources: the "film_core_version" in render
+# identities, stable across commits that do not touch the core
+set(_mf_hashes "")
+foreach(f include/mf_core.h ${MF_CORE_SOURCES})
+  file(SHA256 ${CMAKE_CURRENT_SOURCE_DIR}/${f} _h)
+  string(APPEND _mf_hashes "${f}:${_h}\n")
+endforeach()
+string(SHA256 MF_CORE_SOURCE_HASH "${_mf_hashes}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS include/mf_core.h ${MF_CORE_SOURCES})
+add_compile_definitions(MF_CORE_SOURCE_HASH="${MF_CORE_SOURCE_HASH}")
 add_library(mf_core STATIC ${MF_CORE_SOURCES})
 target_include_directories(mf_core PUBLIC include)
 target_link_libraries(mf_core PUBLIC m)

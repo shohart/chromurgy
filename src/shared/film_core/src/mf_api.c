@@ -7,7 +7,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef MF_CORE_SOURCE_HASH
+#define MF_CORE_SOURCE_HASH "unknown"
+#endif
+
 int mf_abi_version(void) { return MF_CORE_ABI_VERSION; }
+const char *mf_core_version(void) { return MF_CORE_SOURCE_HASH; }
 
 static void set_err(char *err, size_t n, const char *msg)
 {

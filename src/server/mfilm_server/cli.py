@@ -14,7 +14,7 @@ from .importer import as_dict, import_card
 from .store import Store
 
 DEFAULT_ROOT = os.environ.get("MFILM_DATA_DIR", "/var/lib/mfilm")
-NOT_IMPLEMENTED = ("develop", "publish", "device-pair", "reprocess")
+NOT_IMPLEMENTED = ("publish", "device-pair", "reprocess")
 
 
 def _open(root: str) -> tuple[Store, "db.sqlite3.Connection"]:
@@ -43,28 +43,68 @@ def cmd_import_card(args) -> int:
         print(f"not a directory: {card}", file=sys.stderr)
         return 2
     results = import_card(card, store, conn, dry_run=args.dry_run)
+    queued = []
+    if not args.dry_run and not args.no_develop:
+        from . import worker
+        for r in results:
+            if r.status in ("IMPORTED", "UNCHANGED"):
+                try:
+                    queued.append(worker.enqueue_roll(conn, r.roll_id, r.device_id))
+                except Exception as e:          # the import itself stands; report and continue
+                    queued.append({"roll_id": r.roll_id, "error": str(e)})
     lines = [f"{r.status:10} {r.device_id or '-'}/{r.roll_id or '-'}  {r.manifest}"
              + (f"  ({r.detail})" if r.detail else "")
              + "".join(f"\n    #{f.ordinal:02} {f.status}" + (f" {f.error_code}" if f.error_code else "")
                        for f in r.frames if f.status in ("ERROR",) or args.verbose)
              for r in results] or ["no roll manifests found under CHDK/MFILM/ROLLS"]
-    _out(args, {"card": str(card), "dry_run": args.dry_run, "rolls": as_dict(results)}, "\n".join(lines))
+    lines += [f"queued {q['queued']}/{q['frames']} frames of {q['roll_id']}" if "queued" in q
+              else f"not queued {q['roll_id']}: {q['error']}" for q in queued]
+    _out(args, {"card": str(card), "dry_run": args.dry_run, "rolls": as_dict(results), "queued": queued},
+         "\n".join(lines))
     bad = any(r.status in ("INVALID", "CONFLICT", "INCOMPLETE") for r in results)
     return 1 if bad else 0
+
+
+def cmd_develop(args) -> int:
+    from . import worker
+    store, conn = _open(args.data_dir)
+    try:
+        q = worker.enqueue_roll(conn, args.roll_id, args.device)
+    except worker.QueueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    results = worker.run(conn, store) if args.run else []
+    _out(args, {**q, "jobs": [r.__dict__ for r in results]},
+         f"queued {q['queued']}/{q['frames']} frames" + "".join(
+             f"\n  job {r.job_id} {r.state}" + (f" {r.error_code}: {r.detail}" if r.error_code else "")
+             for r in results))
+    return 0 if all(r.state == "COMMITTED" for r in results) else 1
+
+
+def cmd_worker(args) -> int:
+    from . import worker
+    store, conn = _open(args.data_dir)
+    results = worker.run(conn, store, max_jobs=args.max_jobs)
+    _out(args, [r.__dict__ for r in results], "\n".join(
+        f"job {r.job_id} {r.state} {r.render_id[:16]}" + (f" {r.error_code}: {r.detail}" if r.error_code else "")
+        for r in results) or "queue empty")
+    return 0 if all(r.state == "COMMITTED" for r in results) else 1
 
 
 def cmd_list_rolls(args) -> int:
     _, conn = _open(args.data_dir)
     q = ("SELECT r.device_id, r.id, r.film_profile_id, r.state, r.expected_frames, "
-         "SUM(f.original_state='VERIFIED') AS verified FROM rolls r "
-         "LEFT JOIN frames f ON f.device_id=r.device_id AND f.roll_id=r.id ")
+         "SUM(f.original_state='VERIFIED') AS verified, "
+         "(SELECT COUNT(*) FROM renders x JOIN frames y ON y.device_id=x.device_id AND y.id=x.frame_id "
+         " WHERE y.device_id=r.device_id AND y.roll_id=r.id AND x.origin='linux' AND x.state='COMMITTED') AS developed "
+         "FROM rolls r LEFT JOIN frames f ON f.device_id=r.device_id AND f.roll_id=r.id ")
     params: tuple = ()
     if args.state:
         q += "WHERE r.state=? "
         params = (args.state,)
     rows = [dict(r) for r in conn.execute(q + "GROUP BY r.device_id, r.id ORDER BY r.received_at", params)]
     _out(args, rows, "\n".join(f"{r['state']:16} {r['device_id']}/{r['id']}  {r['film_profile_id']}  "
-                               f"{r['verified'] or 0}/{r['expected_frames']} verified" for r in rows) or "no rolls")
+                               f"{r['verified'] or 0}/{r['expected_frames']} verified, {r['developed']} developed" for r in rows) or "no rolls")
     return 0
 
 
@@ -98,7 +138,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("card")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("-v", "--verbose", action="store_true")
+    s.add_argument("--no-develop", action="store_true", help="do not queue complete rolls for development")
     s.set_defaults(fn=cmd_import_card)
+    s = sub.add_parser("develop", parents=[common], help="queue a roll's frames (and --run the worker)")
+    s.add_argument("roll_id")
+    s.add_argument("--device")
+    s.add_argument("--run", action="store_true")
+    s.set_defaults(fn=cmd_develop)
+    s = sub.add_parser("worker", parents=[common], help="develop queued frames until the queue is empty")
+    s.add_argument("--max-jobs", type=int)
+    s.set_defaults(fn=cmd_worker)
     s = sub.add_parser("list-rolls", parents=[common])
     s.add_argument("--state", choices=db.ROLL_SERVER_STATES)
     s.set_defaults(fn=cmd_list_rolls)

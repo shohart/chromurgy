@@ -33,6 +33,17 @@ class DevelopError(Exception):
         self.code, self.detail = code, detail
 
 
+def film_core_version() -> str:
+    return f"{core.core_version()}/abi{core.abi_version()}"
+
+
+def recipe_render_id(original_sha256: str, recipe: dict, bundle_hash: str) -> str:
+    """Identity of the requested rendition (output_spec as requested, 0 = native)."""
+    return render_id(original_sha256=original_sha256, recipe=recipe, film_core_version=film_core_version(),
+                     profile_bundle_hash=bundle_hash, output_spec=recipe.get("output_spec", {}),
+                     input_normalization_version=INPUT_NORMALIZATION)
+
+
 def core_commit() -> str:
     try:
         rev = subprocess.run(["git", "-C", str(core.REPO), "rev-parse", "HEAD"], capture_output=True, text=True,
@@ -161,17 +172,15 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
         raise DevelopError("UNSUPPORTED_RECIPE", "only image/jpeg sRGB output")
     img = fit_output(img, int(spec.get("width") or 0), int(spec.get("height") or 0))
     out_h, out_w = img.shape[:2]
-    out_spec = dict(spec, width=out_w, height=out_h)
     commit = core_commit()
-    rid = render_id(original_sha256=src_sha, recipe=recipe, film_core_version=f"{commit}/abi{core.abi_version()}",
-                    profile_bundle_hash=bundle.sha256, output_spec=out_spec,
-                    input_normalization_version=INPUT_NORMALIZATION)
+    rid = recipe_render_id(src_sha, recipe, bundle.sha256)
     output.parent.mkdir(parents=True, exist_ok=True)
     write_jpeg(img, output, int(spec.get("jpeg_quality", 92)), f"{profile} render {rid[:16]}")
     t1 = dt.datetime.now(dt.timezone.utc)
     prov = {
         "render_id": rid, "film_profile_id": profile, "profile_bundle_hash": bundle.sha256,
-        "film_core_git_commit": commit, "film_core_abi_version": core.abi_version(),
+        "film_core_git_commit": commit, "film_core_version": film_core_version(),
+        "film_core_abi_version": core.abi_version(),
         "recipe_schema_version": recipe.get("schema_version", 1), "recipe": recipe, "grain_seed": f"{seed:016x}",
         "raw_adapter_version": RAW_ADAPTER_VERSION, "demosaic_mode": recipe.get("demosaic_mode", "reference"),
         "wb_mode": recipe.get("white_balance_mode", "as-shot"), "scanner_ev": round(scanner_ev, 4),
