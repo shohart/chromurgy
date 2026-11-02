@@ -70,12 +70,13 @@ Labels: **VERIFIED** = checked in pinned source or by running it here; **PROPOSE
 | Grain noise tile-order independence + stats | `ctest` `noise_tile_order_independent` | PASS (mean 39.7, sd 18935) | — |
 | Manifest contract validation | `pytest tests/test_contracts.py` | PASS | — |
 | SD import idempotency, dry-run, hash mismatch, conflict, traversal, unsealed, non-TIFF | `pytest tests/test_importer.py` | PASS (fake TIFF-magic files, **not real DNGs**) | — |
+| Reproducible from a fresh clone | `git clone` → `scripts/fetch-upstream.sh` → `tools/gen_golden_film_color.sh` → `git diff --exit-code` golden → `ci/check.sh` | PASS (goldens byte-identical, 3/3 ctest, 23/23 pytest) | session log |
 | Any camera behaviour | — | NOT TESTED | — |
 
 ## Constraints and follow-up
 
 - What cannot yet be claimed: no DNG is decoded, no image is developed by this repo, no JPEG is produced, nothing has run on a camera. The tile renderer (`mf_core_process_tile`) returns `MF_E_UNSUPPORTED`. Importer checks only TIFF magic, not DNG structure.
-- Risks: upstream M-Film is very young and changes daily (pin moved on the day of audit); grain/halation are tuned for a 720×480 8-bit print, so scaling them to 4000×3000 is a modelling decision that must be validated visually; SX510 HS DNG colour matrix is known-wrong in CHDK.
+- Risks: "bit-exact" holds for x86-64 + glibc libm; the CHDK build links a different libm (`expf`, `log2f`, `atan2f`), so camera parity will be tolerance-based (docs/05) and may need a LUT/fixed-point reference mode. Upstream M-Film is very young and changes daily (pin moved on the day of audit); grain/halation are tuned for a 720×480 8-bit print, so scaling them to 4000×3000 is a modelling decision that must be validated visually; SX510 HS DNG colour matrix is known-wrong in CHDK.
 - Next implementation tasks:
   1. P01: profile bundle generator from `films/films.py` (all 72 looks), bundle hash, `mf_look_find` over bundle.
   2. P01: port vignette/halation/grain to float, resolution-independent tile stages; golden tests at 720×480 against upstream `stage_finish`.
