@@ -8,17 +8,18 @@ import os
 import sys
 from pathlib import Path
 
+from . import config as config_mod
 from . import db
 from .ids import sha256_file
 from .importer import as_dict, import_card
 from .store import Store
 
 DEFAULT_ROOT = os.environ.get("MFILM_DATA_DIR", "/var/lib/mfilm")
-NOT_IMPLEMENTED = ("publish", "device-pair", "reprocess")
+NOT_IMPLEMENTED = ("device-pair", "reprocess")
 
 
-def _open(root: str) -> tuple[Store, "db.sqlite3.Connection"]:
-    store = Store(Path(root))
+def _open(root: str | None, cfg=None) -> tuple[Store, "db.sqlite3.Connection"]:
+    store = Store(Path(root or (cfg.data_dir if cfg else DEFAULT_ROOT)))
     store.init()
     conn = db.connect(store.db_path)
     db.migrate(conn)
@@ -30,14 +31,14 @@ def _out(args, payload, text: str) -> None:
 
 
 def cmd_init(args) -> int:
-    store, conn = _open(args.data_dir)
+    store, conn = _open(args.data_dir, args.cfg)
     v = conn.execute("PRAGMA user_version").fetchone()[0]
     _out(args, {"data_dir": str(store.root), "schema_version": v}, f"initialised {store.root} (schema v{v})")
     return 0
 
 
 def cmd_import_card(args) -> int:
-    store, conn = _open(args.data_dir)
+    store, conn = _open(args.data_dir, args.cfg)
     card = Path(args.card)
     if not card.is_dir():
         print(f"not a directory: {card}", file=sys.stderr)
@@ -67,7 +68,7 @@ def cmd_import_card(args) -> int:
 
 def cmd_develop(args) -> int:
     from . import worker
-    store, conn = _open(args.data_dir)
+    store, conn = _open(args.data_dir, args.cfg)
     try:
         q = worker.enqueue_roll(conn, args.roll_id, args.device)
     except worker.QueueError as e:
@@ -81,18 +82,76 @@ def cmd_develop(args) -> int:
     return 0 if all(r.state == "COMMITTED" for r in results) else 1
 
 
+def _publish_ready(args, store, conn) -> list[dict]:
+    """Publish every roll whose linux renders are all committed (when PhotoPrism is configured)."""
+    from . import publisher
+    pp = args.cfg.photoprism
+    if not pp.export_dir:
+        return []
+    rolls = conn.execute(
+        "SELECT r.device_id, r.id FROM rolls r WHERE r.state='INPUTS_COMPLETE' AND EXISTS ("
+        " SELECT 1 FROM renders x JOIN frames f ON f.device_id=x.device_id AND f.id=x.frame_id"
+        " WHERE f.roll_id=r.id AND f.device_id=r.device_id AND x.origin='linux' AND x.state='COMMITTED')"
+        " AND NOT EXISTS (SELECT 1 FROM renders x JOIN frames f ON f.device_id=x.device_id AND f.id=x.frame_id"
+        " WHERE f.roll_id=r.id AND f.device_id=r.device_id AND x.origin='linux'"
+        " AND x.state IN ('QUEUED','RUNNING','FAILED_RETRYABLE'))").fetchall()
+    out = []
+    for r in rolls:
+        try:
+            res = publisher.publish_roll(conn, store, pp, r["id"], r["device_id"])
+            out.append({"roll_id": r["id"], "published": [x.__dict__ for x in res]})
+        except publisher.PublishError as e:
+            out.append({"roll_id": r["id"], "error": str(e)})
+    return out
+
+
 def cmd_worker(args) -> int:
-    from . import worker
-    store, conn = _open(args.data_dir)
+    if args.watch:
+        import time
+        rc = 0
+        while True:                   # systemd restarts us on crash; SIGTERM ends the loop
+            rc = _worker_pass(args)
+            time.sleep(args.interval)
+    return _worker_pass(args)
+
+
+def _worker_pass(args) -> int:
+    from . import publisher, worker
+    store, conn = _open(args.data_dir, args.cfg)
     results = worker.run(conn, store, max_jobs=args.max_jobs)
-    _out(args, [r.__dict__ for r in results], "\n".join(
-        f"job {r.job_id} {r.state} {r.render_id[:16]}" + (f" {r.error_code}: {r.detail}" if r.error_code else "")
-        for r in results) or "queue empty")
+    published = [] if args.no_publish else _publish_ready(args, store, conn)
+    exported = [x["render_id"] for p in published for x in p.get("published", []) if x["status"] == "EXPORTED"]
+    indexed = publisher.run_index(conn, args.cfg.photoprism, exported) if exported else (False, "nothing new")
+    _out(args, {"jobs": [r.__dict__ for r in results], "published": published,
+                "index": {"ok": indexed[0], "log": indexed[1]}},
+         "\n".join([f"job {r.job_id} {r.state} {r.render_id[:16]}" + (f" {r.error_code}: {r.detail}" if r.error_code else "")
+                    for r in results] or ["queue empty"])
+         + "".join(f"\npublished {sum(x['status'] == 'EXPORTED' for x in p.get('published', []))} of roll {p['roll_id']}"
+                   + (f" ERROR {p['error']}" if "error" in p else "") for p in published))
+    conn.close()
     return 0 if all(r.state == "COMMITTED" for r in results) else 1
 
 
+def cmd_publish(args) -> int:
+    from . import publisher
+    store, conn = _open(args.data_dir, args.cfg)
+    try:
+        res = publisher.publish_roll(conn, store, args.cfg.photoprism, args.roll_id, args.device)
+    except publisher.PublishError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    idx = (False, "skipped")
+    new = [x.render_id for x in res if x.status == "EXPORTED"]
+    if args.index and new:
+        idx = publisher.run_index(conn, args.cfg.photoprism, new)
+    _out(args, {"published": [x.__dict__ for x in res], "index": {"ok": idx[0], "log": idx[1]}},
+         "\n".join(f"{x.status:8} {x.path}" + (f" ({x.detail})" if x.detail else "") for x in res)
+         or "nothing committed to publish")
+    return 0 if res and all(x.status != "FAILED" for x in res) else 1
+
+
 def cmd_list_rolls(args) -> int:
-    _, conn = _open(args.data_dir)
+    _, conn = _open(args.data_dir, args.cfg)
     q = ("SELECT r.device_id, r.id, r.film_profile_id, r.state, r.expected_frames, "
          "SUM(f.original_state='VERIFIED') AS verified, "
          "(SELECT COUNT(*) FROM renders x JOIN frames y ON y.device_id=x.device_id AND y.id=x.frame_id "
@@ -110,7 +169,7 @@ def cmd_list_rolls(args) -> int:
 
 def cmd_verify(args) -> int:
     """Re-hash every archived original of a roll against the catalog."""
-    store, conn = _open(args.data_dir)
+    store, conn = _open(args.data_dir, args.cfg)
     rows = conn.execute(
         "SELECT f.id, f.ordinal, a.sha256, a.path FROM frames f JOIN assets a ON a.id=f.original_asset_id "
         "WHERE f.roll_id=? ORDER BY f.ordinal", (args.roll_id,)).fetchall()
@@ -129,7 +188,8 @@ def cmd_verify(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--data-dir", default=DEFAULT_ROOT, help="server data root (env MFILM_DATA_DIR)")
+    common.add_argument("--data-dir", default=None, help="server data root (config data_dir, env MFILM_DATA_DIR)")
+    common.add_argument("--config", default=None, help="config.toml (env MFILM_CONFIG)")
     common.add_argument("--json", action="store_true", help="machine-readable output")
     p = argparse.ArgumentParser(prog="mfilmctl")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -145,9 +205,17 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--device")
     s.add_argument("--run", action="store_true")
     s.set_defaults(fn=cmd_develop)
-    s = sub.add_parser("worker", parents=[common], help="develop queued frames until the queue is empty")
+    s = sub.add_parser("worker", parents=[common], help="develop queued frames, then publish finished rolls")
     s.add_argument("--max-jobs", type=int)
+    s.add_argument("--no-publish", action="store_true")
+    s.add_argument("--watch", action="store_true", help="keep polling the queue (service mode)")
+    s.add_argument("--interval", type=float, default=30.0, help="seconds between passes with --watch")
     s.set_defaults(fn=cmd_worker)
+    s = sub.add_parser("publish", parents=[common], help="copy a roll's committed renders into PhotoPrism")
+    s.add_argument("roll_id")
+    s.add_argument("--device")
+    s.add_argument("--index", action="store_true", help="run photoprism.index_command afterwards")
+    s.set_defaults(fn=cmd_publish)
     s = sub.add_parser("list-rolls", parents=[common])
     s.add_argument("--state", choices=db.ROLL_SERVER_STATES)
     s.set_defaults(fn=cmd_list_rolls)
@@ -159,6 +227,10 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument("rest", nargs=argparse.REMAINDER)
         s.set_defaults(fn=None, name=name)
     args = p.parse_args(argv)
+    if args.fn is not None:
+        args.cfg = config_mod.load(args.config)
+        if args.data_dir is None and "MFILM_DATA_DIR" in os.environ:
+            args.data_dir = os.environ["MFILM_DATA_DIR"]
     if args.fn is None:
         print(f"mfilmctl {args.name}: NOT IMPLEMENTED (see docs/14 roadmap)", file=sys.stderr)
         return 3

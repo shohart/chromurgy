@@ -1,0 +1,29 @@
+# Develops queued frames with the shared film core and publishes finished rolls.
+[Unit]
+Description=M-Film development worker
+After=network-online.target
+
+[Service]
+Type=simple
+User=mfilm
+Group=mfilm
+Environment=MFILM_CONFIG=/etc/mfilm/config.toml
+# the built core and bundle (cmake --build build); adjust to the install location
+Environment=MFILM_CORE_LIB=/opt/mfilm/build/src/shared/film_core/libmf_core.so
+Environment=MFILM_BUNDLE=/opt/mfilm/profiles/mfilm-films.bin
+ExecStart=/opt/mfilm/src/server/.venv/bin/mfilmctl worker --watch --interval 30
+Restart=on-failure
+RestartSec=10
+Nice=10
+# a full-size frame peaks at ~0.9 GB RSS while developing (measured, 5208x3476)
+MemoryMax=3G
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/mfilm
+# add the PhotoPrism export_dir here if it is configured, e.g.
+# ReadWritePaths=/var/lib/mfilm /mnt/theVault/RAW_LIB/photos/M-Film
+
+[Install]
+WantedBy=multi-user.target

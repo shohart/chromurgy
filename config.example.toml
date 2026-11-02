@@ -1,0 +1,18 @@
+# M-Film server configuration. Copy to /etc/mfilm/config.toml (or point
+# MFILM_CONFIG / --config at it). Not committed: config.toml is git-ignored.
+
+# archive, catalog, renders (docs/04 server layout)
+data_dir = "/var/lib/mfilm"
+
+[photoprism]
+# A folder inside PhotoPrism's *originals* path. Only committed, hash-checked
+# renders are copied here (dot-file first, then renamed). Leave unset to
+# keep developed rolls out of PhotoPrism.
+# Example for the octopusreborn stack (originals mounted at /photoprism/originals,
+# reachable here through the CIFS share):
+# export_dir = "/mnt/theVault/RAW_LIB/photos"
+subdir = "M-Film"
+
+# Optional: index right after publishing (argv list, no shell). Without it
+# PhotoPrism picks the files up at its next scheduled/manual index.
+# index_command = ["ssh", "octopusreborn", "docker", "exec", "photoprism", "photoprism", "index", "M-Film"]

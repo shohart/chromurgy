@@ -141,7 +141,7 @@ def run_one(conn: sqlite3.Connection, store: Store, bundle: core.Bundle,
     if not job:
         return None
     r = conn.execute(
-        "SELECT r.*, rc.json AS recipe_json, f.roll_id, a.path AS original_path, a.sha256 AS original_sha256 "
+        "SELECT r.*, rc.json AS recipe_json, f.roll_id, f.capture_time, a.path AS original_path, a.sha256 AS original_sha256 "
         "FROM renders r JOIN recipes rc ON rc.id=r.recipe_id "
         "JOIN frames f ON f.device_id=r.device_id AND f.id=r.frame_id JOIN assets a ON a.id=f.original_asset_id "
         "WHERE r.id=?", (job["render_id"],)).fetchone()
@@ -154,7 +154,8 @@ def run_one(conn: sqlite3.Connection, store: Store, bundle: core.Bundle,
             work.mkdir(exist_ok=True)
             out = work / f"{r['id']}.jpg"
             prov = develop(store.root / r["original_path"], out, profile=None, recipe=recipe,
-                           device_id=r["device_id"], roll_id=r["roll_id"], frame_id=r["frame_id"], bundle=bundle)
+                           device_id=r["device_id"], roll_id=r["roll_id"], frame_id=r["frame_id"], bundle=bundle,
+                           captured_at=r["capture_time"])
             if prov["render_id"] != r["id"] or prov["original_sha256"] != r["original_sha256"]:
                 raise DevelopError("RENDER_IDENTITY_MISMATCH", f"{prov['render_id']} != {r['id']}")
             side = out.with_suffix(".jpg.json")

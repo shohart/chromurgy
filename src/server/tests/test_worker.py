@@ -77,6 +77,6 @@ def test_cli_import_queues_and_worker_develops(sample_card, store, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["queued"][0]["queued"] == 1
     assert main(["worker", "--data-dir", str(store.root), "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)[0]["state"] == "COMMITTED"
+    assert json.loads(capsys.readouterr().out)["jobs"][0]["state"] == "COMMITTED"
     assert main(["list-rolls", "--data-dir", str(store.root), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)[0]["developed"] == 1

@@ -118,7 +118,7 @@ def srgb_icc() -> bytes:
     return bytes(icc)
 
 
-def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str) -> None:
+def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str, captured_at: str | None = None) -> None:
     from PIL import Image
     px = (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
     icc = srgb_icc()
@@ -126,6 +126,19 @@ def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str) -> None:
     exif = Image.Exif()
     exif[0x0131] = "M-Film CHDK Edition (mfilm-develop)"     # Software
     exif[0x010E] = comment                                    # ImageDescription
+    if captured_at:                                           # so PhotoPrism dates the frame as shot
+        try:
+            t = dt.datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+            stamp = t.strftime("%Y:%m:%d %H:%M:%S")
+            exif[0x0132] = stamp                              # DateTime
+            sub = exif.get_ifd(0x8769)
+            sub[0x9003] = stamp                               # DateTimeOriginal
+            sub[0x9004] = stamp                               # DateTimeDigitized
+            if t.utcoffset() is not None:
+                off = t.strftime("%z")
+                sub[0x9011] = f"{off[:3]}:{off[3:]}"          # OffsetTimeOriginal
+        except ValueError:
+            pass
     tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
     im.save(tmp, "JPEG", quality=quality, icc_profile=icc, exif=exif, optimize=True)
     with Image.open(tmp) as chk:                             # decode back before promoting
@@ -138,7 +151,7 @@ def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str) -> None:
 
 def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict | None,
             device_id: str | None = None, roll_id: str | None = None, frame_id: str | None = None,
-            bundle: core.Bundle | None = None) -> dict:
+            bundle: core.Bundle | None = None, captured_at: str | None = None) -> dict:
     bundle = bundle or core.Bundle()
     if recipe is None:
         if not profile:
@@ -175,7 +188,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
     commit = core_commit()
     rid = recipe_render_id(src_sha, recipe, bundle.sha256)
     output.parent.mkdir(parents=True, exist_ok=True)
-    write_jpeg(img, output, int(spec.get("jpeg_quality", 92)), f"{profile} render {rid[:16]}")
+    write_jpeg(img, output, int(spec.get("jpeg_quality", 92)), f"M-Film {profile} render {rid[:16]}", captured_at)
     t1 = dt.datetime.now(dt.timezone.utc)
     prov = {
         "render_id": rid, "film_profile_id": profile, "profile_bundle_hash": bundle.sha256,
@@ -188,7 +201,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
         "output_width": out_w, "output_height": out_h, "jpeg_quality": int(spec.get("jpeg_quality", 92)),
         "developed_by": "linux", "development_timestamp": t1.isoformat(timespec="seconds"),
         "elapsed_s": round((t1 - t0).total_seconds(), 3), "original_sha256": src_sha, "original_bytes": src_bytes,
-        "device_id": device_id, "roll_id": roll_id, "frame_id": frame_id,
+        "device_id": device_id, "roll_id": roll_id, "frame_id": frame_id, "captured_at": captured_at,
         "output": str(output), "output_sha256": sha256_file(output)[0],
     }
     side = output.with_suffix(output.suffix + ".json")
