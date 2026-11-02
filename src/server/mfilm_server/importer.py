@@ -163,6 +163,9 @@ def _import_roll(card_root: Path, mpath: Path, store: Store, conn: sqlite3.Conne
                        declared_bytes, source_path, original_state) VALUES (?,?,?,?,?,?,?,?, 'DECLARED')""",
                 (fr["frame_id"], device_id, roll_id, fr["ordinal"], fr.get("captured_at"),
                  fr["source_sha256"].lower(), fr["source_size_bytes"], fr["source_path"]))
+        # Originals are promoted before COMMIT: on rollback they stay in the
+        # archive as orphans, and the next import adopts them as
+        # ALREADY_ARCHIVED after re-hashing (never overwritten).
         for fr, part, dest, _ in staged:
             if part is not None:
                 Store.promote(part, dest)

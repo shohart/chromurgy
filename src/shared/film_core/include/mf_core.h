@@ -57,7 +57,9 @@ extern const int mf_builtin_nlooks;
 const struct mf_look *mf_look_find(const char *key);
 
 /* The film's colour for one scene-linear sRGB value (0.18 = mid grey):
- * display sRGB 0..1. Bit-for-bit the upstream fos_film_color() model. */
+ * display sRGB 0..1. Same arithmetic as upstream fos_film_color(); results
+ * are bit-exact only with the same libm (expf/log2f/atan2f) and FP flags.
+ * Cross-libm (camera) parity is tolerance-based, see docs/05. */
 void mf_film_color(const struct mf_look *f, const float lin[3], float out[3]);
 
 /* ------------------------------------------------------------ hashing / seeds

@@ -42,7 +42,7 @@ def make_card(tmp_path):
         dcim.mkdir(parents=True, exist_ok=True)
         entries = []
         for i in range(1, frames + 1):
-            data = fake_dng(hash((roll_id, i)) & 0xFFFF)
+            data = fake_dng(int.from_bytes(hashlib.sha256(f"{roll_id}-{i}".encode()).digest()[:4], "big"))
             (dcim / f"IMG_{i:04}.DNG").write_bytes(data)
             entries.append({
                 "frame_id": f"{roll_id}-{i:04}", "ordinal": i, "captured_at": "2026-11-02T12:01:00Z",
