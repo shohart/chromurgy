@@ -120,7 +120,9 @@ float mf_cineon_decode(float code);
 void mf_table_apply(const mf_table *t, const float lin[3], float out[3]);   /* display 0..1 */
 
 /* ------------------------------------------------------------ whole-frame film stage
- * IMPLEMENTED (reference, float, in memory). Mirrors the camera's
+ * IMPLEMENTED (HOST-ONLY reference: float, whole frame in memory, mallocs
+ * several full-frame buffers, ~0.9 GB peak at 18 MP; NOT camera-safe, the
+ * CHDK build needs the tiled fixed-point variant). Mirrors the camera's
  * fos_dev.c order: scanner exposure + film balance -> softness ->
  * halation (glow grid) + vignette -> film table -> grain. */
 typedef struct mf_develop_params {
