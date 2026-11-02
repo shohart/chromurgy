@@ -1,0 +1,27 @@
+# upstream checkouts (pinned in LOCKFILE, fetched by scripts/fetch-upstream.sh)
+vendor/
+# build output
+build/
+out/
+*.o
+*.a
+*.so
+# python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+# never commit camera originals, firmware, or private images
+*.dng
+*.DNG
+*.cr2
+*.CR2
+*.crw
+*.bin.dump
+PRIMARY.BIN
+*.ROM
+private/
+# secrets
+.env
+*.token
+config.toml
