@@ -125,11 +125,23 @@ MIGRATIONS: list[str] = [
     CREATE INDEX jobs_state ON jobs(state, id);
     CREATE INDEX renders_frame ON renders(device_id, frame_id)
     """,
+    # 3: device credentials (only the token's hash is stored)
+    """
+    CREATE TABLE device_tokens (
+        token_sha256  TEXT PRIMARY KEY CHECK (length(token_sha256) = 64),
+        device_id     TEXT NOT NULL REFERENCES devices(id),
+        created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        revoked_at    TEXT
+    );
+    CREATE INDEX uploads_frame ON uploads(device_id, frame_id, declared_sha256, state)
+    """,
 ]
 
 
-def connect(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, isolation_level=None)   # explicit BEGIN/COMMIT
+def connect(path: Path, *, threads: bool = False) -> sqlite3.Connection:
+    """threads=True: the connection may hop threads (one request at a time, FastAPI threadpool)."""
+    conn = sqlite3.connect(path, isolation_level=None, check_same_thread=not threads)   # explicit BEGIN/COMMIT
+    conn.execute("PRAGMA busy_timeout=10000")
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

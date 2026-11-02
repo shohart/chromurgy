@@ -15,7 +15,7 @@ from .importer import as_dict, import_card
 from .store import Store
 
 DEFAULT_ROOT = os.environ.get("MFILM_DATA_DIR", "/var/lib/mfilm")
-NOT_IMPLEMENTED = ("device-pair", "reprocess")
+NOT_IMPLEMENTED = ("reprocess",)
 
 
 def _open(root: str | None, cfg=None) -> tuple[Store, "db.sqlite3.Connection"]:
@@ -150,6 +150,23 @@ def cmd_publish(args) -> int:
     return 0 if res and all(x.status != "FAILED" for x in res) else 1
 
 
+def cmd_device_pair(args) -> int:
+    from . import devices
+    _, conn = _open(args.data_dir, args.cfg)
+    token = devices.pair(conn, args.name)
+    _out(args, {"device_id": args.name, "token": token},
+         f"device {args.name} paired. Token (shown once, put it on the camera card):\n{token}")
+    return 0
+
+
+def cmd_device_revoke(args) -> int:
+    from . import devices
+    _, conn = _open(args.data_dir, args.cfg)
+    n = devices.revoke(conn, args.name)
+    _out(args, {"device_id": args.name, "revoked_tokens": n}, f"revoked {n} token(s) of {args.name}")
+    return 0
+
+
 def cmd_list_rolls(args) -> int:
     _, conn = _open(args.data_dir, args.cfg)
     q = ("SELECT r.device_id, r.id, r.film_profile_id, r.state, r.expected_frames, "
@@ -211,6 +228,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--watch", action="store_true", help="keep polling the queue (service mode)")
     s.add_argument("--interval", type=float, default=30.0, help="seconds between passes with --watch")
     s.set_defaults(fn=cmd_worker)
+    s = sub.add_parser("device-pair", parents=[common], help="register a camera and issue its token")
+    s.add_argument("--name", required=True, help="device_id, e.g. sx510hs")
+    s.set_defaults(fn=cmd_device_pair)
+    s = sub.add_parser("device-revoke", parents=[common], help="revoke all tokens of a camera")
+    s.add_argument("--name", required=True)
+    s.set_defaults(fn=cmd_device_revoke)
     s = sub.add_parser("publish", parents=[common], help="copy a roll's committed renders into PhotoPrism")
     s.add_argument("roll_id")
     s.add_argument("--device")

@@ -21,6 +21,8 @@
 | `mfilm-develop` CLI | `src/server/mfilm_server/develop.py` (rawpy/LibRaw input adapter, JPEG + ICC + EXIF dates + provenance sidecar) |
 | Queue + worker | `worker.py`, `mfilmctl develop/worker [--watch]` |
 | PhotoPrism publisher | `publisher.py`, `mfilmctl publish [--index]`, auto-publish in worker |
+| Receiver API (docs/09) | `api.py` (`mfilm-receiver`), device tokens `devices.py`, `mfilmctl device-pair/device-revoke` |
+| Fake camera (reference sync client) | `simulator.py` |
 | Config, deployment | `config.example.toml`, `deploy/systemd/mfilm-worker.service`, `deploy/README.md` |
 
 Films: 63 take their colour from the Film-Luts LUT baked into a uint16 table; 9 use M-Film's own model (`portra400`, `cinestill800t`, `ektar100`, `gold200`, `superia400`, `velvia50`, `hp5`, `trix400`, and `cinestill400t`, whose upstream LUT is the author's private file, so upstream also falls back to the model).
@@ -36,6 +38,8 @@ Films: 63 take their colour from the Film-Luts LUT baked into a uint16 table; 9 
 | **Same CR2, same film vs M-Film's own in-camera developer** (`devtest`, 720×480) | `pytest test_develop.py::test_close_to_upstream_camera_print` | PASS: mean RGB 0.486/0.421/0.395 vs upstream 0.485/0.420/0.394; visually indistinguishable (`build/samples/compare-day.png`) |
 | Byte-identical output for identical inputs | `pytest test_develop.py` | PASS (after zeroing the ICC creation date) |
 | Card → archive → queue → full-size JPEG → PhotoPrism folder, idempotent, crash recovery, bundle mismatch terminal | `pytest test_worker.py test_publisher.py` | PASS (37 pytest total) |
+| Sync API: idempotent manifest/uploads/finalize, receipts replay, conflicts, device isolation, revocation, hash mismatch 422, offset 409 | `pytest test_api.py` | PASS |
+| Power loss after 100 chunks of a 26 MB original, resume from server offset, develop, return JPEG to camera gallery with hash check | `pytest test_api.py::test_power_loss_resume_develop_and_return`; live run over HTTP with uvicorn + simulator | PASS (resumed with exactly the remaining chunks) |
 | Real PhotoPrism instance indexes the export | — | NOT TESTED (owner consent needed to write into the live library) |
 | SX510 HS DNG | — | BLOCKED: no sample |
 
@@ -55,7 +59,8 @@ Films: 63 take their colour from the Film-Luts LUT baked into a uint16 table; 9 
 
 ## Constraints and follow-up
 
-- Cannot yet claim: anything about SX510 HS files; PhotoPrism indexing on the live instance; the receiver API (docs/09); tiled/streaming core for the camera.
+- Cannot yet claim: anything about SX510 HS files; PhotoPrism indexing on the live instance; that the camera can speak HTTP at all (G5); camera-rendered (offline) uploads (`media_role=camera_render` returns 422 for now); tiled/streaming core for the camera.
+- render_id v2 includes the grain seed (found during the live run: the same DNG developed as two different frames had one id but different grain).
 - Risks: grain/softness scaling is a modelling choice; LibRaw's scale vs the camera's changes the scanner key by ~0.2 EV; full-size test suite takes ~3 min.
-- Next tasks: (1) receiver API + fake-camera simulator (P03 rest); (2) `mfilmctl reprocess` with new renditions; (3) tiled fixed-point core variant and ARM cross-build (P05 prep); (4) SX510 colour calibration once DNGs exist.
+- Next tasks: (1) camera_render uploads + reconciliation (P06); (2) `mfilmctl reprocess` with new renditions; (3) tiled fixed-point core variant and ARM cross-build (P05 prep); (4) SX510 colour calibration once DNGs exist.
 - Owner action: SX510 HS firmware version and 2–3 CHDK DNGs; consent + path to publish into the live PhotoPrism library.

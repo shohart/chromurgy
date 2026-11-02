@@ -1,0 +1,24 @@
+# Sync API for cameras (docs/09). LAN only: bind to the camera network's
+# address, never expose to the Internet. Plain HTTP + bearer token is only
+# acceptable on a trusted, isolated LAN (docs/12); put TLS in front otherwise.
+[Unit]
+Description=M-Film receiver (camera sync API)
+After=network-online.target
+
+[Service]
+Type=simple
+User=mfilm
+Group=mfilm
+Environment=MFILM_CONFIG=/etc/mfilm/config.toml
+Environment=MFILM_CORE_LIB=/opt/mfilm/build/src/shared/film_core/libmf_core.so
+Environment=MFILM_BUNDLE=/opt/mfilm/profiles/mfilm-films.bin
+ExecStart=/opt/mfilm/src/server/.venv/bin/mfilm-receiver --host 127.0.0.1 --port 8765
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/mfilm
+
+[Install]
+WantedBy=multi-user.target

@@ -15,7 +15,7 @@ def test_frame_seed_matches_c_core_vector():
 def test_render_id_depends_on_output_size():
     recipe = json.loads((REPO / "contracts" / "render-recipe.example.json").read_text())
     base = dict(original_sha256="a" * 64, recipe=recipe, film_core_version="x", profile_bundle_hash="b" * 64,
-                input_normalization_version="mfilm-linear-rgb-v1")
+                input_normalization_version="mfilm-linear-rgb-v1", grain_seed=1)
     big = render_id(output_spec={"width": 4000, "height": 3000}, **base)
     small = render_id(output_spec={"width": 720, "height": 480}, **base)
     assert big != small and len(big) == 64
@@ -25,3 +25,9 @@ def test_render_id_depends_on_output_size():
 def test_canonical_json_rejects_nan():
     with pytest.raises(ValueError):
         canonical_json({"x": float("nan")})
+
+
+def test_render_id_depends_on_seed():
+    base = dict(original_sha256="a" * 64, recipe={}, film_core_version="x", profile_bundle_hash="b" * 64,
+                input_normalization_version="v", output_spec={})
+    assert render_id(grain_seed=1, **base) != render_id(grain_seed=2, **base)

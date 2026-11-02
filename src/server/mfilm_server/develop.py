@@ -37,11 +37,16 @@ def film_core_version() -> str:
     return f"{core.core_version()}/abi{core.abi_version()}"
 
 
-def recipe_render_id(original_sha256: str, recipe: dict, bundle_hash: str) -> str:
+def recipe_seed(recipe: dict, device_id: str, roll_id: str, frame_id: str) -> int:
+    return frame_seed(device_id, roll_id, frame_id, recipe["film_profile_id"], recipe["recipe_id"],
+                      int(recipe.get("user_seed", 0)))
+
+
+def recipe_render_id(original_sha256: str, recipe: dict, bundle_hash: str, seed: int) -> str:
     """Identity of the requested rendition (output_spec as requested, 0 = native)."""
     return render_id(original_sha256=original_sha256, recipe=recipe, film_core_version=film_core_version(),
                      profile_bundle_hash=bundle_hash, output_spec=recipe.get("output_spec", {}),
-                     input_normalization_version=INPUT_NORMALIZATION)
+                     input_normalization_version=INPUT_NORMALIZATION, grain_seed=seed)
 
 
 def core_commit() -> str:
@@ -171,7 +176,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
     device_id = device_id or "standalone"
     roll_id = roll_id or "standalone"
     frame_id = frame_id or src_sha
-    seed = frame_seed(device_id, roll_id, frame_id, profile, recipe["recipe_id"], int(recipe.get("user_seed", 0)))
+    seed = recipe_seed(recipe, device_id, roll_id, frame_id)
 
     t0 = dt.datetime.now(dt.timezone.utc)
     lin = decode_raw(input_path, recipe.get("white_balance_mode", "as-shot"), recipe.get("demosaic_mode", "reference"))
@@ -186,7 +191,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
     img = fit_output(img, int(spec.get("width") or 0), int(spec.get("height") or 0))
     out_h, out_w = img.shape[:2]
     commit = core_commit()
-    rid = recipe_render_id(src_sha, recipe, bundle.sha256)
+    rid = recipe_render_id(src_sha, recipe, bundle.sha256, seed)
     output.parent.mkdir(parents=True, exist_ok=True)
     write_jpeg(img, output, int(spec.get("jpeg_quality", 92)), f"M-Film {profile} render {rid[:16]}", captured_at)
     t1 = dt.datetime.now(dt.timezone.utc)

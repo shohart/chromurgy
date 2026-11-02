@@ -27,10 +27,14 @@ def canonical_json(obj: Any) -> bytes:
 
 
 def render_id(*, original_sha256: str, recipe: dict, film_core_version: str,
-              profile_bundle_hash: str, output_spec: dict, input_normalization_version: str) -> str:
-    """render_id = sha256(canonical JSON of everything that changes the pixels)."""
+              profile_bundle_hash: str, output_spec: dict, input_normalization_version: str,
+              grain_seed: int) -> str:
+    """render_id = sha256(canonical JSON of everything that changes the pixels).
+    grain_seed is included: it derives from device/roll/frame ids (docs/05),
+    so the same DNG developed as two different frames is two renditions."""
     return hashlib.sha256(canonical_json({
-        "v": "mfilm-render-id-v1",
+        "v": "mfilm-render-id-v2",
+        "grain_seed": f"{grain_seed:016x}",
         "original_sha256": original_sha256.lower(),
         "recipe": recipe,
         "film_core_version": film_core_version,

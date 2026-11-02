@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import core
-from .develop import DevelopError, default_recipe, develop, recipe_render_id
+from .develop import DevelopError, default_recipe, develop, recipe_render_id, recipe_seed
 from .ids import canonical_json, sha256_file
 from .store import Store, safe_id
 
@@ -64,7 +64,8 @@ def enqueue_roll(conn: sqlite3.Connection, roll_id: str, device_id: str | None =
         conn.execute("INSERT OR IGNORE INTO recipes(id, json, core_revision, bundle_hash) VALUES (?,?,?,?)",
                      (recipe_key, recipe_json, core.core_version(), roll["profile_bundle_hash"]))
         for fr in frames:
-            rid = recipe_render_id(fr["sha256"], recipe, roll["profile_bundle_hash"])
+            seed = recipe_seed(recipe, roll["device_id"], roll["id"], fr["id"])
+            rid = recipe_render_id(fr["sha256"], recipe, roll["profile_bundle_hash"], seed)
             cur = conn.execute(
                 "INSERT OR IGNORE INTO renders(id, device_id, frame_id, recipe_id, output_spec, origin, state) "
                 "VALUES (?,?,?,?,?, 'linux', 'QUEUED')",
