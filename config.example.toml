@@ -5,14 +5,17 @@
 data_dir = "/var/lib/mfilm"
 
 [photoprism]
-# A folder inside PhotoPrism's *originals* path. Only committed, hash-checked
-# renders are copied here (dot-file first, then renamed). Leave unset to
-# keep developed rolls out of PhotoPrism.
-# Example for the octopusreborn stack (originals mounted at /photoprism/originals,
-# reachable here through the CIFS share):
+# A folder that IS PhotoPrism's originals path as the container sees it
+# (check: docker inspect photoprism --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}').
+# Only committed, hash-checked renders are copied here (dot-file first, then
+# renamed). Leave unset to keep developed rolls out of PhotoPrism.
+# Beware network shares: a Samba share may be rooted elsewhere on the server,
+# so the same-looking path over CIFS can be a different directory. Simplest is
+# to run the worker on the PhotoPrism host itself.
 # export_dir = "/mnt/theVault/RAW_LIB/photos"
 subdir = "M-Film"
 
-# Optional: index right after publishing (argv list, no shell). Without it
-# PhotoPrism picks the files up at its next scheduled/manual index.
+# PhotoPrism does not watch originals: PHOTOPRISM_AUTO_INDEX only covers
+# WebDAV uploads. Either set PHOTOPRISM_INDEX_SCHEDULE (cron, e.g. "*/30 * * * *")
+# on the PhotoPrism side, or index right after publishing (argv list, no shell):
 # index_command = ["ssh", "octopusreborn", "docker", "exec", "photoprism", "photoprism", "index", "M-Film"]
