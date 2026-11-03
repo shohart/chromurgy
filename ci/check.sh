@@ -5,6 +5,10 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cmake -S "$root" -B "$root/build" >/dev/null
 cmake --build "$root/build" -j"$(nproc)"
 ctest --test-dir "$root/build" --output-on-failure
+# camera tier links as a CHDK module (integer-only); needs tools/arm_check.sh --install
+if "$root/tools/arm_check.sh" >/tmp/mfilm-arm-check.$$ 2>&1; then tail -1 /tmp/mfilm-arm-check.$$
+else rc=$?; cat /tmp/mfilm-arm-check.$$; rm -f /tmp/mfilm-arm-check.$$; [ $rc -eq 2 ] || exit 1; fi
+rm -f /tmp/mfilm-arm-check.$$
 cd "$root/src/server"
 [ -x .venv/bin/pytest ] || { uv venv -q .venv && uv pip install -q -e '.[test,tools]' --python .venv/bin/python; }
 # parity evidence against upstream M-Film (needs scripts/fetch-upstream.sh)

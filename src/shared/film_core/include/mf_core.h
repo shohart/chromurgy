@@ -152,27 +152,64 @@ int mf_develop_simple(const uint8_t *bundle, size_t len, const char *key, float 
                       uint64_t grain_seed, float grain_scale, float halation_scale, float softness_scale,
                       float exposure_ev, int reference_width, float *scanner_ev_out, char *err, size_t errlen);
 
-/* ------------------------------------------------------------ tiles
- * PROPOSED, NOT IMPLEMENTED: streaming/tiled variant for the camera (P05). */
-typedef struct mf_linear_tile {
-    const float *rgb;           /* interleaved linear sRGB, 0.18 = mid grey */
-    uint32_t x0, y0;            /* global coordinates of the first pixel */
-    uint32_t width, height;
-    size_t stride;              /* floats per row */
-} mf_linear_tile;
+/* Spatial kernels the film stage needs at output width w (shared by the float
+ * path and mf_fx_look_bake, so both always agree). Sizes in output pixels. */
+enum { MF_KERNEL_SOFT = 1, MF_KERNEL_GRAIN = 2 };
+typedef struct mf_develop_sizes {
+    float lab_px;               /* reference (lab) pixels per output pixel */
+    float soft_sigma;           /* optical softness gaussian */
+    float grain_sigma;          /* grain clump gaussian (white noise below 0.5) */
+    float grain_amp;            /* grain amplitude incl. look_controls and downscale softening */
+} mf_develop_sizes;
+int mf_develop_kernels(const struct mf_film *film, const mf_develop_params *p, int w, mf_develop_sizes *out);
+/* per-channel gain that balances the film for its colour temperature */
+void mf_film_balance(const struct mf_film *film, float bal[3]);
 
-typedef struct mf_output_tile {
-    uint16_t *rgb;              /* interleaved display-referred 16-bit */
-    size_t stride;              /* uint16 per row */
-} mf_output_tile;
+/* ------------------------------------------------------------ fixed-point streaming stage
+ * IMPLEMENTED (mf_fx.c): the camera variant. Integer-only, no heap, no libm,
+ * only the integer divides CHDK exports to modules; rows are streamed, the
+ * frame is never held in memory. Same order and definitions as
+ * mf_develop_frame, parity-tested against it (test_fx_parity).
+ *
+ * Scope: output sizes at which the film stage needs no spatial kernel
+ * (mf_develop_kernels() == 0): every film at <= ~1760 px wide with default
+ * look controls. Larger outputs are the Linux server's job.
+ *
+ * Use:
+ *   mf_fx_look_bake()     host side (float allowed), once per film + recipe + size
+ *   mf_fx_ctx_size()      bytes of working memory for w x h
+ *   mf_fx_begin()         context in caller memory; table = the film's 33^3 uint16 table
+ *   mf_fx_scan_rows()     pass 1, rows 0..h-1 in order: scanner exposure
+ *   mf_fx_glow_rows()     pass 2, rows 0..h-1 in order: halation grid
+ *   mf_fx_render_rows()   pass 3, any rows in any order: display output
+ * Pixels: input interleaved RGB uint16, scene-linear, 32768 = 1.0 (clipped
+ * there); output interleaved RGB uint16, display-referred, 65535 = 1.0. */
+typedef struct mf_fx_look {
+    int32_t width, height;      /* output size this look was baked for */
+    int32_t slide;
+    int32_t ev_q16;             /* film ev + recipe exposure, stops */
+    int32_t bal_q16[3];
+    int32_t hal_thr_q15;
+    int32_t hal_q16[3];         /* halation strength x tint */
+    int32_t grain_amp_q16;      /* 0: no grain */
+    int32_t mono;
+} mf_fx_look;
 
-typedef struct mf_tile_context {
-    uint32_t image_width, image_height;
-    uint64_t grain_seed;
-} mf_tile_context;
+typedef struct mf_fx mf_fx;
 
-int mf_core_process_tile(const struct mf_look *look, const mf_linear_tile *in,
-                         const mf_tile_context *ctx, mf_output_tile *out);
+int mf_fx_look_bake(const struct mf_film *film, const mf_develop_params *p, int w, int h, mf_fx_look *out);
+size_t mf_fx_ctx_size(int w, int h);
+int mf_fx_begin(void *mem, size_t len, const mf_fx_look *look, const uint16_t *table, uint64_t grain_seed,
+                mf_fx **out);
+int mf_fx_scan_rows(mf_fx *fx, const uint16_t *rgb, size_t stride, int y0, int n);
+int mf_fx_glow_rows(mf_fx *fx, const uint16_t *rgb, size_t stride, int y0, int n);
+int mf_fx_render_rows(mf_fx *fx, const uint16_t *rgb, size_t stride, int y0, int n, uint16_t *out,
+                      size_t out_stride);
+int32_t mf_fx_scanner_ev_q16(const mf_fx *fx);   /* after pass 1 */
+
+/* integer helpers (exposed for tests) */
+int32_t mf_fx_log2_q16(uint32_t x);              /* x > 0 */
+uint32_t mf_fx_exp2_q16(int32_t q);              /* 2^(q/65536) in Q16, saturating */
 
 #ifdef __cplusplus
 }

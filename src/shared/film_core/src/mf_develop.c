@@ -51,6 +51,35 @@ static void cct_rgb(float t, float out[3])
     out[2] = 0.0557f * X - 0.2040f * Y + 1.0570f * Z;
 }
 
+void mf_film_balance(const struct mf_film *film, float bal[3])
+{
+    bal[0] = bal[1] = bal[2] = 1;
+    if (film->look.balance == 5500) return;
+    float a[3], b[3];
+    cct_rgb(5500, a);
+    cct_rgb((float) film->look.balance, b);
+    for (int c = 0; c < 3; c++) bal[c] = a[c] / b[c];
+    float g = a[1] / b[1];
+    for (int c = 0; c < 3; c++) bal[c] /= g;
+}
+
+int mf_develop_kernels(const struct mf_film *film, const mf_develop_params *p, int w, mf_develop_sizes *out)
+{
+    const float ref = (float) (p->reference_width > 0 ? p->reference_width : LAB_WIDTH);
+    const float lab_px = ref / (float) w;
+    const float lp = lab_px < 1 ? 1 : lab_px;
+    out->lab_px = lab_px;
+    out->soft_sigma = film->soft * p->softness_scale / lab_px;
+    out->grain_sigma = film->look.grain_size / lab_px;
+    out->grain_amp = film->look.grain * p->grain_scale
+                     * powf(CAMERA_GRAIN_SOFTEN, logf(lp) / logf(CAMERA_DOWNSCALE))
+                     * (65025.0f * 256 / (64.0f * 65536));        /* upstream's fixed-point scale */
+    int k = 0;
+    if (out->soft_sigma >= 0.3f && lab_px < CAMERA_DOWNSCALE) k |= MF_KERNEL_SOFT;
+    if (film->look.grain * p->grain_scale > 0 && out->grain_sigma >= 0.5f) k |= MF_KERNEL_GRAIN;
+    return k;
+}
+
 /* the lab scanner: log-average luminance of every fourth print pixel to a
  * key of 0.11 (negatives); slides get what was exposed, +1 EV as upstream */
 float mf_scanner_ev(const struct mf_film *film, const float *rgb, int w, int h)
@@ -224,24 +253,16 @@ int mf_develop_frame(const struct mf_film *film, const mf_table *table, float *r
     const struct mf_look *L = &film->look;
     const size_t n = (size_t) w * h;
     const float s = print_scale(w, h);
-    const float ref = (float) (p->reference_width > 0 ? p->reference_width : LAB_WIDTH);
-    const float lab_px = ref / (float) w;          /* lab pixels per output pixel */
+    mf_develop_sizes sz;
+    const int kernels = mf_develop_kernels(film, p, w, &sz);
     float *tmp = malloc(sizeof(float) * (size_t) (w > h ? w : h));
     if (!tmp) return MF_E_INVALID_ARG;
 
     /* 1. scanner exposure and the film's balance (stage_key, expose_lin) */
     float ev = mf_scanner_ev(film, rgb, w, h);
     float k = exp2f(ev + L->ev + p->exposure_ev);
-    float bal[3] = { 1, 1, 1 };
-    if (L->balance != 5500)
-    {
-        float a[3], b[3];
-        cct_rgb(5500, a);
-        cct_rgb((float) L->balance, b);
-        for (int c = 0; c < 3; c++) bal[c] = a[c] / b[c];
-        float g = a[1] / b[1];
-        for (int c = 0; c < 3; c++) bal[c] /= g;
-    }
+    float bal[3];
+    mf_film_balance(film, bal);
     for (size_t i = 0; i < n; i++)
         for (int c = 0; c < 3; c++)
         {
@@ -250,9 +271,8 @@ int mf_develop_frame(const struct mf_film *film, const mf_table *table, float *r
         }
 
     /* 2. optical softness, above print size only */
-    float soft = film->soft * p->softness_scale / lab_px;
-    if (soft >= 0.3f && lab_px < CAMERA_DOWNSCALE)
-        for (int c = 0; c < 3; c++) blur_plane(rgb + c, w, h, 3, soft, tmp);
+    if (kernels & MF_KERNEL_SOFT)
+        for (int c = 0; c < 3; c++) blur_plane(rgb + c, w, h, 3, sz.soft_sigma, tmp);
 
     /* 3. halation glow and vignette, then the film's table (stage_finish) */
     int gw = 0, gh = 0;
@@ -294,10 +314,8 @@ int mf_develop_frame(const struct mf_film *film, const mf_table *table, float *r
     float amount = L->grain * p->grain_scale;
     if (amount > 0)
     {
-        float lp = lab_px < 1 ? 1 : lab_px;
-        float soften = powf(CAMERA_GRAIN_SOFTEN, logf(lp) / logf(CAMERA_DOWNSCALE));
-        float sigma = L->grain_size / lab_px;
-        float amp = amount * soften * (65025.0f * 256 / (64.0f * 65536));   /* upstream's fixed-point scale */
+        float sigma = (kernels & MF_KERNEL_GRAIN) ? sz.grain_sigma : 0;   /* 0: white noise */
+        float amp = sz.grain_amp;
         float *shared = malloc(sizeof(float) * n), *own = L->mono ? NULL : malloc(sizeof(float) * n);
         if (!shared || (!L->mono && !own)) { free(shared); free(own); free(tmp); return MF_E_INVALID_ARG; }
         grain_field(shared, w, h, p->grain_seed, 0, sigma, tmp);

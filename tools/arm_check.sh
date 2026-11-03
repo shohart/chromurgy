@@ -4,7 +4,8 @@
 # armv5te, no FPU) with the toolchain CHDK supports (GCC 4/5/8-11).
 #   tools/arm_check.sh --install   fetch + verify the pinned toolchain into ~/.local/opt
 #   tools/arm_check.sh             compile, report size and soft-float/libm symbols
-# Exit 1 if any object needs floating point or libm: the camera variant must not.
+# Exit 1 if the camera tier (mf_fx + seed + sha256) needs anything a CHDK module
+# cannot call: floating point, libm, or libgcc helpers CHDK does not export.
 set -eu
 VER=10.3-2021.10
 NAME=gcc-arm-none-eabi-$VER
@@ -27,18 +28,38 @@ fi
 [ -x "$T/arm-none-eabi-gcc" ] || { echo "no toolchain: tools/arm_check.sh --install" >&2; exit 2; }
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
-srcs=${MFILM_ARM_SOURCES:-$(ls "$root"/src/shared/film_core/src/*.c)}
+# the camera tier: everything the fixed-point stage links against
+srcs=${MFILM_ARM_SOURCES:-"$root/src/shared/film_core/src/mf_fx.c $root/src/shared/film_core/src/mf_seed.c $root/src/shared/film_core/src/mf_sha256.c"}
+# CHDK's DIGIC 4 flags (arm_rules.inc: ARM mode, not thumb) for a module
 for f in $srcs; do
-  "$T/arm-none-eabi-gcc" -c -Os -mtune=arm946e-s -march=armv5te -mthumb -std=gnu99 \
-    -Wall -Wextra -Werror -Wdouble-promotion -ffp-contract=off -fno-common \
+  "$T/arm-none-eabi-gcc" -c -marm -mtune=arm946e-s -march=armv5te -Os -fno-inline -fno-strict-aliasing \
+    -fno-schedule-insns2 -std=gnu99 -Wall -Wextra -Werror -Wdouble-promotion -ffp-contract=off -fno-common \
     -I"$root/src/shared/film_core/include" "$f" -o "$out/$(basename "$f" .c).o"
 done
 "$T/arm-none-eabi-size" -t "$out"/*.o | tail -1
-fp=$("$T/arm-none-eabi-nm" -u "$out"/*.o | awk '{print $2}' | sort -u |
-     grep -E '^__aeabi_(f|d|[if]2|[ul]?2[fd])|^(exp|log|pow|sin|cos|atan|ceil|floor|fmod|sqrt)' || true)
-if [ -n "$fp" ]; then
-  echo "needs floating point / libm on a camera without FPU:"
-  echo "$fp" | tr '\n' ' '; echo
+defined=$("$T/arm-none-eabi-nm" --defined-only "$out"/*.o | awk 'NF==3{print $3}' | sort -u)
+undef=$("$T/arm-none-eabi-nm" -u "$out"/*.o | awk '{print $2}' | sort -u | grep -vxF "$defined" || true)
+# what a CHDK module may call: the libgcc helpers in modules/module_exportlist.inc
+# minus floating point (no FPU, and the camera stage must not need it), plus libc
+exports="$root/vendor/chdk-trunk/modules/module_exportlist.inc"
+if [ -f "$exports" ]; then
+  allowed=$(grep -oE '__[a-z0-9_]+' "$exports" | grep -vE '__aeabi_([fd]|[ui]?2[fd]|[fd]2)' )
+else
+  allowed="__aeabi_uidiv __aeabi_idiv __aeabi_uidivmod __aeabi_idivmod __bswapsi2"
+fi
+# libc and CHDK functions the core exports to modules (modules/module_exportlist.c)
+core_exports="$root/vendor/chdk-trunk/modules/module_exportlist.c"
+if [ -f "$core_exports" ]; then
+  # one bare identifier per line; floating-point libm is excluded on purpose
+  allowed="$allowed $(grep -E '^[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*$' "$core_exports" | tr -d ' \t' |
+                      grep -vxE '(sqrt|log|log2|log10|exp|pow|sin|cos|tan|atan|atan2|asin|acos|floor|ceil|fmod|fabs)f?' | tr '\n' ' ')"
+else
+  allowed="$allowed memcpy memset strlen"
+fi
+bad=$(echo "$undef" | grep -v '^$' | grep -vxF "$(echo "$allowed" | tr ' ' '\n')" || true)
+echo "external symbols: $(echo $undef)"
+if [ -n "$bad" ]; then
+  echo "not available to a CHDK module on a camera without FPU: $(echo $bad)"
   exit 1
 fi
-echo "integer-only: OK"
+echo "camera tier: OK (integer-only, links as a CHDK module)"

@@ -94,10 +94,3 @@ const struct mf_look *mf_look_find(const char *key)
         if (!strcmp(mf_builtin_looks[i].key, key)) return &mf_builtin_looks[i];
     return NULL;
 }
-
-int mf_core_process_tile(const struct mf_look *look, const mf_linear_tile *in,
-                         const mf_tile_context *ctx, mf_output_tile *out)
-{
-    (void) look; (void) in; (void) ctx; (void) out;
-    return MF_E_UNSUPPORTED;    /* P01: staging of halation/grain not ported yet */
-}

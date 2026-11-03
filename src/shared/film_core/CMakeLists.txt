@@ -7,6 +7,8 @@ set(MF_CORE_SOURCES
   src/mf_bundle.c
   src/mf_table.c
   src/mf_develop.c
+  src/mf_fx.c
+  src/mf_fx_bake.c
   src/mf_api.c)
 # content hash of the film core sources: the "film_core_version" in render
 # identities, stable across commits that do not touch the core
@@ -27,7 +29,7 @@ set_target_properties(mf_core_shared PROPERTIES OUTPUT_NAME mf_core C_VISIBILITY
 target_include_directories(mf_core_shared PUBLIC include)
 target_link_libraries(mf_core_shared PUBLIC m)
 
-foreach(t test_film_color test_seed test_noise test_bundle test_develop)
+foreach(t test_film_color test_seed test_noise test_bundle test_develop test_fx)
   add_executable(${t} tests/${t}.c)
   target_link_libraries(${t} mf_core)
 endforeach()
@@ -38,3 +40,4 @@ add_test(NAME noise_tile_order_independent COMMAND test_noise)
 add_test(NAME bundle_parses_all_films
          COMMAND test_bundle ${PROJECT_SOURCE_DIR}/profiles/mfilm-films.bin)
 add_test(NAME develop_frame_properties COMMAND test_develop ${PROJECT_SOURCE_DIR}/profiles/mfilm-films.bin)
+add_test(NAME fx_matches_float_stage COMMAND test_fx ${PROJECT_SOURCE_DIR}/profiles/mfilm-films.bin)

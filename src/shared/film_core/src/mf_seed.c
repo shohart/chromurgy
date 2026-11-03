@@ -9,7 +9,6 @@
  * docs/audit/P00-source-audit.md. */
 #include "mf_core.h"
 
-#include <stdio.h>
 #include <string.h>
 
 #define SEED_MAX_INPUT 1024
@@ -23,6 +22,30 @@ static int put(uint8_t *buf, size_t *at, const char *s)
     return 1;
 }
 
+/* decimal digits of v; no printf and no 64-bit divide helper (neither is
+ * available to a CHDK module): long division by 10, bit by bit */
+static size_t u64_decimal(uint64_t v, char *out)
+{
+    char tmp[20];
+    size_t n = 0;
+    do
+    {
+        uint64_t q = 0;
+        uint32_t r = 0;
+        for (int i = 63; i >= 0; i--)
+        {
+            r = (r << 1) | (uint32_t) ((v >> i) & 1);
+            q <<= 1;
+            if (r >= 10) { r -= 10; q |= 1; }
+        }
+        tmp[n++] = (char) ('0' + r);
+        v = q;
+    } while (v);
+    for (size_t i = 0; i < n; i++) out[i] = tmp[n - 1 - i];
+    out[n] = 0;
+    return n;
+}
+
 int mf_frame_seed(const char *device_id, const char *roll_id, const char *frame_id,
                   const char *profile_id, const char *recipe_version,
                   uint64_t user_seed, uint64_t *seed_out)
@@ -32,7 +55,7 @@ int mf_frame_seed(const char *device_id, const char *roll_id, const char *frame_
     uint8_t buf[SEED_MAX_INPUT];
     size_t at = 0;
     char us[24];
-    snprintf(us, sizeof(us), "%llu", (unsigned long long) user_seed);
+    u64_decimal(user_seed, us);
     if (!put(buf, &at, "mfilm-seed-v1") || !put(buf, &at, device_id) || !put(buf, &at, roll_id) ||
         !put(buf, &at, frame_id) || !put(buf, &at, profile_id) || !put(buf, &at, recipe_version))
         return MF_E_INVALID_ARG;

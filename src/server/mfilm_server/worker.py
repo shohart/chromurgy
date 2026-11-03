@@ -26,7 +26,8 @@ from .store import Store, safe_id
 
 MAX_ATTEMPTS = 3
 TERMINAL_CODES = {"BAD_DNG", "UNSUPPORTED_PROFILE", "UNSUPPORTED_RECIPE", "PROFILE_BUNDLE_MISMATCH",
-                  "OUTPUT_LARGER_THAN_SOURCE", "UNSUPPORTED_DNG_FEATURE"}
+                  "OUTPUT_LARGER_THAN_SOURCE", "UNSUPPORTED_DNG_FEATURE",
+                  "RENDER_IDENTITY_MISMATCH"}   # core changed since enqueue: re-queue (mfilmctl develop), never retry
 NOW = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
 
 
