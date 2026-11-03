@@ -135,6 +135,12 @@ paths:
       - $ref: '#/components/parameters/RollId'
     get:
       summary: List committed rendition IDs and download metadata
+      parameters:
+        - in: query
+          name: origin
+          required: false
+          description: linux (default, the canonical server renditions), camera (offline renders the camera uploaded) or all
+          schema: { type: string, enum: [linux, camera, all], default: linux }
       responses:
         '200':
           description: Available results
@@ -204,6 +210,25 @@ components:
         bytes: { type: integer, format: int64, minimum: 1 }
         sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
         media_type: { type: string }
+        render:
+          $ref: '#/components/schemas/CameraRenderRecord'
+      description: >
+        For media_role=camera_render, `render` is required and media_type must be image/jpeg.
+        The server recomputes render_id and grain_seed from the frame's declared original hash
+        and refuses the session (409) when they disagree or the recipe is not the roll's frozen
+        film and bundle.
+    CameraRenderRecord:
+      type: object
+      required: [render_id, recipe, film_core_version, grain_seed, output_width, output_height]
+      properties:
+        render_id: { type: string, pattern: '^[a-f0-9]{64}$' }
+        recipe: { type: object, additionalProperties: true, description: full render recipe used on the camera }
+        film_core_version: { type: string, description: core source hash + ABI of the camera build }
+        grain_seed: { type: string, pattern: '^[a-f0-9]{16}$' }
+        output_width: { type: integer, minimum: 1 }
+        output_height: { type: integer, minimum: 1 }
+        developed_at: { type: string }
+        elapsed_s: { type: number }
     AssetReceipt:
       type: object
       required: [server_asset_id, asset_sha256, bytes, durable]

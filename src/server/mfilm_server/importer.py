@@ -7,7 +7,6 @@ same card adds nothing. A conflicting manifest for a known roll is refused.
 from __future__ import annotations
 
 import hashlib
-import os
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from pathlib import Path

@@ -41,7 +41,7 @@ def fsync_dir(path: Path) -> None:
 
 
 class Store:
-    SUBDIRS = ("incoming", "originals", "offline-renders", "renders", "manifests", "db", "logs")
+    SUBDIRS = ("incoming", "originals", "offline-renders", "renders", "manifests", "bundles", "db", "logs")
 
     def __init__(self, root: Path):
         self.root = Path(root)

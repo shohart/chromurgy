@@ -4,7 +4,9 @@ develop their frames with the shared film core into the render archive.
 
 States: renders/jobs use QUEUED -> RUNNING -> COMMITTED, or FAILED_RETRYABLE
 (re-queued up to MAX_ATTEMPTS) / FAILED_TERMINAL. A crash leaves RUNNING
-jobs behind; recover_stale() puts them back in the queue.
+jobs behind; recover_stale() puts them back in the queue. A job whose exact
+profile bundle is not archived is parked in WAITING_FOR_INPUTS (no attempt
+spent) and re-queued once that bundle is added (docs/12: pause, never drift).
 """
 from __future__ import annotations
 
@@ -13,9 +15,9 @@ import json
 import os
 import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
 
 from . import core
+from .bundles import Bundles, BundleUnavailable
 from .develop import DevelopError, default_recipe, develop, recipe_render_id, recipe_seed
 from .ids import canonical_json, sha256_file
 from .store import Store, safe_id
@@ -42,16 +44,50 @@ def find_roll(conn: sqlite3.Connection, roll_id: str, device_id: str | None = No
     return rows[0]
 
 
+LOOK_KEYS = ("grain_scale", "halation_scale", "softness_scale")
+
+
+def build_recipe(roll: sqlite3.Row, *, profile: str | None = None, bundle_hash: str | None = None,
+                 look: dict | None = None, exposure_ev: float | None = None,
+                 user_seed: int | None = None) -> dict:
+    """The roll's own recipe, or a reprocess variant of it.
+
+    Unchanged arguments give exactly the roll's recipe (same render ids, so a
+    repeat is a no-op). Any change gets a recipe_id derived from the change,
+    hence a new grain seed and new renditions next to the old ones.
+    """
+    profile = profile or roll["film_profile_id"]
+    bundle_hash = (bundle_hash or roll["profile_bundle_hash"]).lower()
+    recipe = default_recipe(profile, bundle_hash)
+    change = {}
+    if profile != roll["film_profile_id"]:
+        change["film_profile_id"] = profile
+    if bundle_hash != roll["profile_bundle_hash"].lower():
+        change["profile_bundle_hash"] = bundle_hash
+    for k, v in (look or {}).items():
+        if k not in LOOK_KEYS:
+            raise QueueError(f"unknown look control {k}")
+        if v is not None and float(v) != recipe["look_controls"][k]:
+            change[k] = recipe["look_controls"][k] = float(v)
+    if exposure_ev is not None and float(exposure_ev) != recipe["exposure_compensation_ev"]:
+        change["exposure_compensation_ev"] = recipe["exposure_compensation_ev"] = float(exposure_ev)
+    if user_seed is not None and int(user_seed) != recipe["user_seed"]:
+        change["user_seed"] = recipe["user_seed"] = int(user_seed)
+    if change:
+        recipe["recipe_id"] = f"reprocess-{profile}-{hashlib.sha256(canonical_json(change)).hexdigest()[:12]}"
+    else:
+        recipe["recipe_id"] = roll["render_recipe_id"] or recipe["recipe_id"]
+    return recipe
+
+
 def enqueue_roll(conn: sqlite3.Connection, roll_id: str, device_id: str | None = None,
-                 recipe_overrides: dict | None = None) -> dict:
-    """Queue one canonical linux rendition per verified frame. Idempotent."""
+                 recipe: dict | None = None) -> dict:
+    """Queue one linux rendition per verified frame (the roll's recipe by default). Idempotent."""
     roll = find_roll(conn, roll_id, device_id)
     if roll["state"] != "INPUTS_COMPLETE":
         raise QueueError(f"roll {roll_id} is {roll['state']}: not every original is verified yet")
-    recipe = default_recipe(roll["film_profile_id"], roll["profile_bundle_hash"])
-    recipe["recipe_id"] = roll["render_recipe_id"] or recipe["recipe_id"]
-    for k, v in (recipe_overrides or {}).items():
-        recipe[k] = v
+    recipe = recipe or build_recipe(roll)
+    bundle_hash = recipe["profile_bundle_hash"]
     recipe_json = canonical_json(recipe).decode()
     recipe_key = hashlib.sha256(recipe_json.encode()).hexdigest()
     frames = conn.execute(
@@ -62,10 +98,10 @@ def enqueue_roll(conn: sqlite3.Connection, roll_id: str, device_id: str | None =
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute("INSERT OR IGNORE INTO recipes(id, json, core_revision, bundle_hash) VALUES (?,?,?,?)",
-                     (recipe_key, recipe_json, core.core_version(), roll["profile_bundle_hash"]))
+                     (recipe_key, recipe_json, core.core_version(), bundle_hash))
         for fr in frames:
             seed = recipe_seed(recipe, roll["device_id"], roll["id"], fr["id"])
-            rid = recipe_render_id(fr["sha256"], recipe, roll["profile_bundle_hash"], seed)
+            rid = recipe_render_id(fr["sha256"], recipe, bundle_hash, seed)
             cur = conn.execute(
                 "INSERT OR IGNORE INTO renders(id, device_id, frame_id, recipe_id, output_spec, origin, state) "
                 "VALUES (?,?,?,?,?, 'linux', 'QUEUED')",
@@ -77,7 +113,9 @@ def enqueue_roll(conn: sqlite3.Connection, roll_id: str, device_id: str | None =
     except BaseException:
         conn.execute("ROLLBACK")
         raise
-    return {"device_id": roll["device_id"], "roll_id": roll["id"], "frames": len(frames), "queued": added}
+    return {"device_id": roll["device_id"], "roll_id": roll["id"], "frames": len(frames), "queued": added,
+            "recipe_id": recipe["recipe_id"], "film_profile_id": recipe["film_profile_id"],
+            "profile_bundle_hash": bundle_hash}
 
 
 def recover_stale(conn: sqlite3.Connection) -> int:
@@ -136,13 +174,41 @@ def _finish(conn, job, state: str, code: str | None = None, asset_id: int | None
         raise
 
 
-def run_one(conn: sqlite3.Connection, store: Store, bundle: core.Bundle,
+def park_and_unpark(conn: sqlite3.Connection, bundles: Bundles) -> tuple[list[JobResult], int]:
+    """Park queued jobs whose bundle is missing; re-queue parked ones whose bundle arrived."""
+    rows = conn.execute(
+        "SELECT j.id, j.render_id, j.state, rc.bundle_hash FROM jobs j JOIN renders r ON r.id=j.render_id "
+        "JOIN recipes rc ON rc.id=r.recipe_id WHERE j.state IN ('QUEUED','WAITING_FOR_INPUTS')").fetchall()
+    parked: list[JobResult] = []
+    unparked = 0
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for j in rows:
+            have = bundles.has(j["bundle_hash"])
+            if j["state"] == "QUEUED" and not have:
+                conn.execute("UPDATE jobs SET state='WAITING_FOR_INPUTS', error_code='PROFILE_BUNDLE_UNAVAILABLE' "
+                             "WHERE id=?", (j["id"],))
+                conn.execute("UPDATE renders SET state='WAITING_FOR_INPUTS' WHERE id=?", (j["render_id"],))
+                parked.append(JobResult(j["id"], j["render_id"], "WAITING_FOR_INPUTS", "PROFILE_BUNDLE_UNAVAILABLE",
+                                        j["bundle_hash"]))
+            elif j["state"] == "WAITING_FOR_INPUTS" and have:
+                conn.execute("UPDATE jobs SET state='QUEUED', error_code=NULL WHERE id=?", (j["id"],))
+                conn.execute("UPDATE renders SET state='QUEUED' WHERE id=?", (j["render_id"],))
+                unparked += 1
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    return parked, unparked
+
+
+def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles,
             skip: set[int] = frozenset()) -> JobResult | None:
     job = _claim(conn, skip)
     if not job:
         return None
     r = conn.execute(
-        "SELECT r.*, rc.json AS recipe_json, f.roll_id, f.capture_time, a.path AS original_path, a.sha256 AS original_sha256 "
+        "SELECT r.*, rc.json AS recipe_json, rc.bundle_hash, f.roll_id, f.capture_time, a.path AS original_path, a.sha256 AS original_sha256 "
         "FROM renders r JOIN recipes rc ON rc.id=r.recipe_id "
         "JOIN frames f ON f.device_id=r.device_id AND f.id=r.frame_id JOIN assets a ON a.id=f.original_asset_id "
         "WHERE r.id=?", (job["render_id"],)).fetchone()
@@ -150,6 +216,7 @@ def run_one(conn: sqlite3.Connection, store: Store, bundle: core.Bundle,
     dest_dir = store.root / "renders" / safe_id(r["device_id"]) / safe_id(r["roll_id"])
     dest = dest_dir / f"{r['id']}.jpg"
     try:
+        bundle = bundles.get(r["bundle_hash"])
         if not dest.exists():
             work = store.root / "incoming" / f"render-{r['id']}"
             work.mkdir(exist_ok=True)
@@ -176,6 +243,13 @@ def run_one(conn: sqlite3.Connection, store: Store, bundle: core.Bundle,
         conn.execute("COMMIT")
         _finish(conn, job, "COMMITTED", asset_id=asset_id)
         return JobResult(job["id"], r["id"], "COMMITTED")
+    except BundleUnavailable as e:            # removed between park check and claim
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("UPDATE jobs SET state='WAITING_FOR_INPUTS', attempt=attempt-1, error_code=? WHERE id=?",
+                     (e.code, job["id"]))
+        conn.execute("UPDATE renders SET state='WAITING_FOR_INPUTS' WHERE id=?", (r["id"],))
+        conn.execute("COMMIT")
+        return JobResult(job["id"], r["id"], "WAITING_FOR_INPUTS", e.code, e.sha)
     except (DevelopError, core.CoreError) as e:
         state = "FAILED_TERMINAL" if e.code in TERMINAL_CODES else "FAILED_RETRYABLE"
         _finish(conn, job, state, e.code)
@@ -187,13 +261,15 @@ def run_one(conn: sqlite3.Connection, store: Store, bundle: core.Bundle,
 
 def run(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None = None) -> list[JobResult]:
     recover_stale(conn)
-    bundle = core.Bundle()
+    bundles = Bundles(store)
+    bundles.ensure_default()
+    parked, _ = park_and_unpark(conn, bundles)
     done: list[JobResult] = []
     tried: set[int] = set()           # a retryable failure waits for the next run
     while max_jobs is None or len(done) < max_jobs:
-        res = run_one(conn, store, bundle, tried)
+        res = run_one(conn, store, bundles, tried)
         if res is None:
             break
         tried.add(res.job_id)
         done.append(res)
-    return done
+    return parked + done

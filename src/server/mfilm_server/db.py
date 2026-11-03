@@ -135,6 +135,10 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX uploads_frame ON uploads(device_id, frame_id, declared_sha256, state)
     """,
+    # 4: declared render record of a camera_render upload (JSON), checked at init, used at complete
+    """
+    ALTER TABLE uploads ADD COLUMN meta TEXT
+    """,
 ]
 
 

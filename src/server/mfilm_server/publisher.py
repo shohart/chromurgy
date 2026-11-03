@@ -8,13 +8,13 @@ because the library usually lives on a network share (CIFS/NFS).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import sqlite3
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 
 from .config import PhotoPrism
 from .ids import sha256_file
@@ -35,19 +35,11 @@ class Published:
     detail: str | None = None
 
 
-def _film_short(conn, key: str) -> str:
-    """'Portra400' from profiles/films.json, else the key itself."""
-    import json
-    from . import core
-    meta = core.bundle_path().with_name("films.json")
-    try:
-        for f in json.loads(meta.read_text())["films"]:
-            if f["key"] == key:
-                key = f["short"]
-                break
-    except (OSError, ValueError, KeyError):
-        pass
-    return re.sub(r"[^A-Za-z0-9]", "", key) or "film"
+def _film_short(store: Store, bundle_hash: str, key: str) -> str:
+    """'Portra400' from the films.json archived with the bundle, else the key itself."""
+    from .bundles import Bundles
+    short = Bundles(store).film_short(bundle_hash, key) or key
+    return re.sub(r"[^A-Za-z0-9]", "", short) or "film"
 
 
 def roll_folder(roll: sqlite3.Row, film_short: str) -> str:
@@ -68,15 +60,18 @@ def publish_roll(conn: sqlite3.Connection, store: Store, pp: PhotoPrism, roll_id
     if len(rolls) != 1:
         raise PublishError(f"roll {roll_id}: {len(rolls)} matches")
     roll = rolls[0]
-    dest_root = pp.export_dir / pp.subdir / roll_folder(roll, _film_short(conn, roll["film_profile_id"]))
     destination = f"photoprism:{pp.export_dir}"
     rows = conn.execute(
-        "SELECT r.id, f.ordinal, a.path, a.sha256 FROM renders r "
+        "SELECT r.id, f.ordinal, a.path, a.sha256, rc.json AS recipe_json, rc.bundle_hash FROM renders r "
         "JOIN frames f ON f.device_id=r.device_id AND f.id=r.frame_id JOIN assets a ON a.id=r.asset_id "
+        "JOIN recipes rc ON rc.id=r.recipe_id "
         "WHERE f.device_id=? AND f.roll_id=? AND r.origin='linux' AND r.state IN ('COMMITTED','PUBLISHED') "
         "ORDER BY f.ordinal", (roll["device_id"], roll["id"])).fetchall()
     out: list[Published] = []
     for r in rows:
+        # folder per film actually rendered: a reprocess with another film gets its own folder
+        film = json.loads(r["recipe_json"])["film_profile_id"]
+        dest_root = pp.export_dir / pp.subdir / roll_folder(roll, _film_short(store, r["bundle_hash"], film))
         done = conn.execute("SELECT status FROM publications WHERE render_id=? AND destination=?",
                             (r["id"], destination)).fetchone()
         target = dest_root / f"{r['ordinal']:02d}_{r['id'][:12]}.jpg"

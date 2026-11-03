@@ -3,11 +3,13 @@
 in for an SX510 HS DNG (a pipeline fixture, not camera evidence)."""
 import hashlib
 import json
+import os
 import shutil
+from pathlib import Path
 
 import pytest
 
-from mfilm_server import core, worker
+from mfilm_server import cli, core, worker
 from mfilm_server.cli import main
 from mfilm_server.importer import import_card
 from test_develop import SAMPLE
@@ -49,18 +51,93 @@ def test_card_to_developed_jpeg(sample_card, store, conn):
     assert not list((store.root / "incoming").iterdir())
 
 
-def test_bundle_mismatch_is_terminal(make_card, store, conn):
+def _alt_bundle(tmp_path) -> Path:
+    """A second valid bundle: the shipped one with one table value changed."""
+    d = bytearray(core.bundle_path().read_bytes())
+    d[-1] ^= 1
+    p = tmp_path / "alt" / "mfilm-films.bin"
+    p.parent.mkdir()
+    p.write_bytes(bytes(d))
+    return p
+
+
+def test_unknown_bundle_parks_until_added(make_card, store, conn, tmp_path, capsys):
+    alt = _alt_bundle(tmp_path)
+    alt_sha = hashlib.sha256(alt.read_bytes()).hexdigest()
+
     def mutate(doc, card):
         dst = card / "DCIM" / "100CANON" / "IMG_0001.DNG"
         shutil.copyfile(SAMPLE, dst)
         data = dst.read_bytes()
         doc["frames"][0].update(source_size_bytes=len(data), source_sha256=hashlib.sha256(data).hexdigest())
-    card = make_card(frames=1, mutate=mutate)                        # bundle hash "bbbb..."
-    import_card(card, store, conn)
+        doc["profile_bundle_hash"] = alt_sha                      # shot with a bundle the server lacks
+    import_card(make_card(frames=1, mutate=mutate), store, conn)
     roll = conn.execute("SELECT id FROM rolls").fetchone()[0]
     worker.enqueue_roll(conn, roll)
     res = worker.run(conn, store)
-    assert [(r.state, r.error_code) for r in res] == [("FAILED_TERMINAL", "PROFILE_BUNDLE_MISMATCH")]
+    assert [(r.state, r.error_code) for r in res] == [("WAITING_FOR_INPUTS", "PROFILE_BUNDLE_UNAVAILABLE")]
+    assert conn.execute("SELECT attempt, state FROM jobs").fetchone()[:] == (0, "WAITING_FOR_INPUTS")
+    assert worker.run(conn, store) == []                            # parked: not retried, not failed
+    # never developed with the current bundle instead
+    assert conn.execute("SELECT COUNT(*) FROM renders WHERE state='COMMITTED'").fetchone()[0] == 0
+
+    root = ["--data-dir", str(store.root)]
+    assert cli.main(["bundle-add", str(alt), *root]) == 0
+    assert "1 waiting job(s) re-queued" in capsys.readouterr().out
+    res = worker.run(conn, store)
+    assert [r.state for r in res] == ["COMMITTED"]
+    rel = conn.execute("SELECT a.path FROM renders r JOIN assets a ON a.id=r.asset_id").fetchone()[0]
+    prov = json.loads((store.root / rel).with_suffix(".jpg.json").read_text())
+    assert prov["profile_bundle_hash"] == alt_sha
+    archived = store.root / "bundles" / f"{alt_sha}.bin"
+    assert archived.is_file() and not os.access(archived, os.W_OK)
+    assert cli.main(["bundle-list", *root]) == 0
+
+
+def test_bundle_add_rejects_garbage(store, tmp_path, capsys):
+    bad = tmp_path / "bad.bin"
+    bad.write_bytes(b"MFB1" + b"\0" * 64)
+    assert cli.main(["bundle-add", str(bad), "--data-dir", str(store.root)]) == 1
+    assert not list((store.root / "bundles").glob(f"{hashlib.sha256(bad.read_bytes()).hexdigest()}*"))
+
+
+def test_reprocess_new_film_keeps_old_and_is_idempotent(sample_card, store, conn, capsys):
+    import_card(sample_card, store, conn)
+    roll = conn.execute("SELECT id FROM rolls").fetchone()[0]
+    worker.enqueue_roll(conn, roll)
+    assert [r.state for r in worker.run(conn, store)] == ["COMMITTED"]
+    root = ["--data-dir", str(store.root)]
+    # unchanged recipe: same rendition, nothing queued
+    assert cli.main(["reprocess", roll, *root]) == 0
+    assert "nothing new" in capsys.readouterr().out
+    assert cli.main(["reprocess", roll, "--profile", "nosuchfilm", *root]) == 1
+    assert cli.main(["reprocess", roll, "--profile", "ektar100", "--grain-scale", "0.5", "--run", *root]) == 0
+    assert cli.main(["reprocess", roll, "--profile", "ektar100", "--grain-scale", "0.5", *root]) == 0
+    assert "nothing new" in capsys.readouterr().out.splitlines()[-1]
+    rows = conn.execute("SELECT r.state, rc.json FROM renders r JOIN recipes rc ON rc.id=r.recipe_id "
+                        "ORDER BY r.rowid").fetchall()
+    assert [r["state"] for r in rows] == ["COMMITTED", "COMMITTED"]
+    films = [json.loads(r["json"])["film_profile_id"] for r in rows]
+    assert films == ["portra400", "ektar100"]
+    new = json.loads(rows[1]["json"])
+    assert new["recipe_id"].startswith("reprocess-ektar100-") and new["look_controls"]["grain_scale"] == 0.5
+    # the roll itself stays frozen to its film
+    assert conn.execute("SELECT film_profile_id FROM rolls").fetchone()[0] == "portra400"
+
+
+def test_publish_folder_per_rendered_film(sample_card, store, conn, tmp_path):
+    from mfilm_server import publisher
+    from mfilm_server.config import PhotoPrism
+    import_card(sample_card, store, conn)
+    roll_row = conn.execute("SELECT * FROM rolls").fetchone()
+    worker.enqueue_roll(conn, roll_row["id"])
+    worker.enqueue_roll(conn, roll_row["id"], recipe=worker.build_recipe(roll_row, profile="ektar100"))
+    assert [r.state for r in worker.run(conn, store)] == ["COMMITTED", "COMMITTED"]
+    lib = tmp_path / "library"
+    lib.mkdir()
+    res = publisher.publish_roll(conn, store, PhotoPrism(export_dir=lib), roll_row["id"])
+    assert [r.status for r in res] == ["EXPORTED", "EXPORTED"]
+    assert sorted(p.parent.name.split("_")[1] for p in lib.glob("M-Film/*/*.jpg")) == ["Ektar100", "Portra400"]
 
 
 def test_stale_running_job_recovered(sample_card, store, conn):

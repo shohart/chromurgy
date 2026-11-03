@@ -15,7 +15,7 @@ from .importer import as_dict, import_card
 from .store import Store
 
 DEFAULT_ROOT = os.environ.get("MFILM_DATA_DIR", "/var/lib/mfilm")
-NOT_IMPLEMENTED = ("reprocess",)
+NOT_IMPLEMENTED: tuple[str, ...] = ()
 
 
 def _open(root: str | None, cfg=None) -> tuple[Store, "db.sqlite3.Connection"]:
@@ -32,8 +32,15 @@ def _out(args, payload, text: str) -> None:
 
 def cmd_init(args) -> int:
     store, conn = _open(args.data_dir, args.cfg)
+    from . import core
+    from .bundles import Bundles
     v = conn.execute("PRAGMA user_version").fetchone()[0]
-    _out(args, {"data_dir": str(store.root), "schema_version": v}, f"initialised {store.root} (schema v{v})")
+    try:
+        sha = Bundles(store).ensure_default()
+    except core.CoreError as e:
+        sha = f"not archived ({e.code})"
+    _out(args, {"data_dir": str(store.root), "schema_version": v, "profile_bundle": sha},
+         f"initialised {store.root} (schema v{v}, profile bundle {sha})")
     return 0
 
 
@@ -94,7 +101,7 @@ def _publish_ready(args, store, conn) -> list[dict]:
         " WHERE f.roll_id=r.id AND f.device_id=r.device_id AND x.origin='linux' AND x.state='COMMITTED')"
         " AND NOT EXISTS (SELECT 1 FROM renders x JOIN frames f ON f.device_id=x.device_id AND f.id=x.frame_id"
         " WHERE f.roll_id=r.id AND f.device_id=r.device_id AND x.origin='linux'"
-        " AND x.state IN ('QUEUED','RUNNING','FAILED_RETRYABLE'))").fetchall()
+        " AND x.state IN ('QUEUED','RUNNING','FAILED_RETRYABLE','WAITING_FOR_INPUTS'))").fetchall()
     out = []
     for r in rolls:
         try:
@@ -108,9 +115,8 @@ def _publish_ready(args, store, conn) -> list[dict]:
 def cmd_worker(args) -> int:
     if args.watch:
         import time
-        rc = 0
         while True:                   # systemd restarts us on crash; SIGTERM ends the loop
-            rc = _worker_pass(args)
+            _worker_pass(args)
             time.sleep(args.interval)
     return _worker_pass(args)
 
@@ -148,6 +154,70 @@ def cmd_publish(args) -> int:
          "\n".join(f"{x.status:8} {x.path}" + (f" ({x.detail})" if x.detail else "") for x in res)
          or "nothing committed to publish")
     return 0 if res and all(x.status != "FAILED" for x in res) else 1
+
+
+def cmd_reprocess(args) -> int:
+    """Queue new renditions of a roll with another film / look / bundle. Old ones stay."""
+    from . import core, worker
+    from .bundles import Bundles
+    store, conn = _open(args.data_dir, args.cfg)
+    bundles = Bundles(store)
+    try:
+        roll = worker.find_roll(conn, args.roll_id, args.device)
+        bundle_hash = args.bundle
+        if bundle_hash == "current":
+            bundle_hash = bundles.ensure_default()
+            if not bundle_hash:
+                raise worker.QueueError("this checkout has no profiles/mfilm-films.bin")
+        recipe = worker.build_recipe(
+            roll, profile=args.profile, bundle_hash=bundle_hash, exposure_ev=args.exposure_ev, user_seed=args.seed,
+            look={"grain_scale": args.grain_scale, "halation_scale": args.halation_scale,
+                  "softness_scale": args.softness_scale})
+        keys = bundles.get(recipe["profile_bundle_hash"]).keys
+        if recipe["film_profile_id"] not in keys:
+            raise worker.QueueError(f"film {recipe['film_profile_id']} is not in bundle "
+                                    f"{recipe['profile_bundle_hash'][:12]} (mfilmctl bundle-list)")
+        q = worker.enqueue_roll(conn, roll["id"], roll["device_id"], recipe)
+    except (worker.QueueError, core.CoreError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    results = worker.run(conn, store) if args.run else []
+    msg = (f"queued {q['queued']}/{q['frames']} new renditions ({q['recipe_id']})" if q["queued"]
+           else f"nothing new: renditions for {q['recipe_id']} already exist")
+    _out(args, {**q, "jobs": [r.__dict__ for r in results]}, msg + "".join(
+        f"\n  job {r.job_id} {r.state}" + (f" {r.error_code}: {r.detail}" if r.error_code else "") for r in results))
+    return 0 if all(r.state == "COMMITTED" for r in results) else 1
+
+
+def cmd_bundle_add(args) -> int:
+    from . import core, worker
+    from .bundles import Bundles
+    store, conn = _open(args.data_dir, args.cfg)
+    try:
+        sha, new = Bundles(store).add(Path(args.file), Path(args.films_json) if args.films_json else None)
+    except (core.CoreError, OSError) as e:
+        print(f"rejected: {e}", file=sys.stderr)
+        return 1
+    _, unparked = worker.park_and_unpark(conn, Bundles(store))
+    _out(args, {"profile_bundle_hash": sha, "added": new, "requeued_jobs": unparked},
+         f"{'added' if new else 'already archived'} {sha}" + (f"; {unparked} waiting job(s) re-queued" if unparked else ""))
+    return 0
+
+
+def cmd_bundle_list(args) -> int:
+    from .bundles import Bundles
+    store, conn = _open(args.data_dir, args.cfg)
+    rows = Bundles(store).list()
+    used = {r[0]: r[1] for r in conn.execute("SELECT profile_bundle_hash, COUNT(*) FROM rolls GROUP BY 1")}
+    for r in rows:
+        r["rolls"] = used.pop(r["profile_bundle_hash"], 0)
+        r.pop("keys", None)
+    missing = [{"profile_bundle_hash": h, "rolls": n, "error": "NOT_ARCHIVED"} for h, n in used.items()]
+    _out(args, rows + missing, "\n".join(
+        f"{r['profile_bundle_hash']}  " + (f"{r['films']} films" if "films" in r else r["error"])
+        + f", {r['rolls']} roll(s)" + ("  (current)" if r.get("current") else "") for r in rows + missing)
+        or "no bundles archived")
+    return 1 if missing else 0
 
 
 def cmd_device_pair(args) -> int:
@@ -239,6 +309,25 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--device")
     s.add_argument("--index", action="store_true", help="run photoprism.index_command afterwards")
     s.set_defaults(fn=cmd_publish)
+    s = sub.add_parser("reprocess", parents=[common],
+                       help="new renditions of a roll with another film/look (old ones are kept)")
+    s.add_argument("roll_id")
+    s.add_argument("--device")
+    s.add_argument("--profile", help="film key (default: the roll's film)")
+    s.add_argument("--bundle", help="profile bundle hash, or 'current' (default: the roll's own bundle)")
+    s.add_argument("--grain-scale", type=float)
+    s.add_argument("--halation-scale", type=float)
+    s.add_argument("--softness-scale", type=float)
+    s.add_argument("--exposure-ev", type=float)
+    s.add_argument("--seed", type=int, help="user seed: another grain pattern")
+    s.add_argument("--run", action="store_true")
+    s.set_defaults(fn=cmd_reprocess)
+    s = sub.add_parser("bundle-add", parents=[common], help="archive a profile bundle (mfilm-films.bin)")
+    s.add_argument("file")
+    s.add_argument("--films-json", help="its films.json (default: next to the file)")
+    s.set_defaults(fn=cmd_bundle_add)
+    sub.add_parser("bundle-list", parents=[common], help="archived bundles and rolls that need one").set_defaults(
+        fn=cmd_bundle_list)
     s = sub.add_parser("list-rolls", parents=[common])
     s.add_argument("--state", choices=db.ROLL_SERVER_STATES)
     s.set_defaults(fn=cmd_list_rolls)

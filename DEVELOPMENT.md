@@ -29,6 +29,18 @@ src/server/.venv/bin/mfilm-develop --input IMG_0001.DNG --profile portra400 --ou
 src/server/.venv/bin/mfilmctl --data-dir /tmp/mfilm worker          # develop queued rolls (+ publish if configured)
 ```
 
+Profile bundles: every roll is frozen to the bundle hash it was shot with. The
+server archives bundles under `<data_dir>/bundles/<sha256>.bin` (the shipped one
+automatically) and develops each roll with exactly its own; a roll whose bundle
+is missing waits (`WAITING_FOR_INPUTS`) until `mfilmctl bundle-add <file>`.
+So: after rebuilding `profiles/mfilm-films.bin`, run the worker or `mfilmctl init`
+once so the new bundle is archived; keep old bundle files, never edit one in place.
+`mfilmctl bundle-list` shows archived bundles and rolls that need a missing one.
+
+New renditions of a developed roll (old ones are kept, the roll stays frozen):
+`mfilmctl reprocess <roll> [--profile ektar100] [--grain-scale 0.5] [--seed 7] [--bundle current] --run`.
+An unchanged request is a no-op ("nothing new").
+
 Rebuild the film bundle after changing `profiles/source` or `profiles/luts`:
 `src/server/.venv/bin/python -I tools/build_bundle.py` (then ctest; `tools/check_upstream_tables.sh` compares with upstream).
 
@@ -38,4 +50,4 @@ Rebuild the film bundle after changing `profiles/source` or `profiles/luts`:
 
 - The film look comes only from `src/shared/film_core` (ported from M-Film, checked against upstream golden vectors). Python never reimplements it.
 - Regenerate golden vectors only after a deliberate `LOCKFILE` bump: `tools/gen_golden_film_color.sh`.
-- No camera RAWs, firmware, LUTs or personal photos in Git (`.gitignore` blocks the common ones).
+- No camera RAWs, firmware or personal photos in Git (`.gitignore` blocks the common ones). The film LUTs in `profiles/luts` are committed on purpose (personal repo; re-check licences before publishing it).

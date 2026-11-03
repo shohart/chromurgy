@@ -118,3 +118,82 @@ def test_power_loss_resume_develop_and_return(api, sample_card, store):  # noqa:
     assert hashlib.sha256(got[0].read_bytes()).hexdigest() == listed[0]["sha256"]
     assert listed[0]["width"] == 5208
     assert cam2.pull_results(res["roll_id"]) == got                  # already there, nothing re-downloaded
+
+
+@pytest.mark.skipif(not SAMPLE.is_file() or not core.lib_path().is_file(), reason="needs vendor + core")
+def test_camera_render_upload_and_reconciliation(api, sample_card, store, tmp_path):  # noqa: F811
+    from mfilm_server import publisher
+    from mfilm_server.config import PhotoPrism
+    from mfilm_server.simulator import develop_offline
+    client, token, c = api
+    m = find_manifests(sample_card)[0]
+    made = develop_offline(m, sample_card)                        # "Develop Here" on the camera
+    rec_path = made[0].with_suffix(".json")
+    rec = json.loads(rec_path.read_text())
+    cam = Camera(client, token, sample_card)
+    res = cam.sync_roll(m)
+    assert list(res["camera_renders"]) == [rec["frame_id"]]
+    assert res["camera_renders"][rec["frame_id"]]["asset_sha256"] == hashlib.sha256(made[0].read_bytes()).hexdigest()
+    rid = rec["render"]["render_id"]
+    row = c.execute("SELECT r.origin, r.state, a.kind, a.path FROM renders r JOIN assets a ON a.id=r.asset_id "
+                    "WHERE r.id=?", (rid,)).fetchone()
+    assert tuple(row)[:3] == ("camera", "COMMITTED", "offline_jpeg")
+    assert row["path"].startswith("offline-renders/")
+    side = json.loads((store.root / row["path"]).with_suffix(".jpg.json").read_text())
+    assert side["developed_by"] == "camera" and side["output_width"] == 1200
+    roll = client.get(f"/v1/rolls/{res['roll_id']}", headers=auth(token)).json()
+    assert roll["frames"][0]["camera_render_id"] == rid
+    assert roll["frames"][0]["render_id"] != rid                   # the linux canonical one is still queued
+    assert cam.sync_roll(m)["camera_renders"][rec["frame_id"]]["durable"]        # replay: same receipt
+    assert c.execute("SELECT COUNT(*) FROM renders WHERE origin='camera'").fetchone()[0] == 1
+    # the camera's own render is listed only on request and never published
+    assert client.get(f"/v1/rolls/{res['roll_id']}/renders", headers=auth(token)).json() == []
+    listed = client.get(f"/v1/rolls/{res['roll_id']}/renders", params={"origin": "camera"},
+                        headers=auth(token)).json()
+    assert [(x["render_id"], x["width"], x["origin"]) for x in listed] == [(rid, 1200, "camera")]
+    assert [r.state for r in worker.run(c, store)] == ["COMMITTED"]
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    pub = publisher.publish_roll(c, store, PhotoPrism(export_dir=lib), res["roll_id"])
+    assert len(pub) == 1 and pub[0].render_id != rid
+
+
+def test_camera_render_identity_is_checked(api, make_card, store):
+    client, token, c = api
+    card = make_card(frames=1)
+    m = find_manifests(card)[0]
+    Camera(client, token, card).sync_roll(m)
+    doc = json.loads(m.read_text())
+    fr = doc["frames"][0]
+    from mfilm_server.develop import default_recipe, recipe_seed
+    from mfilm_server.ids import render_id
+    recipe = default_recipe(doc["film_profile_id"], doc["profile_bundle_hash"])
+    recipe["recipe_id"] = doc["render_recipe_id"]
+    seed = recipe_seed(recipe, DEV, doc["roll_id"], fr["frame_id"])
+    good = {"render_id": render_id(original_sha256=fr["source_sha256"], recipe=recipe, film_core_version="cam-1",
+                                   profile_bundle_hash=doc["profile_bundle_hash"], output_spec=recipe["output_spec"],
+                                   input_normalization_version=recipe["input_normalization_version"],
+                                   grain_seed=seed),
+            "recipe": recipe, "film_core_version": "cam-1", "grain_seed": f"{seed:016x}",
+            "output_width": 64, "output_height": 48}
+    base = {"device_id": DEV, "roll_id": doc["roll_id"], "frame_id": fr["frame_id"], "media_role": "camera_render",
+            "bytes": 1000, "sha256": "c" * 64, "media_type": "image/jpeg"}
+
+    def init(**render):
+        return client.post("/v1/uploads", json={**base, "render": {**good, **render}}, headers=auth(token))
+    assert init(grain_seed="0" * 16).json()["error_code"] == "GRAIN_SEED_MISMATCH"
+    assert init(film_core_version="cam-2").json()["error_code"] == "RENDER_IDENTITY_MISMATCH"
+    assert init(recipe={**recipe, "film_profile_id": "ektar100"}).json()["error_code"] == "PROFILE_BUNDLE_MISMATCH"
+    assert client.post("/v1/uploads", json=base, headers=auth(token)).status_code == 400
+    assert init().status_code == 201
+    # a declared JPEG that is not one is refused at complete and the session is aborted
+    data = b"\xff\xd8" + b"x" * 998
+    r = client.post("/v1/uploads", json={**base, "sha256": hashlib.sha256(data).hexdigest(), "render": good},
+                    headers=auth(token))
+    uid = r.json()["upload_id"]
+    client.put(f"/v1/uploads/{uid}/chunk", content=data, headers={**auth(token), "X-Upload-Offset": "0",
+                                                                   "Content-Type": "application/octet-stream"})
+    r = client.post(f"/v1/uploads/{uid}/complete", headers=auth(token))
+    assert r.status_code == 422 and r.json()["error_code"] == "BAD_CAMERA_RENDER"
+    assert c.execute("SELECT state FROM uploads WHERE id=?", (uid,)).fetchone()[0] == "ABORTED"
+    assert c.execute("SELECT COUNT(*) FROM renders WHERE origin='camera'").fetchone()[0] == 0

@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI, Header, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import config as config_mod
-from . import contracts, core, db, devices, worker
+from . import camera_renders, contracts, core, db, devices, worker
 from .ids import canonical_json, sha256_file
 from .store import Store, UnsafePath, safe_id
 
@@ -36,6 +36,11 @@ class ApiError(Exception):
 
 def create_app(store: Store) -> FastAPI:
     store.init()
+    try:
+        from .bundles import Bundles
+        Bundles(store).ensure_default()
+    except core.CoreError:
+        pass                          # capabilities will report the error
     app = FastAPI(title="M-Film receiver", version="0.3-draft", docs_url=None, redoc_url=None)
 
     def conn() -> sqlite3.Connection:
@@ -79,15 +84,18 @@ def create_app(store: Store) -> FastAPI:
 
     @app.get("/v1/capabilities")
     def capabilities(dev: str = Depends(device)):
+        from .bundles import Bundles
         try:
             b = core.Bundle()
             bundle = {"profile_bundle_hash": b.sha256, "films": b.keys, "film_core_version": core.core_version(),
-                      "film_core_abi_version": core.abi_version()}
+                      "film_core_abi_version": core.abi_version(),
+                      # every bundle the server can develop with exactly (rolls stay frozen to theirs)
+                      "profile_bundles": [x["profile_bundle_hash"] for x in Bundles(store).list() if "films" in x]}
         except core.CoreError as e:
             bundle = {"error": e.code}
         return {"protocol_major": PROTOCOL_MAJOR, "device_id": dev, "chunk_size": CHUNK_SIZE,
                 "max_chunk_size": MAX_CHUNK, "max_asset_bytes": MAX_ASSET_BYTES,
-                "media_roles": ["original_dng"], "return_policies": ["none", "full_jpeg"],
+                "media_roles": ["original_dng", "camera_render"], "return_policies": ["none", "full_jpeg"],
                 "transports": ["http"], **bundle}
 
     @app.put("/v1/rolls/{roll_id}")
@@ -145,10 +153,15 @@ def create_app(store: Store) -> FastAPI:
             "SELECT x.id, x.frame_id, x.state, a.sha256, a.bytes FROM renders x JOIN frames f "
             "ON f.device_id=x.device_id AND f.id=x.frame_id LEFT JOIN assets a ON a.id=x.asset_id "
             "WHERE f.device_id=? AND f.roll_id=? AND x.origin='linux'", (roll["device_id"], roll["id"]))}
+        cam = {r["frame_id"]: r["id"] for r in c.execute(
+            "SELECT x.id, x.frame_id FROM renders x JOIN frames f ON f.device_id=x.device_id AND f.id=x.frame_id "
+            "WHERE f.device_id=? AND f.roll_id=? AND x.origin='camera' AND x.state='COMMITTED'",
+            (roll["device_id"], roll["id"]))}
         return {"roll_id": roll["id"], "server_state": roll["state"], "film_profile_id": roll["film_profile_id"],
                 "frames": [{"frame_id": f["id"], "ordinal": f["ordinal"], "original_state": f["original_state"],
                             "render_id": renders[f["id"]]["id"] if f["id"] in renders else None,
-                            "render_state": renders[f["id"]]["state"] if f["id"] in renders else None}
+                            "render_state": renders[f["id"]]["state"] if f["id"] in renders else None,
+                            "camera_render_id": cam.get(f["id"])}
                            for f in frames]}
 
     @app.get("/v1/rolls/{roll_id}")
@@ -181,7 +194,7 @@ def create_app(store: Store) -> FastAPI:
             raise ApiError(400, "BAD_REQUEST", f"upload init: {e}") from None
         if body["device_id"] != dev:
             raise ApiError(409, "IDENTITY_MISMATCH", "device_id differs from the credential")
-        if body["media_role"] != "original_dng":
+        if body["media_role"] not in ("original_dng", "camera_render"):
             raise ApiError(422, "UNSUPPORTED_MEDIA_ROLE", body["media_role"])
         if len(sha) != 64 or any(ch not in "0123456789abcdef" for ch in sha):
             raise ApiError(400, "BAD_REQUEST", "sha256")
@@ -192,6 +205,8 @@ def create_app(store: Store) -> FastAPI:
                        (dev, roll["id"], body["frame_id"])).fetchone()
         if not fr:
             raise ApiError(404, "UNKNOWN_FRAME", str(body["frame_id"]))
+        if body["media_role"] == "camera_render":
+            return init_camera_render(c, dev, roll, fr, body, sha, nbytes)
         if fr["declared_sha256"] != sha or fr["declared_bytes"] != nbytes:
             raise ApiError(409, "DECLARED_IDENTITY_MISMATCH", "sha256/bytes differ from the roll manifest")
         if fr["original_state"] == "VERIFIED":
@@ -213,6 +228,31 @@ def create_app(store: Store) -> FastAPI:
         c.execute("INSERT INTO uploads(id, device_id, roll_id, frame_id, media_role, declared_sha256, declared_bytes,"
                   " offset_bytes, state) VALUES (?,?,?,?,?,?,?,0,'OPEN')",
                   (uid, dev, roll["id"], fr["id"], "original_dng", sha, nbytes))
+        part_path(uid).touch()
+        return {"upload_id": uid, "next_offset": 0, "chunk_size": CHUNK_SIZE, "state": "OPEN"}
+
+    def init_camera_render(c, dev, roll, fr, body, sha, nbytes):
+        try:
+            meta = camera_renders.check_declared(roll, fr, body)
+        except camera_renders.CameraRenderError as e:
+            raise ApiError(e.status, e.code, e.detail) from None
+        have = camera_renders.existing(c, meta["render_id"])
+        if have is not None and have["state"] == "COMMITTED":
+            if have["sha256"] != sha:
+                raise ApiError(409, "RENDER_CONFLICT", "this render_id already has different pixels")
+            done = c.execute("SELECT id FROM uploads WHERE device_id=? AND frame_id=? AND declared_sha256=? AND "
+                             "state='COMPLETE'", (dev, fr["id"], sha)).fetchone()
+            return {"upload_id": done["id"] if done else None, "next_offset": nbytes, "chunk_size": CHUNK_SIZE,
+                    "state": "COMPLETE"}
+        open_ = c.execute("SELECT * FROM uploads WHERE device_id=? AND frame_id=? AND declared_sha256=? "
+                          "AND media_role='camera_render' AND state='OPEN'", (dev, fr["id"], sha)).fetchone()
+        if open_:
+            return {"upload_id": open_["id"], "next_offset": open_["offset_bytes"], "chunk_size": CHUNK_SIZE,
+                    "state": "OPEN"}
+        uid = uuid.uuid4().hex
+        c.execute("INSERT INTO uploads(id, device_id, roll_id, frame_id, media_role, declared_sha256, declared_bytes,"
+                  " offset_bytes, state, meta) VALUES (?,?,?,?, 'camera_render', ?,?,0,'OPEN',?)",
+                  (uid, dev, roll["id"], fr["id"], sha, nbytes, json.dumps(meta, sort_keys=True)))
         part_path(uid).touch()
         return {"upload_id": uid, "next_offset": 0, "chunk_size": CHUNK_SIZE, "state": "OPEN"}
 
@@ -265,6 +305,15 @@ def create_app(store: Store) -> FastAPI:
             c.execute("UPDATE uploads SET state='ABORTED' WHERE id=?", (upload_id,))
             p.unlink(missing_ok=True)
             raise ApiError(422, "HASH_MISMATCH", "start a new upload")
+        if u["media_role"] == "camera_render":
+            try:
+                camera_renders.commit(c, store, u, p, sha, nbytes)
+            except camera_renders.CameraRenderError as e:
+                if e.status == 422:
+                    c.execute("UPDATE uploads SET state='ABORTED' WHERE id=?", (upload_id,))
+                    p.unlink(missing_ok=True)
+                raise ApiError(e.status, e.code, e.detail) from None
+            return receipt(c, sha)
         with open(p, "rb") as f:
             if f.read(4) not in TIFF_MAGIC:
                 c.execute("UPDATE uploads SET state='ABORTED' WHERE id=?", (upload_id,))
@@ -312,20 +361,25 @@ def create_app(store: Store) -> FastAPI:
                             status_code=200 if already and q["queued"] == 0 else 202)
 
     @app.get("/v1/rolls/{roll_id}/renders")
-    def list_renders(roll_id: str, dev: str = Depends(device), c=Depends(conn)):
+    def list_renders(roll_id: str, origin: str = "linux", dev: str = Depends(device), c=Depends(conn)):
         roll = own_roll(c, dev, roll_id)
+        if origin not in ("linux", "camera", "all"):
+            raise ApiError(400, "BAD_REQUEST", "origin must be linux, camera or all")
         out = []
         for r in c.execute(
-                "SELECT x.id, x.frame_id, f.ordinal, a.sha256, a.bytes, a.path FROM renders x JOIN frames f "
+                "SELECT x.id, x.frame_id, x.origin, f.ordinal, a.sha256, a.bytes, a.path FROM renders x JOIN frames f "
                 "ON f.device_id=x.device_id AND f.id=x.frame_id JOIN assets a ON a.id=x.asset_id "
-                "WHERE f.device_id=? AND f.roll_id=? AND x.origin='linux' AND x.state IN ('COMMITTED','PUBLISHED') "
-                "ORDER BY f.ordinal", (dev, roll["id"])):
+                "WHERE f.device_id=? AND f.roll_id=? AND (?='all' OR x.origin=?) "
+                "AND x.state IN ('COMMITTED','PUBLISHED') ORDER BY f.ordinal, x.origin DESC",
+                (dev, roll["id"], origin, origin)):
             side = (store.root / r["path"]).with_suffix(".jpg.json")
             meta = json.loads(side.read_text()) if side.is_file() else {}
             out.append({"render_id": r["id"], "frame_id": r["frame_id"], "ordinal": r["ordinal"],
                         "sha256": r["sha256"], "bytes": r["bytes"], "width": meta.get("output_width"),
-                        "height": meta.get("output_height"), "film_profile_id": meta.get("film_profile_id"),
-                        "profile_bundle_hash": meta.get("profile_bundle_hash"), "origin": "linux"})
+                        "height": meta.get("output_height"),
+                        "film_profile_id": meta.get("film_profile_id") or meta.get("recipe", {}).get("film_profile_id"),
+                        "profile_bundle_hash": meta.get("profile_bundle_hash")
+                        or meta.get("recipe", {}).get("profile_bundle_hash"), "origin": r["origin"]})
         return out
 
     @app.get("/v1/renders/{render_id}/file")

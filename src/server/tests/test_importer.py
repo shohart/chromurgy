@@ -92,4 +92,6 @@ def test_cli_json_roundtrip(make_card, store, capsys):
     roll = rows[0]["id"]
     assert main(["verify", roll, "--data-dir", str(store.root)]) == 0
     capsys.readouterr()
-    assert main(["reprocess", roll]) == 3
+    # this roll's bundle ("bbbb...") is not archived: reprocess refuses rather than substituting one
+    assert main(["reprocess", roll, "--profile", "ektar100", "--data-dir", str(store.root)]) == 1
+    assert "PROFILE_BUNDLE_UNAVAILABLE" in capsys.readouterr().err
