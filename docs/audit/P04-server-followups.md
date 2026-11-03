@@ -69,3 +69,40 @@ Status: implemented and tested on the host. Nothing here touches the camera.
 - New tests: parked-until-added bundle flow, garbage bundle refused, reprocess
   idempotence + new film + frozen roll, per-film publish folders, camera render
   upload/replay/reconciliation, camera render identity checks and bad JPEG.
+
+## Deployment on octopusreborn and develop benchmark (2026-11-03)
+
+Full-size develop of `SAMPLE.CR2` (5208x3476, Portra 400), `mfilm-develop` wall time
+including the rawpy decode, same commit on both machines:
+
+| host | CPU | 1 frame | throughput |
+|---|---|---|---|
+| octopusreborn | i7-4770K, 8 threads, 15 GB | 11.8 s | 9.4 / 15.4 / 17.1 frames/min at 2 / 4 / 6 parallel |
+| workstation | Xeon E5-2696 v4, 44 threads, 125 GB | 13.8 s (Release) | 32.2 / 42.1 frames/min at 16 / 32 parallel |
+
+- The old default build (`RelWithDebInfo`, -O2) took 24.5 s per frame on the
+  workstation; -O3 Release is now the default.
+- Output is byte-identical across both hosts and across -O2/-O3
+  (`fa9dc726fa440dc1...`, same render_id), so a frame can be developed on either.
+- End to end on octopusreborn, `[worker] jobs = 4`: a 12-frame demo roll imported,
+  developed, published and indexed by PhotoPrism in 56 s (PhotoPrism `find` lists
+  all 12 under `M-Film/2026-11-03_Portra400_25f6b8d3/`).
+- Per 36-frame roll: ~2.2 min on octopusreborn (4-6 parallel) vs ~0.9 min on the
+  workstation (32 parallel). Remote offload to the workstation is not built; the
+  difference is about a minute per roll.
+
+Deployment (no root): checkout `~/services/mfilm`, uv + cmake in `~/.local`,
+data in `/mnt/theVault/mfilm`, publication to `/mnt/theVault/RAW_LIB/photos/M-Film`
+(the container's `/photoprism/originals/M-Film`), index after every publish with
+`docker exec photoprism photoprism index M-Film`, user unit
+`deploy/systemd/user/mfilm-worker.service` with linger enabled; the unit refuses
+to start while `/mnt/theVault` is not mounted.
+
+## Camera toolchain
+
+- SX510 HS = DIGIC 4+: ARM946E-S, armv5te, no FPU. CHDK accepts GCC 4/5/8-11;
+  Debian trixie ships 14. Pinned Arm GNU Toolchain 10.3-2021.10 (sha256 in
+  `tools/arm_check.sh --install`, installed under `~/.local/opt`).
+- The current float core cross-compiles cleanly to 11 KB of thumb code but needs
+  soft-float and libm (`exp2f`, `powf`, `atan2f`, ...). `tools/arm_check.sh` fails on
+  that by design; the tiled fixed-point variant must pass it.

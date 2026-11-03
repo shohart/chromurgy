@@ -45,3 +45,13 @@ python -m mfilm_server.simulator --server http://127.0.0.1:8765 --token TOKEN --
   `mfilm-worker.service`.
 - Indexing: PhotoPrism does not watch originals (`PHOTOPRISM_AUTO_INDEX` is for
   WebDAV uploads only). Set `PHOTOPRISM_INDEX_SCHEDULE` or `index_command`.
+
+## Per-user deployment (as on octopusreborn)
+
+No root needed when the user is in the `docker` group and may enable linger:
+checkout in `~/services/mfilm`, `uv` and `uv tool install cmake` in `~/.local`,
+`~/.config/mfilm/config.toml` (data_dir on the archive disk, `[worker] jobs`
+sized at ~0.9 GB per job, `index_command = ["docker","exec","photoprism","photoprism","index","M-Film"]`),
+then `deploy/systemd/user/mfilm-worker.service` into `~/.config/systemd/user/`,
+`loginctl enable-linger $USER`, `systemctl --user enable --now mfilm-worker`.
+Update: ship a `git bundle`, `git pull` it, `cmake --build build`.
