@@ -242,7 +242,7 @@ def cmd_list_rolls(args) -> int:
     q = ("SELECT r.device_id, r.id, r.film_profile_id, r.state, r.expected_frames, "
          "SUM(f.original_state='VERIFIED') AS verified, "
          "(SELECT COUNT(*) FROM renders x JOIN frames y ON y.device_id=x.device_id AND y.id=x.frame_id "
-         " WHERE y.device_id=r.device_id AND y.roll_id=r.id AND x.origin='linux' AND x.state='COMMITTED') AS developed "
+         " WHERE y.device_id=r.device_id AND y.roll_id=r.id AND x.origin='linux' AND x.state IN ('COMMITTED','PUBLISHED')) AS developed "
          "FROM rolls r LEFT JOIN frames f ON f.device_id=r.device_id AND f.roll_id=r.id ")
     params: tuple = ()
     if args.state:
