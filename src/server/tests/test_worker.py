@@ -157,3 +157,25 @@ def test_cli_import_queues_and_worker_develops(sample_card, store, capsys):
     assert json.loads(capsys.readouterr().out)["jobs"][0]["state"] == "COMMITTED"
     assert main(["list-rolls", "--data-dir", str(store.root), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)[0]["developed"] == 1
+
+
+def test_parallel_jobs_develop_each_frame_once(make_card, store, conn, tmp_path):
+    bundle_hash = core.Bundle().sha256
+
+    def mutate(doc, card):
+        for fr in doc["frames"]:
+            dst = card / "DCIM" / "100CANON" / Path(fr["source_path"]).name
+            shutil.copyfile(SAMPLE, dst)
+            data = dst.read_bytes()
+            fr.update(source_size_bytes=len(data), source_sha256=hashlib.sha256(data).hexdigest())
+        doc["profile_bundle_hash"] = bundle_hash
+    import_card(make_card(frames=3, mutate=mutate), store, conn)
+    roll = conn.execute("SELECT id FROM rolls").fetchone()[0]
+    worker.enqueue_roll(conn, roll)
+    res = worker.run(conn, store, jobs=3)
+    assert sorted(r.state for r in res) == ["COMMITTED"] * 3
+    assert len({r.render_id for r in res}) == 3
+    assert conn.execute("SELECT state, attempt, COUNT(*) FROM jobs GROUP BY 1, 2").fetchall()[0][:] == ("COMMITTED", 1, 3)
+    assert worker.run(conn, store, jobs=3) == []
+    assert len(list((store.root / "renders").rglob("*.jpg"))) == 3
+    assert not list((store.root / "incoming").iterdir())

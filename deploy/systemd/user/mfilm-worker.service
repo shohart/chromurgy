@@ -1,0 +1,19 @@
+# Per-user variant (no root needed): ~/.config/systemd/user/mfilm-worker.service,
+# then: loginctl enable-linger $USER; systemctl --user enable --now mfilm-worker
+# Edit the paths for the host. The ExecStartPre guard keeps the worker from
+# running while the archive disk is not mounted.
+[Unit]
+Description=M-Film development worker (user)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=MFILM_CONFIG=%h/.config/mfilm/config.toml
+ExecStartPre=/usr/bin/mountpoint -q /mnt/theVault
+ExecStart=%h/services/mfilm/src/server/.venv/bin/mfilmctl worker --watch --interval 30
+Restart=on-failure
+RestartSec=60
+Nice=10
+
+[Install]
+WantedBy=default.target

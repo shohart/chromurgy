@@ -19,3 +19,8 @@ subdir = "M-Film"
 # WebDAV uploads. Either set PHOTOPRISM_INDEX_SCHEDULE (cron, e.g. "*/30 * * * *")
 # on the PhotoPrism side, or index right after publishing (argv list, no shell):
 # index_command = ["ssh", "octopusreborn", "docker", "exec", "photoprism", "photoprism", "index", "M-Film"]
+
+[worker]
+# Frames developed at once. A full-size frame needs about 0.9 GB, so size this
+# by free memory, not by cores (measured: i7-4770K tops out near 6, ~17 frames/min).
+jobs = 1

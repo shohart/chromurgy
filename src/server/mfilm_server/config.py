@@ -19,6 +19,7 @@ class PhotoPrism:
 class Config:
     data_dir: Path = Path("/var/lib/mfilm")
     photoprism: PhotoPrism = field(default_factory=PhotoPrism)
+    jobs: int = 1                           # [worker] jobs: frames developed at once (~0.9 GB each)
 
 
 def load(path: str | os.PathLike | None) -> Config:
@@ -37,4 +38,8 @@ def load(path: str | os.PathLike | None) -> Config:
     if isinstance(cmd, str) or not all(isinstance(c, str) for c in cmd):
         raise ValueError("photoprism.index_command must be a list of strings (no shell)")
     cfg.photoprism.index_command = list(cmd)
+    jobs = raw.get("worker", {}).get("jobs", 1)
+    if not isinstance(jobs, int) or jobs < 1:
+        raise ValueError("worker.jobs must be a positive integer")
+    cfg.jobs = jobs
     return cfg

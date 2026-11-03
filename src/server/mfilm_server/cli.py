@@ -124,7 +124,7 @@ def cmd_worker(args) -> int:
 def _worker_pass(args) -> int:
     from . import publisher, worker
     store, conn = _open(args.data_dir, args.cfg)
-    results = worker.run(conn, store, max_jobs=args.max_jobs)
+    results = worker.run(conn, store, max_jobs=args.max_jobs, jobs=args.jobs or args.cfg.jobs)
     published = [] if args.no_publish else _publish_ready(args, store, conn)
     exported = [x["render_id"] for p in published for x in p.get("published", []) if x["status"] == "EXPORTED"]
     indexed = publisher.run_index(conn, args.cfg.photoprism, exported) if exported else (False, "nothing new")
@@ -294,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_develop)
     s = sub.add_parser("worker", parents=[common], help="develop queued frames, then publish finished rolls")
     s.add_argument("--max-jobs", type=int)
+    s.add_argument("--jobs", type=int, help="frames developed at once (config [worker] jobs; ~0.9 GB each)")
     s.add_argument("--no-publish", action="store_true")
     s.add_argument("--watch", action="store_true", help="keep polling the queue (service mode)")
     s.add_argument("--interval", type=float, default=30.0, help="seconds between passes with --watch")

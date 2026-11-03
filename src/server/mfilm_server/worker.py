@@ -13,8 +13,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import queue
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import core
 from .bundles import Bundles, BundleUnavailable
@@ -119,7 +121,7 @@ def enqueue_roll(conn: sqlite3.Connection, roll_id: str, device_id: str | None =
 
 
 def recover_stale(conn: sqlite3.Connection) -> int:
-    """Jobs left RUNNING by a dead worker go back to the queue (single-worker deployment)."""
+    """Jobs left RUNNING by a dead worker go back to the queue (call only while no worker process is running: run() does, before its children start)."""
     conn.execute("BEGIN IMMEDIATE")
     n = conn.execute("UPDATE jobs SET state='QUEUED' WHERE state='RUNNING'").rowcount
     conn.execute("UPDATE renders SET state='QUEUED' WHERE state='RUNNING'")
@@ -259,17 +261,81 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles,
         return JobResult(job["id"], r["id"], "FAILED_RETRYABLE", "IO_ERROR", str(e))
 
 
-def run(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None = None) -> list[JobResult]:
+def _drain(conn: sqlite3.Connection, store: Store, bundles: Bundles, budget) -> list[JobResult]:
+    """Develop queued jobs until none is left or the shared budget is spent."""
+    done: list[JobResult] = []
+    tried: set[int] = set()           # a retryable failure waits for the next run (in this process)
+    while True:
+        if budget is not None:
+            with budget.get_lock():
+                if budget.value <= 0:
+                    break
+                budget.value -= 1
+        res = run_one(conn, store, bundles, tried)
+        if res is None:
+            if budget is not None:
+                with budget.get_lock():
+                    budget.value += 1
+            break
+        tried.add(res.job_id)
+        done.append(res)
+    return done
+
+
+def _child(root: str, budget, out) -> None:
+    from . import db
+    store = Store(Path(root))
+    conn = db.connect(store.db_path)
+    try:
+        out.put([r.__dict__ for r in _drain(conn, store, Bundles(store), budget)])
+    except BaseException as e:          # report, never hang the parent
+        out.put({"error": repr(e)})
+        raise
+    finally:
+        conn.close()
+
+
+def run(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None = None, jobs: int = 1) -> list[JobResult]:
+    """One worker pass. jobs > 1 develops that many frames at once in child
+    processes (each ~0.9 GB at full size: size it by memory, not cores).
+    Stale RUNNING jobs are recovered here, before any child starts, so a
+    pass never steals a sibling's job."""
     recover_stale(conn)
     bundles = Bundles(store)
     bundles.ensure_default()
     parked, _ = park_and_unpark(conn, bundles)
+    if jobs <= 1:
+        budget = None
+        if max_jobs is not None:
+            import multiprocessing as mp
+            budget = mp.Value("i", max_jobs)
+        return parked + _drain(conn, store, bundles, budget)
+    import multiprocessing as mp
+    ctx = mp.get_context("spawn")     # fresh interpreter: no inherited sqlite handle
+    budget = ctx.Value("i", max_jobs if max_jobs is not None else 1 << 30)
+    out = ctx.Queue()
+    procs = [ctx.Process(target=_child, args=(str(store.root), budget, out), daemon=True) for _ in range(jobs)]
+    for pr in procs:
+        pr.start()
     done: list[JobResult] = []
-    tried: set[int] = set()           # a retryable failure waits for the next run
-    while max_jobs is None or len(done) < max_jobs:
-        res = run_one(conn, store, bundles, tried)
-        if res is None:
-            break
-        tried.add(res.job_id)
-        done.append(res)
+    errors = []
+    pending = len(procs)
+    while pending:
+        try:
+            got = out.get(timeout=5)
+        except queue.Empty:           # a child killed outright (OOM) never reports
+            if all(not pr.is_alive() for pr in procs):
+                errors.append(f"{pending} child process(es) died: exit codes {[pr.exitcode for pr in procs]}")
+                break
+            continue
+        pending -= 1
+        if isinstance(got, dict):
+            errors.append(got["error"])
+        else:
+            done += [JobResult(**r) for r in got]
+    for pr in procs:
+        pr.join()
+    if errors:
+        raise RuntimeError(f"worker child failed: {errors[0]}")
+    done.sort(key=lambda r: r.job_id)
     return parked + done
