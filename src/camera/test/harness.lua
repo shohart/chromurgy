@@ -20,6 +20,10 @@
 --   {"setdir", dir}        the camera starts a new DCIM folder
 --   {"expect_prop", id, v} Canon propcase id is v (105 = display mode, 0 = info shown)
 --   {"set_prop", id, v}    the owner changes a Canon setting (e.g. presses DISP)
+--   {"flip"}               Canon flips the two bitmap buffers
+--   {"flip_every", n}      ... after every n draw_string calls (0/nil: never)
+--   {"canon_erase"}        Canon erases the active bitmap buffer
+--   {"expect_screen_full"} both buffers hold the same complete screen
 -- Exit status 0 = scenario passed.
 
 local app_dir, scen_path = arg[1], arg[2]
@@ -68,6 +72,46 @@ function get_alt_mode() return alt end
 function exit_alt() alt = false end
 function enter_alt() alt = true end
 function set_exit_key(k) exit_key = k end
+-- Two bitmap buffers (SX510 HS: CHDK draws into the active one only, Canon
+-- flips them). fbuf[b][text row][x] = string drawn there. peek() serves
+-- active_bitmap_buffer (0x4138), bitmap_buffer[] (0x413c) and bitmap bytes:
+-- a byte reads as a checksum of its text row in that buffer.
+fbuf, fb_active, flip_every, draws_since_flip = {[0] = {}, [1] = {}}, 0, nil, 0
+local FB_BASE = {[0] = 0x40000000, [1] = 0x40100000}
+function fb_draw(x, y, sc, s)
+  for r = y / 16, (y + 16 * sc - 1) / 16 do
+    local row = fbuf[fb_active][r]
+    if x == 0 or not row then row = {}; fbuf[fb_active][r] = row end
+    row[x] = s
+  end
+  if flip_every then
+    draws_since_flip = draws_since_flip + 1
+    if draws_since_flip >= flip_every then draws_since_flip = 0; fb_active = 1 - fb_active end
+  end
+end
+local function fb_row_text(b, r)
+  local row, xs, t = fbuf[b][r], {}, {}
+  if not row then return "" end
+  for x in pairs(row) do xs[#xs + 1] = x end
+  table.sort(xs)
+  for _, x in ipairs(xs) do t[#t + 1] = x .. ":" .. row[x] end
+  return table.concat(t, "|")
+end
+function peek(addr, size)
+  size = size or 4
+  if addr == 0x4138 and size == 4 then return fb_active end
+  if addr == 0x413c and size == 4 then return FB_BASE[0] end
+  if addr == 0x4140 and size == 4 then return FB_BASE[1] end
+  for b = 0, 1 do
+    local off = addr - FB_BASE[b]
+    if size == 1 and off > 0 and off < 960 * 270 then
+      local t, sum = fb_row_text(b, off / 960 / 16), 0
+      for k = 1, string.len(t) do sum = (sum * 31 + string.byte(t, k)) % 251 end
+      return sum
+    end
+  end
+  error(string.format("peek at unexpected address %x size %d", addr, size), 2)
+end
 -- CHDK does not clip: text past the bitmap edge writes outside the screen buffer
 function draw_string(x, y, s, fg, bg, scale)
   local sc = scale or 1
@@ -78,6 +122,7 @@ function draw_string(x, y, s, fg, bg, scale)
   -- Canon's icons collided with it and it flickered (alpha 0.1.0-0.1.7)
   if alt and rec_mode and props[105] == 0 then error("menu text drawn over Canon's information display: " .. s, 2) end
   drawn[#drawn + 1] = s
+  fb_draw(x, y, sc, s)
   dlog(string.format("S %d %d %d %d %d %s", x, y, sc, fg or 258, bg or 257, s))
 end
 local function check_rect(x1, y1, x2, y2)
@@ -87,7 +132,7 @@ local function check_rect(x1, y1, x2, y2)
 end
 function draw_rect_filled(x1, y1, x2, y2, c1, c2) check_rect(x1, y1, x2, y2); dlog(string.format("R %d %d %d %d %d", x1, y1, x2, y2, c2 or c1)) end
 function draw_rect(x1, y1, x2, y2) check_rect(x1, y1, x2, y2) end
-function draw_clear() drawn[#drawn + 1] = "<clear>"; dlog("C") end
+function draw_clear() drawn[#drawn + 1] = "<clear>"; fbuf = {[0] = {}, [1] = {}}; dlog("C") end
 function set_draw_title_line(on) title_line = on end
 function get_gui_screen_width() return 360 end
 function get_gui_screen_height() return 240 end
@@ -247,6 +292,21 @@ while true do
           if rec_mode ~= want_rec or conf[2001] ~= want_osd then
             log(string.format("FAIL: rec=%s osd=%s, expected rec=%s osd=%s", tostring(rec_mode), tostring(conf[2001]),
                 tostring(want_rec), tostring(want_osd))) os.exit(1)
+          end
+        elseif k == "flip" then fb_active = 1 - fb_active
+        elseif k == "flip_every" then flip_every = (s[2] ~= 0) and s[2] or nil
+        elseif k == "canon_erase" then fbuf[fb_active] = {}
+        elseif k == "expect_screen_full" then
+          -- both buffers hold the same complete screen: no row missing
+          local bad = {}
+          for r = 0, 14 do
+            local a, b = fb_row_text(0, r), fb_row_text(1, r)
+            if a == "" or a ~= b then bad[#bad + 1] = string.format("row %d: [%s] / [%s]", r, a, b) end
+          end
+          if #bad > 0 then
+            log("FAIL: step " .. (i - 1) .. ": screen incomplete:")
+            for _, l in ipairs(bad) do log("   " .. l) end
+            os.exit(1)
           end
         elseif k == "expect_prop" then
           if props[s[2]] ~= s[3] then log("FAIL: prop " .. s[2] .. " = " .. tostring(props[s[2]]) .. ", expected " .. s[3]) os.exit(1) end

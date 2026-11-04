@@ -208,6 +208,23 @@ def test_menu_cursor_redraws_two_rows_without_clearing(card):
     assert changed == 6   # 3 cursor moves x (old row + new row); the safety repaint rewrites identical rows
 
 
+def test_menu_complete_in_both_bitmap_buffers(card):
+    # camera test 0.2.0: Canon flips two bitmap buffers and CHDK draws into the
+    # active one only, so rows drawn once were missing after a flip
+    run(card, [("wait", 1500), ("flip",), ("wait", 300), ("expect_screen_full",),
+               ("key", "down"), ("wait", 200), ("flip",), ("wait", 300), ("expect_screen_full",),
+               ("canon_erase",), ("wait", 300), ("expect_screen_full",),
+               ("flip_every", 7), ("key", "down"), ("wait", 300), ("key", "down"), ("wait", 300),
+               ("flip_every", 0), ("wait", 300), ("flip",), ("wait", 300), ("expect_screen_full",),
+               ("expect", "Rolls on card")])
+
+
+def test_menu_screen_full_with_a_loaded_film(card):
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1)
+        + [("playback",), ("wait", 900), ("flip",), ("wait", 300), ("expect_screen_full",),
+           ("flip",), ("wait", 300), ("expect_screen_full",)])
+
+
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
 
 

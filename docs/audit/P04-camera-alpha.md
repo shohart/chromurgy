@@ -156,3 +156,26 @@ source of the overlaps and of the CHDK OSD flicker seen so far.
   register_lua_funcs, so they are added to the pinned function list. The
   harness models propcase 105 and DISP and refuses menu text drawn while
   Canon's information display is on.
+
+## 0.2.1: both bitmap buffers
+
+Camera test 0.2.0 (video): rows drawn once (the film counter, rows the
+cursor had not visited) showed the live view, and two rows were sometimes
+highlighted at once. Cause, from CHDK release-1_6 r6355: the SX510 HS
+platform defines DRAW_ON_ACTIVE_BITMAP_BUFFER_ONLY, so CHDK draws into
+bitmap_buffer[active_bitmap_buffer] only, and Canon flips the two buffers.
+CHDK's own GUI copes through a guard pixel (core/gui.c gui_redraw: repaint
+when draw_test_guard() fails). This also explains the CHDK OSD flicker seen
+earlier.
+
+The app now reads (peek, read only) active_bitmap_buffer (0x4138) and
+bitmap_buffer[] (0x413c), both from CHDK's stubs_min.S for sx510hs 101a,
+keeps a row cache per buffer, samples three bitmap bytes it painted to
+notice an erased buffer, and repaints a pass again if the buffer flipped
+during it. Keys are polled every 60 ms, so a flipped buffer is filled within
+about that. Build or sanity check mismatch: full repaint every 300 ms.
+Diagnostics and APP.LOG show "bitmap buffers ... active N".
+
+The harness models both buffers (flip, flip every n draws, Canon erase,
+peek) and checks that both hold the same complete screen; the 0.2.0 app
+fails that test with the second buffer empty, as on the camera.

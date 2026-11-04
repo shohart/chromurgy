@@ -181,15 +181,62 @@ end
 
 -- Menus are drawn row by row, and only the rows whose content changed are
 -- redrawn: moving the cursor repaints two rows. The screen is never cleared
--- while a menu is up -- clearing and repainting everything let the photo or
--- live view under the menu show through for a moment on every key press
--- (camera test 0.1.7). Every row is padded to the full width with an opaque
--- background, so a new screen simply overwrites the old one. The graphics
--- (film counter, canisters) are drawn only when their row changed, so the
--- periodic safety repaint touches text rows only and never blinks them.
-local drawn = {}                                 -- row -> signature last drawn
+-- while a menu is up (0.1.7: the photo showed through on every key press);
+-- every row is opaque and full width, so a new screen overwrites the old one.
+--
+-- The SX510 HS has two bitmap buffers and Canon flips between them; CHDK
+-- draws into the active one only (DRAW_ON_ACTIVE_BITMAP_BUFFER_ONLY in its
+-- platform_camera.h). A menu painted once is therefore only half there: after
+-- a flip, rows drawn before it are missing and the live view shows through
+-- (camera test 0.2.0). CHDK's own menu repaints when its guard pixel is gone.
+-- The app does the same from Lua: it reads (peek, read only) which buffer is
+-- active and keeps a separate row cache per buffer, and it samples a few
+-- bitmap bytes it painted to notice a buffer Canon erased. Addresses are
+-- CHDK's own stubs for sx510hs 101a; on any other build the menu is simply
+-- repainted in full every 300 ms (same pixels: no visible change).
+local ADDR_ACTIVE, ADDR_BUFFERS, BITMAP_W = 0x4138, 0x413c, 960
+local SAMPLE_OFFS = {4 * BITMAP_W + 40, 8 * BITMAP_W + 200, 12 * BITMAP_W + 500}
+local fb = nil                                   -- {base = {b0, b1}} when buffer tracking works
+local caches = {[0] = {}, [1] = {}, [9] = {}}   -- per buffer: row -> signature (9: untracked)
+local samples = {}                               -- per buffer: bytes read after painting
+local drawn = caches[9]
 local last_full = 0
-local function invalidate() drawn = {} end
+local function invalidate() caches = {[0] = {}, [1] = {}, [9] = {}}; samples = {}; drawn = caches[9] end
+
+local function fb_init()
+  fb = nil
+  if not have("peek") or not have("get_buildinfo") then return "no peek" end
+  local bi = get_buildinfo()
+  if bi.platform ~= "sx510hs" or bi.platsub ~= "101a" then return "untracked build " .. tostring(bi.platform) end
+  local act, b0, b1 = peek(ADDR_ACTIVE), peek(ADDR_BUFFERS), peek(ADDR_BUFFERS + 4)
+  if (act ~= 0 and act ~= 1) or not b0 or not b1 or b0 == 0 or b1 == 0 or b0 == b1 or b0 % 4 ~= 0 or b1 % 4 ~= 0 then
+    return string.format("buffer check failed: active %s buffers %s %s", tostring(act), tostring(b0), tostring(b1))
+  end
+  fb = {base = {[0] = b0, [1] = b1}}
+  return string.format("bitmap buffers %x %x, active %d", b0, b1, act)
+end
+
+local function active_buffer()
+  if not fb then return 9 end
+  local a = peek(ADDR_ACTIVE)
+  if a ~= 0 and a ~= 1 then return 9 end
+  return a
+end
+
+local function read_samples(b)
+  local t = {}
+  for i, o in ipairs(SAMPLE_OFFS) do t[i] = peek(fb.base[b] + o, 1) end
+  return t
+end
+
+-- true if buffer b still holds what we painted into it
+local function samples_ok(b)
+  local want = samples[b]
+  if not want then return false end
+  local now = read_samples(b)
+  for i = 1, #want do if now[i] ~= want[i] then return false end end
+  return true
+end
 
 local function pad(s)
   s = string.sub(s or "", 1, COLS)
@@ -205,12 +252,26 @@ local function row_text(row, s, fg, bg, sig, force)
   return true
 end
 
-local function screen(title, lines, items, sel, footer, icons)
+local paint                                      -- forward: one pass into the active buffer
+
+local function screen(...)
+  -- paint into the active buffer; if Canon flipped buffers during the pass,
+  -- the rows may have gone to the other one: forget both and paint again
+  for _ = 1, 3 do
+    local b = active_buffer()
+    if b ~= 9 and not samples_ok(b) then caches[b] = {} end
+    drawn = caches[b]
+    local full = b == 9 and get_tick_count() - last_full >= 300
+    if full then last_full = get_tick_count() end
+    paint(full, ...)
+    if b == 9 then return end
+    if active_buffer() == b then samples[b] = read_samples(b) return end
+    caches[0], caches[1], samples = {}, {}, {}
+  end
+end
+
+paint = function(refresh, title, lines, items, sel, footer, icons)
   local rows_total = H / FH                     -- CHDK's bar is hidden while the menu is up
-  -- safety net: every 5 s rewrite plain text rows (same pixels, no blink) in
-  -- case the camera drew over them
-  local refresh = get_tick_count() - last_full >= 5000
-  if refresh then last_full = get_tick_count() end
   local row = 0
   row_text(row, pad(" " .. title), C.hi, C.bg, nil, refresh)
   row = row + 1
@@ -222,7 +283,7 @@ local function screen(title, lines, items, sel, footer, icons)
       local sig = "hero:" .. r.film .. ":" .. #r.frames .. "/" .. r.length
       local a = row_text(row, pad(""), C.fg, C.bg, sig)
       local b = row_text(row + 1, pad(""), C.fg, C.bg, sig)
-      if a or b then
+      if a or b or refresh then                  -- refresh: graphics over themselves, no blanking
         canister(8, row * FH + 8, r.film)
         local cs = string.format("%d/%d", #r.frames, r.length)
         draw_string(32, row * FH, cs, C.hi, C.bg, 2)
@@ -249,7 +310,7 @@ local function screen(title, lines, items, sel, footer, icons)
       local sig = icon and ("icon:" .. icon) or nil
       local s, bg = pad("   " .. label), C.bg
       if i == sel then s, bg = pad(" > " .. label), C.sel end
-      if row_text(row, s, C.fg, bg, sig, refresh and not icon) and icon then
+      if row_text(row, s, C.fg, bg, sig, refresh) and icon then
         canister(3 * FW, row * FH, icon)
       end
       row = row + 1
@@ -261,7 +322,7 @@ end
 
 -- wait for one of KEYS; returns the key name, "shoot" if alt mode was left, or nil on timeout
 local function key(ms)
-  wait_click(ms or 150)
+  wait_click(ms or 60)
   for _, k in ipairs(KEYS) do
     if is_key(k) then return k end
   end
@@ -347,8 +408,7 @@ local function show_diag()
   for _, s in ipairs(selftest) do lines[#lines + 1] = s end
   lines[#lines + 1] = "device " .. mf.device.device_id
   lines[#lines + 1] = "log: CHDK/MFILM/LOGS/APP.LOG"
-  screen("Diagnostics", lines, nil, 1, "any key: back")
-  repeat until key(1000)
+  repeat screen("Diagnostics", lines, nil, 1, "any key: back") until key()
 end
 
 local function title_line(on)
@@ -541,6 +601,9 @@ local function main()
   local problems = mf.init()
   mf.log("---- start " .. mf.VERSION)
   selftest = run_selftest()
+  local fbs = fb_init()
+  selftest[#selftest + 1] = fbs
+  mf.log("display: " .. fbs)
   for _, p in ipairs(problems) do selftest[#selftest + 1] = "CONFIG: " .. p; mf.log("CONFIG problem: " .. p) end
   if have("set_exit_key") then set_exit_key("video") end
   OVL_Y = H - 3 * FH - 16                        -- above Canon's bottom row
