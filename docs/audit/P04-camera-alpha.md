@@ -68,3 +68,27 @@ Failures:
   every start), no path without "A/". The importer finds MANIFEST.JSN and the
   CHDK/MFILM/ROLLS path case-insensitively. The harness now fails on rename,
   non-8.3 or lower-case created names and bare-drive paths; 0.1.0 fails it.
+
+## Second session (2026-11-04, 0.1.1 -> 0.1.2): first roll end to end over Wi-Fi
+
+VERIFIED:
+- 0.1.1 loaded a roll, recorded 12 frames, sealed it (no power-off).
+- Wi-Fi: SX510 HS menu "Computer" paired with the mfilm-upnp responder
+  (camera 192.168.1.157 fetched the UPnP description), chdkptp connected by
+  PTP/IP ("connected: Canon PowerShot SX510 HS"), `mfilmctl camera-sync`
+  downloaded the manifest and 12 DNGs, imported, developed and published
+  12/12 to PhotoPrism (`M-Film/2026-11-04_Portra400_160b4e21`), lens-corrected.
+- The camera accepts one PTP/IP session per Canon connect: a second connect
+  after a disconnect times out. Sync now runs in one interactive chdkptp
+  session; deploy/camera-watch.sh (+ user unit mfilm-camera-watch) starts it
+  the moment the camera fetches the description.
+- A running camera script blocks chdkptp ("a script is already running"):
+  the sync runs `killscript` first.
+
+Fixed:
+- Server: camera-sync --run and the service worker developed 3 frames twice
+  (recover_stale assumed a single worker). One worker pass per data dir now
+  (flock on <data>/worker.lock; the second pass reports busy).
+- App 0.1.2: overlay moved below Canon's top icon row and shortened
+  ("Portra400 3/12"); the menu repaints every 300 ms without clearing (Canon
+  keeps drawing its icons into the same bitmap) and hides CHDK's title bar.

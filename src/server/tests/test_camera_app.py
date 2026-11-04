@@ -89,7 +89,7 @@ def test_app_uses_only_chdk_161_functions():
 
 
 def test_full_roll_seals_and_imports(card, store, conn):
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("expect", "Portra 400 0/12")] + shots(12)
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("expect", "Portra400 0/12")] + shots(12)
         + [("expect", "Roll complete")] + shots(1) + [("expect", "NO FILM")])
     (r,) = rolls(card)
     assert r["roll_state"] == "SEALED" and r["captured_frames"] == 12 and r["roll_length"] == 12

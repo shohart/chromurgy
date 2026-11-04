@@ -88,13 +88,15 @@ local function frame_text(r)
 end
 
 -- small status line drawn over the live view while shooting
+-- below Canon's top row of icons (battery, shots left, clock), left side:
+-- the top row itself is Canon's (first alpha drew over it)
+local OVL_Y = 2 * FH + 6
 local function overlay()
-  local s = "M-Film " .. frame_text(roll)
-  if roll and roll.state == "SEALED" then s = s .. " DONE" end
-  local fg = roll and C.fg or C.warn
-  draw_string(4, 4, string.sub(s, 1, COLS - 1), fg, C.bg)
+  local s = roll and string.format("%s %d/%d", mf.film_short(roll.film), #roll.frames, roll.length) or "NO FILM"
+  if roll and roll.state == "SEALED" then s = s .. " done" end
+  draw_string(4, OVL_Y, string.sub(s, 1, 22), roll and C.fg or C.warn, C.bg)
   if notice and get_tick_count() < notice_until then
-    draw_string(4, 4 + FH + 2, string.sub(notice, 1, COLS - 1), C.hi, C.bg)
+    draw_string(4, OVL_Y + FH + 2, string.sub(notice, 1, COLS - 1), C.hi, C.bg)
   end
 end
 
@@ -111,10 +113,12 @@ local function pad(s)
 end
 
 local function screen(title, lines, items, sel, footer)
-  local rows_total = H / FH - 1                 -- last row: CHDK's bar
+  local rows_total = H / FH                     -- CHDK's bar is hidden while the menu is up
   local key_ = title .. "|" .. tostring(sel) .. "|" .. table.concat(items or {}, "/")
   for _, l in ipairs(lines or {}) do key_ = key_ .. "|" .. (type(l) == "table" and l[1] or l) end
-  if key_ == last_key and get_tick_count() - last_full < 3000 then return end
+  -- the camera keeps drawing its own icons into the same bitmap in shooting
+  -- mode: repaint the same lines every 300 ms (no clear, so no flicker)
+  if key_ == last_key and get_tick_count() - last_full < 300 then return end
   if key_ ~= last_key then draw_clear() end
   last_key, last_full = key_, get_tick_count()
   local row = 0
@@ -140,12 +144,12 @@ local function screen(title, lines, items, sel, footer)
     end
     while row < rows_total - 1 do text(0, row, pad(""), C.fg); row = row + 1 end
   end
-  text(0, rows_total - 1, pad(footer or " SET ok  MENU back  half-press: shoot"), C.dim)
+  text(0, rows_total - 1, pad(footer or " SET ok  MENU back  half: shoot  VIDEO: quit"), C.dim)
 end
 
 -- wait for one of KEYS; returns the key name, "shoot" if alt mode was left, or nil on timeout
 local function key(ms)
-  wait_click(ms or 250)
+  wait_click(ms or 150)
   for _, k in ipairs(KEYS) do
     if is_key(k) then return k end
   end
@@ -233,8 +237,13 @@ local function show_diag()
   repeat until key(1000)
 end
 
+local function title_line(on)
+  if have("set_draw_title_line") then set_draw_title_line(on and 1 or 0) end
+end
+
 local function menu()
   draw_clear()
+  title_line(false)
   last_key = nil
   local sel = 1
   while not quit do
@@ -260,6 +269,7 @@ local function menu()
     if r == "shoot" then break end
   end
   draw_clear()
+  title_line(true)
 end
 
 -- ------------------------------------------------------------ shooting

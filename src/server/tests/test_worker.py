@@ -179,3 +179,14 @@ def test_parallel_jobs_develop_each_frame_once(make_card, store, conn, tmp_path)
     assert worker.run(conn, store, jobs=3) == []
     assert len(list((store.root / "renders").rglob("*.jpg"))) == 3
     assert not list((store.root / "incoming").iterdir())
+
+
+def test_only_one_worker_pass_per_data_dir(store, conn):
+    import fcntl
+
+    from mfilm_server import worker
+    with open(store.root / "worker.lock", "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(worker.WorkerBusy):
+            worker.run(conn, store)
+    worker.run(conn, store)                            # lock released: a pass runs again

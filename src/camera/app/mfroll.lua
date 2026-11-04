@@ -22,7 +22,7 @@
 
 local M = {}
 
-M.VERSION = "0.1.1-alpha"
+M.VERSION = "0.1.2-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 
@@ -217,8 +217,11 @@ function M.parse_cfg(s)
   for line in string.gmatch(s or "", "[^\r\n]+") do
     local k, v = string.match(line, "^%s*([%w_]+)%s*=%s*(.-)%s*$")
     if k == "film" then
-      local key, name = string.match(v, "^([^|]+)|(.*)$")
-      if key then cfg.films[#cfg.films + 1] = {key = key, name = name} end
+      local key, rest = string.match(v, "^([^|]+)|(.*)$")
+      if key then
+        local name, short = string.match(rest, "^([^|]*)|(.*)$")
+        cfg.films[#cfg.films + 1] = {key = key, name = name or rest, short = short or key}
+      end
     elseif k then
       cfg[k] = v
     end
@@ -258,6 +261,13 @@ end
 function M.film_name(key)
   for _, f in ipairs(M.cfg.films) do
     if f.key == key then return f.name end
+  end
+  return key
+end
+
+function M.film_short(key)
+  for _, f in ipairs(M.cfg.films) do
+    if f.key == key then return f.short or key end
   end
   return key
 end

@@ -296,11 +296,32 @@ def _child(root: str, budget, out) -> None:
         conn.close()
 
 
+class WorkerBusy(Exception):
+    """Another worker pass holds this data directory."""
+
+
 def run(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None = None, jobs: int = 1) -> list[JobResult]:
     """One worker pass. jobs > 1 develops that many frames at once in child
     processes (each ~0.9 GB at full size: size it by memory, not cores).
-    Stale RUNNING jobs are recovered here, before any child starts, so a
-    pass never steals a sibling's job."""
+    Only one pass runs per data directory at a time (an exclusive lock on
+    <data>/worker.lock; raises WorkerBusy otherwise): stale RUNNING jobs are
+    recovered at the start of a pass, which is only safe when no other pass
+    is developing them (the service worker and camera-sync --run collided on
+    2026-11-04 and developed three frames twice)."""
+    import fcntl
+    lock = open(store.root / "worker.lock", "a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        raise WorkerBusy("another worker pass is running on this data directory") from None
+    try:
+        return _run_locked(conn, store, max_jobs=max_jobs, jobs=jobs)
+    finally:
+        lock.close()
+
+
+def _run_locked(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None, jobs: int) -> list[JobResult]:
     recover_stale(conn)
     bundles = Bundles(store)
     bundles.ensure_default()

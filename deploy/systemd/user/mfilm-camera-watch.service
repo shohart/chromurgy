@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Pull rolls from the camera whenever it connects over Wi-Fi (deploy/camera-watch.sh).
+[Unit]
+Description=M-Film: sync the camera when it connects over Wi-Fi
+After=mfilm-upnp.service
+Requires=mfilm-upnp.service
+
+[Service]
+Environment=MFILM_CONFIG=%h/.config/mfilm/config.toml
+ExecStartPre=/usr/bin/mountpoint -q /mnt/theVault
+ExecStart=%h/services/mfilm/deploy/camera-watch.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

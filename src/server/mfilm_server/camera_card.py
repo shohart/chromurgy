@@ -37,7 +37,8 @@ def card_config(bundle: core.Bundle, utc_offset: str) -> str:
     for f in films["films"]:
         if f["key"] in keys:
             name = f["name"].replace("|", "/").replace("\n", " ")
-            lines.append(f"film={f['key']}|{name}")
+            short = (f.get("short") or f["key"]).replace("|", "/")
+            lines.append(f"film={f['key']}|{name}|{short}")
     return "\n".join(lines) + "\n"
 
 

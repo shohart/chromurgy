@@ -152,7 +152,13 @@ def cmd_worker(args) -> int:
 def _worker_pass(args) -> int:
     from . import publisher, worker
     store, conn = _open(args.data_dir, args.cfg)
-    results = worker.run(conn, store, max_jobs=args.max_jobs, jobs=args.jobs or args.cfg.jobs)
+    try:
+        results = worker.run(conn, store, max_jobs=args.max_jobs, jobs=args.jobs or args.cfg.jobs)
+    except worker.WorkerBusy as e:
+        _out(args, {"jobs": [], "busy": True, "detail": str(e)},
+             f"{e}: the queued frames are developed (and published) by that worker")
+        conn.close()
+        return 0
     published = [] if args.no_publish else _publish_ready(args, store, conn)
     exported = [x["render_id"] for p in published for x in p.get("published", []) if x["status"] == "EXPORTED"]
     indexed = publisher.run_index(conn, args.cfg.photoprism, exported) if exported else (False, "nothing new")

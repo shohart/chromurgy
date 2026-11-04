@@ -69,6 +69,7 @@ end
 function draw_rect_filled() end
 function draw_rect() end
 function draw_clear() drawn[#drawn + 1] = "<clear>" end
+function set_draw_title_line(on) title_line = on end
 function get_gui_screen_width() return 360 end
 function get_gui_screen_height() return 240 end
 function get_image_dir() return image_dir end
