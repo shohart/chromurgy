@@ -12,20 +12,32 @@ args = sys.argv[1:]
 card = Path(args[args.index("--card") + 1])
 offline = "--offline" in args
 connected = False
-for a in args:
-    if not a.startswith("-e"):
+lines = [a[2:] for a in args if a.startswith("-e")]
+if "-i" in args:                       # interactive: commands on stdin, like chdkptp -i
+    lines = (ln.rstrip("\n") for ln in sys.stdin)
+for line in lines:
+    if line.startswith("!print("):
+        print(line[len("!print('"):-2], flush=True)
         continue
-    words = shlex.split(a[2:])
+    words = shlex.split(line)
+    if not words:
+        continue
+    if words[0] in ("dis", "quit"):
+        if words[0] == "quit":
+            break
+        continue
+    if words[0] == "killscript":
+        continue
     if words[0] in ("connect", "c"):
         if offline:
-            print("ERROR: no matching devices found")
-            sys.exit(1)
+            print("ERROR: connection failed", flush=True)
+            continue
         connected = True
         print("connected: Canon PowerShot SX510 HS")
         continue
     if not connected:
-        print("error: not connected")
-        sys.exit(1)
+        print("ERROR: not connected", flush=True)
+        continue
     if words[0] == "mdl":
         src, dst = Path(card / words[-2][2:]), Path(words[-1])
         for f in src.rglob("*"):

@@ -28,7 +28,7 @@ from pathlib import Path
 from .importer import IMPORTABLE_CAMERA_STATES, MFILM_DIR, RollResult, card_source, find_manifests, import_card
 from .store import Store, UnsafePath
 
-DEFAULT_CHDKPTP = ("docker run --rm --network host --privileged -v /dev/bus/usb:/dev/bus/usb "
+DEFAULT_CHDKPTP = ("docker run --rm -i --network host --privileged -v /dev/bus/usb:/dev/bus/usb "
                    "-v {mirror}:{mirror} mfilm-chdkptp")
 
 
@@ -46,22 +46,66 @@ class SyncResult:
     log: str = ""
 
 
-def _chdkptp(cmd_template: str, mirror: Path, commands: list[str], timeout: int) -> str:
-    argv = shlex.split(cmd_template.format(mirror=str(mirror)))
-    for c in commands:
-        argv.append(f"-e{c}")
-    try:
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
-    except FileNotFoundError as e:
-        raise SyncError("CHDKPTP_NOT_FOUND", str(e)) from None
-    except subprocess.TimeoutExpired:
-        raise SyncError("CHDKPTP_TIMEOUT", f"after {timeout} s") from None
-    out = p.stdout + p.stderr
-    low = out.lower()
-    if p.returncode != 0 or "no matching devices" in low or "connection failed" in low or "not connected" in low:
-        raise SyncError("CAMERA_NOT_CONNECTED" if "connect" in low or "devices" in low else "CHDKPTP_FAILED",
-                        out.strip()[-800:])
-    return out
+class _Session:
+    """One interactive chdkptp process for the whole sync. Over Wi-Fi the
+    SX510 HS accepts one PTP/IP connection per Canon "connect" (a second
+    connection after a disconnect times out, 2026-11-04), so everything runs
+    in one session: each command is followed by a local marker print and the
+    output is read up to it."""
+
+    def __init__(self, cmd_template: str, mirror: Path, timeout: int):
+        import queue
+        import threading
+        argv = shlex.split(cmd_template.format(mirror=str(mirror))) + ["-i"]
+        try:
+            self.p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      text=True, bufsize=1)
+        except FileNotFoundError as e:
+            raise SyncError("CHDKPTP_NOT_FOUND", str(e)) from None
+        self.q: queue.Queue = queue.Queue()
+        self.timeout, self.n, self.log = timeout, 0, ""
+
+        def pump():
+            for line in self.p.stdout:
+                self.q.put(line)
+            self.q.put(None)
+        threading.Thread(target=pump, daemon=True).start()
+
+    def cmd(self, c: str, timeout: int | None = None) -> str:
+        import queue
+        import time
+        self.n += 1
+        mark = f"@@MFILM{self.n}@@"
+        try:
+            self.p.stdin.write(f"{c}\n!print('{mark}')\n")
+            self.p.stdin.flush()
+        except (BrokenPipeError, OSError):
+            raise SyncError("CHDKPTP_FAILED", self.log[-800:]) from None
+        out, end = [], time.monotonic() + (timeout or self.timeout)
+        while True:
+            try:
+                line = self.q.get(timeout=max(0.1, end - time.monotonic()))
+            except queue.Empty:
+                raise SyncError("CHDKPTP_TIMEOUT", f"{c}: no answer") from None
+            if line is None:
+                raise SyncError("CHDKPTP_FAILED", ("".join(out) + self.log)[-800:])
+            if mark in line and not line.lstrip().startswith(("___>", "con")) or line.strip() == mark:
+                break
+            out.append(line)
+        text = "".join(out)
+        self.log += f"> {c}\n{text}"
+        return text
+
+    def close(self):
+        try:
+            self.p.stdin.write("dis\nquit\n")
+            self.p.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        try:
+            self.p.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
 
 
 def _connect(host: str | None) -> str:
@@ -107,28 +151,31 @@ def sync(store: Store, conn: sqlite3.Connection, *, host: str | None = None, mir
     (card / MFILM_DIR).mkdir(parents=True, exist_ok=True)
     tmpl = chdkptp or DEFAULT_CHDKPTP
     res = SyncResult(connection=name)
-    # 1. roll metadata (small): mdownload puts the contents of A/CHDK/MFILM/ROLLS into the target
-    res.log += _chdkptp(tmpl, mirror, [_connect(host),
-                                       f"mdl -overwrite=y {_q('A/' + str(MFILM_DIR))} {_q(str(card / MFILM_DIR))}"],
-                        timeout)
-    # 2. originals the sealed rolls need
-    want = wanted_files(card, conn)
-    if want:
-        cmds = [_connect(host)]
-        for src, _ in want:
+    ses = _Session(tmpl, mirror, timeout)
+    try:
+        out = ses.cmd(_connect(host), timeout=60)
+        if "connected:" not in out:
+            raise SyncError("CAMERA_NOT_CONNECTED", out.strip()[-800:])
+        # a running camera script (the M-Film app) blocks chdkptp's remote calls
+        ses.cmd("killscript", timeout=30)
+        # 1. roll metadata (small): mdownload puts the contents of A/CHDK/MFILM/ROLLS into the target
+        out = ses.cmd(f"mdl -overwrite=y {_q('A/' + str(MFILM_DIR))} {_q(str(card / MFILM_DIR))}")
+        if "ERROR" in out and "no matching files" not in out:
+            raise SyncError("CHDKPTP_FAILED", out.strip()[-800:])
+        # 2. originals the sealed rolls need
+        for src, size in wanted_files(card, conn):
             dst = card_source(card, src)
             dst.parent.mkdir(parents=True, exist_ok=True)
             part = dst.with_name(dst.name + ".part")
-            cmds.append(f"d {_q(src)} {_q(str(part))}")
-        res.log += _chdkptp(tmpl, mirror, cmds, timeout)
-        for src, size in want:
-            dst = card_source(card, src)
-            part = dst.with_name(dst.name + ".part")
+            ses.cmd(f"d {_q(src)} {_q(str(part))}")
             if part.is_file() and part.stat().st_size == size:
                 part.replace(dst)
                 res.downloaded.append(src)
             elif part.exists():
                 part.unlink()
+    finally:
+        ses.close()
+        res.log = ses.log
     # 3. the same import as an SD card
     res.rolls = import_card(card, store, conn)
     return res
