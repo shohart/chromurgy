@@ -2,12 +2,11 @@
 import json
 
 import pytest
-from PIL import Image
-
 from mfilm_server import core, publisher, worker
 from mfilm_server.cli import main
 from mfilm_server.config import PhotoPrism, load
 from mfilm_server.importer import import_card
+from PIL import Image
 from test_develop import SAMPLE
 from test_worker import sample_card  # noqa: F401  (fixture)
 
@@ -74,3 +73,21 @@ def test_index_command_must_be_argv(tmp_path):
     cfg.write_text('[photoprism]\nindex_command = "rm -rf /"\n')
     with pytest.raises(ValueError):
         load(cfg)
+
+
+def test_a_fixed_pipeline_supersedes_its_earlier_render_but_looks_stay():
+    import json
+
+    from mfilm_server.publisher import _newest_pipeline
+
+    def row(rid, ordinal, norm, grain=1.0, film="portra400"):
+        rec = {"recipe_id": f"r-{norm}", "film_profile_id": film, "input_normalization_version": norm,
+               "look_controls": {"grain_scale": grain}}
+        return {"id": rid, "ordinal": ordinal, "recipe_json": json.dumps(rec)}
+
+    rows = [row("a2", 1, "mfilm-linear-rgb-v2"), row("a3", 1, "mfilm-linear-rgb-v3"),
+            row("b2", 2, "mfilm-linear-rgb-v2"), row("g2", 1, "mfilm-linear-rgb-v2", grain=2.0),
+            row("e2", 1, "mfilm-linear-rgb-v2", film="ektar100")]
+    keep, gone = _newest_pipeline(rows)
+    assert [r["id"] for r in keep] == ["a3", "b2", "g2", "e2"]
+    assert [r["id"] for r in gone] == ["a2"]

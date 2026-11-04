@@ -47,6 +47,35 @@ def roll_folder(roll: sqlite3.Row, film_short: str) -> str:
     return f"{day}_{film_short}_{safe_id(roll['id'])[:8]}"
 
 
+def _newest_pipeline(rows: list) -> tuple[list, list]:
+    """Renders of one frame whose recipes differ only in input_normalization_version are
+    the same rendition through a fixed pipeline: publish the newest (highest version, then
+    latest), the others are superseded. Different films or looks stay side by side."""
+    best: dict[tuple, sqlite3.Row] = {}
+    superseded = []
+    for r in rows:
+        rec = json.loads(r["recipe_json"])
+        key = (r["ordinal"], json.dumps({k: v for k, v in rec.items()
+                                         if k not in ("input_normalization_version", "recipe_id")}, sort_keys=True))
+        cur = best.get(key)
+        if cur is None:
+            best[key] = r
+            continue
+        if _norm_version(rec) >= _norm_version(json.loads(cur["recipe_json"])):
+            superseded.append(cur)
+            best[key] = r
+        else:
+            superseded.append(r)
+    keep = {r["id"] for r in best.values()}
+    return [r for r in rows if r["id"] in keep], superseded
+
+
+def _norm_version(recipe: dict) -> tuple:
+    v = str(recipe.get("input_normalization_version", ""))
+    m = re.search(r"(\d+)$", v)
+    return (int(m.group(1)) if m else 0, v)
+
+
 def publish_roll(conn: sqlite3.Connection, store: Store, pp: PhotoPrism, roll_id: str,
                  device_id: str | None = None) -> list[Published]:
     if not pp.export_dir:
@@ -66,8 +95,19 @@ def publish_roll(conn: sqlite3.Connection, store: Store, pp: PhotoPrism, roll_id
         "JOIN frames f ON f.device_id=r.device_id AND f.id=r.frame_id JOIN assets a ON a.id=r.asset_id "
         "JOIN recipes rc ON rc.id=r.recipe_id "
         "WHERE f.device_id=? AND f.roll_id=? AND r.origin='linux' AND r.state IN ('COMMITTED','PUBLISHED') "
-        "ORDER BY f.ordinal", (roll["device_id"], roll["id"])).fetchall()
+        "ORDER BY f.ordinal, r.rowid", (roll["device_id"], roll["id"])).fetchall()
+    rows, superseded = _newest_pipeline(rows)
     out: list[Published] = []
+    for r in superseded:
+        film = json.loads(r["recipe_json"])["film_profile_id"]
+        dest_root = pp.export_dir / pp.subdir / roll_folder(roll, _film_short(store, r["bundle_hash"], film))
+        old = dest_root / f"{r['ordinal']:02d}_{r['id'][:12]}.jpg"
+        if old.is_file():
+            # a fixed pipeline replaces its earlier output; kept outside PhotoPrism, not deleted
+            keep = store.root / "superseded" / dest_root.name
+            keep.mkdir(parents=True, exist_ok=True)
+            shutil.move(old, keep / old.name)
+            out.append(Published(r["id"], str(keep / old.name), "SUPERSEDED"))
     for r in rows:
         # folder per film actually rendered: a reprocess with another film gets its own folder
         film = json.loads(r["recipe_json"])["film_profile_id"]
