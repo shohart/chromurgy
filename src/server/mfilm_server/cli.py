@@ -73,6 +73,34 @@ def cmd_import_card(args) -> int:
     return 1 if bad else 0
 
 
+def cmd_camera_sync(args) -> int:
+    from .camera_sync import SyncError, sync
+    store, conn = _open(args.data_dir, args.cfg)
+    host = args.host or (None if args.usb else args.cfg.camera_host)
+    try:
+        r = sync(store, conn, host=host, mirror=Path(args.mirror) if args.mirror else None, chdkptp=args.cfg.chdkptp)
+    except SyncError as e:
+        _out(args, {"ok": False, "error_code": e.code, "detail": e.detail}, f"camera-sync: {e.code}: {e.detail}")
+        return 1
+    queued = []
+    from . import worker
+    for x in r.rolls:
+        if x.status in ("IMPORTED", "UNCHANGED"):
+            try:
+                queued.append(worker.enqueue_roll(conn, x.roll_id, x.device_id))
+            except Exception as e:
+                queued.append({"roll_id": x.roll_id, "error": str(e)})
+    lines = [f"camera via {r.connection}: downloaded {len(r.downloaded)} file(s)"]
+    lines += [f"{x.status:10} {x.device_id or '-'}/{x.roll_id or '-'}" + (f"  ({x.detail})" if x.detail else "")
+              for x in r.rolls]
+    _out(args, {"ok": True, "connection": r.connection, "downloaded": r.downloaded, "rolls": as_dict(r.rolls),
+                "queued": queued}, "\n".join(lines))
+    if args.run:                      # develop + publish, as one mfilmctl worker pass
+        args.max_jobs, args.jobs, args.no_publish = None, None, False
+        return _worker_pass(args)
+    return 1 if any(x.status in ("INVALID", "CONFLICT", "INCOMPLETE") for x in r.rolls) else 0
+
+
 def cmd_develop(args) -> int:
     from . import worker
     store, conn = _open(args.data_dir, args.cfg)
@@ -336,6 +364,13 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_bundle_add)
     sub.add_parser("bundle-list", parents=[common], help="archived bundles and rolls that need one").set_defaults(
         fn=cmd_bundle_list)
+    s = sub.add_parser("camera-sync", parents=[common],
+                       help="pull sealed rolls from the camera with chdkptp (USB, or Wi-Fi with --host)")
+    s.add_argument("--host", help="camera IP for Wi-Fi (PTP/IP); default [camera] host, else USB")
+    s.add_argument("--usb", action="store_true", help="force USB even if [camera] host is set")
+    s.add_argument("--mirror", help="local mirror of the card (default <data_dir>/camera-mirror/<host|usb>)")
+    s.add_argument("--run", action="store_true", help="then develop and publish (like mfilmctl worker)")
+    s.set_defaults(fn=cmd_camera_sync)
     s = sub.add_parser("camera-card", parents=[common], help="lay out the M-Film camera app files to copy onto a CHDK card")
     s.add_argument("out")
     s.add_argument("--utc-offset", help="camera clock offset, e.g. +02:00 (default: this host's)")

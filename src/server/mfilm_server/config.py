@@ -20,6 +20,8 @@ class Config:
     data_dir: Path = Path("/var/lib/mfilm")
     photoprism: PhotoPrism = field(default_factory=PhotoPrism)
     jobs: int = 1                           # [worker] jobs: frames developed at once (~0.9 GB each)
+    chdkptp: str | None = None              # [camera] chdkptp: command template, {mirror} = local card mirror
+    camera_host: str | None = None          # [camera] host: the camera's IP for Wi-Fi (PTP/IP); unset = USB
 
 
 def load(path: str | os.PathLike | None) -> Config:
@@ -42,4 +44,7 @@ def load(path: str | os.PathLike | None) -> Config:
     if not isinstance(jobs, int) or jobs < 1:
         raise ValueError("worker.jobs must be a positive integer")
     cfg.jobs = jobs
+    cam = raw.get("camera", {})
+    cfg.chdkptp = cam.get("chdkptp") or None
+    cfg.camera_host = cam.get("host") or None
     return cfg

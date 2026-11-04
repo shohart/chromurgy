@@ -24,3 +24,8 @@ subdir = "M-Film"
 # Frames developed at once. A full-size frame needs about 0.9 GB, so size this
 # by free memory, not by cores (measured: i7-4770K tops out near 6, ~17 frames/min).
 jobs = 1
+
+# Pulling rolls straight from the camera (mfilmctl camera-sync), see deploy/chdkptp.
+# [camera]
+# host = "192.168.1.50"     # camera IP on Wi-Fi (PTP/IP, after pairing); leave unset for USB
+# chdkptp = "docker run --rm --network host --privileged -v /dev/bus/usb:/dev/bus/usb -v {mirror}:{mirror} mfilm-chdkptp"
