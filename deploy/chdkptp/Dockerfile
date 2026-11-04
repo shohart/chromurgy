@@ -27,7 +27,7 @@ RUN curl -fsSL -o /usr/local/bin/ptpip-canon-upnp-helper \
       https://raw.githubusercontent.com/reyalpchdk/ptpip-canon-helpers/${HELPERS_COMMIT}/ptpip-canon-upnp-helper.py \
     && curl -fsSL -o /usr/local/bin/ptpip-canon-desc-helper.py \
       https://raw.githubusercontent.com/reyalpchdk/ptpip-canon-helpers/${HELPERS_COMMIT}/ptpip-canon-desc-helper.py \
-    && chmod +x /usr/local/bin/ptpip-canon-upnp-helper
+    && chmod +x /usr/local/bin/ptpip-canon-upnp-helper /usr/local/bin/ptpip-canon-desc-helper.py
 ENV CHDKPTP_DIR=/opt/chdkptp LUA_PATH=/opt/chdkptp/lua/?.lua;; 
 WORKDIR /work
 ENTRYPOINT ["/opt/chdkptp/chdkptp"]
