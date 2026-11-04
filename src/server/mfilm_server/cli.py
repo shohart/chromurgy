@@ -237,6 +237,13 @@ def cmd_device_revoke(args) -> int:
     return 0
 
 
+def cmd_camera_card(args) -> int:
+    from .camera_card import write_card
+    for p in write_card(Path(args.out), utc_offset=args.utc_offset, bench=args.bench):
+        print(p)
+    return 0
+
+
 def cmd_list_rolls(args) -> int:
     _, conn = _open(args.data_dir, args.cfg)
     q = ("SELECT r.device_id, r.id, r.film_profile_id, r.state, r.expected_frames, "
@@ -329,6 +336,11 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_bundle_add)
     sub.add_parser("bundle-list", parents=[common], help="archived bundles and rolls that need one").set_defaults(
         fn=cmd_bundle_list)
+    s = sub.add_parser("camera-card", parents=[common], help="lay out the M-Film camera app files to copy onto a CHDK card")
+    s.add_argument("out")
+    s.add_argument("--utc-offset", help="camera clock offset, e.g. +02:00 (default: this host's)")
+    s.add_argument("--bench", action="store_true", help="also the MFBENCH module and probe (tools/build_chdk.sh)")
+    s.set_defaults(fn=cmd_camera_card)
     s = sub.add_parser("list-rolls", parents=[common])
     s.add_argument("--state", choices=db.ROLL_SERVER_STATES)
     s.set_defaults(fn=cmd_list_rolls)

@@ -114,6 +114,9 @@ def create_app(store: Store) -> FastAPI:
             raise ApiError(409, "IDENTITY_MISMATCH", "roll_id/device_id differ from the URL/credential")
         if doc["roll_state"] not in ("SEALED", "READY_FOR_SYNC"):
             raise ApiError(409, "ROLL_NOT_SEALED", doc["roll_state"])
+        if any(not fr.get("source_sha256") for fr in doc["frames"]):
+            # uploads are identified by their hash; hashless frames only come in through SD/USB card import
+            raise ApiError(422, "MANIFEST_HASH_REQUIRED", "every frame needs source_sha256 for network sync")
         msha = hashlib.sha256(canonical_json(doc)).hexdigest()
         known = c.execute("SELECT manifest_sha256 FROM rolls WHERE device_id=? AND id=?", (dev, roll_id)).fetchone()
         if known:

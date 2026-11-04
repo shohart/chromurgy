@@ -90,6 +90,7 @@ def _import_roll(card_root: Path, mpath: Path, store: Store, conn: sqlite3.Conne
 
     # verify + stage every frame before touching the DB
     staged: list[tuple[dict, Path | None, Path, str]] = []   # frame, part, dest, status
+    hashes: dict[str, str] = {}     # frame_id -> sha256 (declared, or computed here for hashless WRITTEN frames)
     for fr in sorted(doc["frames"], key=lambda f: f["ordinal"]):
         fres = FrameResult(frame_id=fr["frame_id"], ordinal=fr["ordinal"], status="ERROR")
         res.frames.append(fres)
@@ -99,10 +100,13 @@ def _import_roll(card_root: Path, mpath: Path, store: Store, conn: sqlite3.Conne
         except UnsafePath as e:
             fres.error_code, fres.detail = "UNSAFE_SOURCE_PATH", str(e)
             continue
-        want = fr["source_sha256"].lower()
+        want = (fr.get("source_sha256") or "").lower() or None   # None: camera did not hash (WRITTEN)
         if dest.exists():
             have, _ = sha256_file(dest)
+            if want is None:            # hashless frame: the card copy (or, if gone, the archive) decides
+                want = sha256_file(src)[0] if src.is_file() else have
             if have == want:
+                hashes[fr["frame_id"]] = have
                 fres.status = "ALREADY_ARCHIVED"
                 staged.append((fr, None, dest, fres.status))
             else:
@@ -122,17 +126,18 @@ def _import_roll(card_root: Path, mpath: Path, store: Store, conn: sqlite3.Conne
             continue
         if dry_run:
             have, _ = sha256_file(src)
-            if have != want:
+            if want is not None and have != want:
                 fres.error_code = "SOURCE_HASH_MISMATCH"
                 continue
             fres.status = "WOULD_IMPORT"
             continue
         part = store.stage_copy(src)
         have, nbytes = sha256_file(part)   # hash the staged copy, not the card
-        if have != want or nbytes != fr["source_size_bytes"]:
+        if (want is not None and have != want) or nbytes != fr["source_size_bytes"]:
             part.unlink()
             fres.error_code = "SOURCE_HASH_MISMATCH"
             continue
+        hashes[fr["frame_id"]] = have
         fres.status = "IMPORTED"
         staged.append((fr, part, dest, fres.status))
 
@@ -141,6 +146,13 @@ def _import_roll(card_root: Path, mpath: Path, store: Store, conn: sqlite3.Conne
         return res
 
     complete = len(staged) == len(doc["frames"])
+    if not complete and any(not fr.get("source_sha256") and fr["frame_id"] not in hashes for fr in doc["frames"]):
+        # a hashless frame that could not be read now has no identity to declare: wait for a complete card
+        res.status, res.detail = "INCOMPLETE", "unhashed frame(s) missing on the card"
+        for _, part, _, _ in staged:
+            if part is not None and part.exists():
+                part.unlink()
+        return res
     if known and not any(p for _, p, _, _ in staged) and (known["state"] == "INPUTS_COMPLETE" or not complete):
         res.status = "UNCHANGED" if complete else "INCOMPLETE"
         return res
@@ -161,7 +173,8 @@ def _import_roll(card_root: Path, mpath: Path, store: Store, conn: sqlite3.Conne
                 """INSERT OR IGNORE INTO frames(id, device_id, roll_id, ordinal, capture_time, declared_sha256,
                        declared_bytes, source_path, original_state) VALUES (?,?,?,?,?,?,?,?, 'DECLARED')""",
                 (fr["frame_id"], device_id, roll_id, fr["ordinal"], fr.get("captured_at"),
-                 fr["source_sha256"].lower(), fr["source_size_bytes"], fr["source_path"]))
+                 hashes.get(fr["frame_id"]) or fr["source_sha256"].lower(), fr["source_size_bytes"],
+                 fr["source_path"]))
         # Originals are promoted before COMMIT: on rollback they stay in the
         # archive as orphans, and the next import adopts them as
         # ALREADY_ARCHIVED after re-hashing (never overwritten).
@@ -169,11 +182,10 @@ def _import_roll(card_root: Path, mpath: Path, store: Store, conn: sqlite3.Conne
             if part is not None:
                 Store.promote(part, dest)
             rel = str(dest.relative_to(store.root))
+            sha = hashes[fr["frame_id"]]
             conn.execute("INSERT OR IGNORE INTO assets(sha256, bytes, mime, kind, path) VALUES (?,?,?,?,?)",
-                         (fr["source_sha256"].lower(), fr["source_size_bytes"], "image/x-adobe-dng",
-                          "original_dng", rel))
-            asset_id = conn.execute("SELECT id FROM assets WHERE sha256=?",
-                                    (fr["source_sha256"].lower(),)).fetchone()[0]
+                         (sha, fr["source_size_bytes"], "image/x-adobe-dng", "original_dng", rel))
+            asset_id = conn.execute("SELECT id FROM assets WHERE sha256=?", (sha,)).fetchone()[0]
             conn.execute("UPDATE frames SET original_asset_id=?, original_state='VERIFIED', error_code=NULL "
                          "WHERE device_id=? AND id=?", (asset_id, device_id, fr["frame_id"]))
         if complete:

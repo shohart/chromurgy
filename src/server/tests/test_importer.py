@@ -95,3 +95,36 @@ def test_cli_json_roundtrip(make_card, store, capsys):
     # this roll's bundle ("bbbb...") is not archived: reprocess refuses rather than substituting one
     assert main(["reprocess", roll, "--profile", "ektar100", "--data-dir", str(store.root)]) == 1
     assert "PROFILE_BUNDLE_UNAVAILABLE" in capsys.readouterr().err
+
+
+def _hashless(d, c):
+    for fr in d["frames"]:
+        fr.pop("source_sha256")
+        fr["original_status"] = "WRITTEN"
+
+
+def test_hashless_written_frames_are_hashed_by_the_receiver(make_card, store, conn):
+    card = make_card(mutate=_hashless)
+    r = import_card(card, store, conn)[0]
+    assert r.status == "IMPORTED", r.detail
+    rows = conn.execute("SELECT f.declared_sha256, a.sha256, f.source_path FROM frames f "
+                        "JOIN assets a ON a.id=f.original_asset_id ORDER BY ordinal").fetchall()
+    assert len(rows) == 2
+    for declared, archived, src in rows:
+        assert declared == archived == sha256_file(card / src[2:])[0]
+    assert import_card(card, store, conn)[0].status == "UNCHANGED"
+
+
+def test_hashless_frame_missing_on_card_waits(make_card, store, conn):
+    card = make_card(mutate=_hashless)
+    doc = json.loads(next(card.rglob("manifest.json")).read_text())
+    (card / doc["frames"][1]["source_path"][2:]).unlink()
+    r = import_card(card, store, conn)[0]
+    assert r.status == "INCOMPLETE"
+    assert conn.execute("SELECT COUNT(*) FROM rolls").fetchone()[0] == 0
+    assert not list((store.root / "incoming").iterdir())
+
+
+def test_hashed_frame_must_keep_its_hash(make_card, store, conn):
+    card = make_card(mutate=lambda d, c: d["frames"][0].pop("source_sha256"))   # VERIFIED without a hash
+    assert import_card(card, store, conn)[0].status == "INVALID"

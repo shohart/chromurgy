@@ -83,7 +83,6 @@
           "ordinal",
           "source_path",
           "source_size_bytes",
-          "source_sha256",
           "original_status"
         ],
         "properties": {
@@ -119,7 +118,21 @@
               "UPLOADED"
             ]
           }
-        }
+        },
+        "if": {
+          "properties": {
+            "original_status": {
+              "const": "WRITTEN"
+            }
+          }
+        },
+        "then": {},
+        "else": {
+          "required": [
+            "source_sha256"
+          ]
+        },
+        "$comment": "A WRITTEN frame may omit source_sha256: the camera did not hash it (hashing a 19 MB DNG on the SX510 HS takes ~10 s); the receiver hashes its staged copy and records that as the declared hash."
       }
     }
   }

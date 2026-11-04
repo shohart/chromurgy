@@ -18,6 +18,9 @@ ln -sf "$root/src/camera/mfbench/makefile_usermodules.inc" "$b/modules/makefile_
 rev=$(awk '$1=="chdk-trunk"{print substr($3,1,8)}' "$root/LOCKFILE")
 make -C "$b" -s PLATFORM=sx510hs PLATFORMSUB=101a MF_ROOT="$root" BUILD_SVNREV="mfilm-$rev" fir >"$root/build/chdk-build.log" 2>&1 \
   || { tail -30 "$root/build/chdk-build.log"; exit 1; }
+# CHDK's host Lua (integer numbers, camera os/io libs) for the app harness
+make -C "$b/tools/hostlua" -s >>"$root/build/chdk-build.log" 2>&1
+mkdir -p "$root/build/hostlua" && cp "$b/tools/hostlua/lua" "$b/tools/hostlua/luac" "$root/build/hostlua/"
 cmake --build "$root/build" --target mfbench_gen >/dev/null
 rm -rf "$card" && mkdir -p "$card"
 cp "$b/bin/DISKBOOT.BIN" "$card/"
