@@ -3,6 +3,7 @@
 scenarios by src/camera/test/harness.lua, and the cards it leaves behind
 imported by the real receiver. Needs build/hostlua (tools/build_hostlua.sh)."""
 import json
+import os
 import re
 import subprocess
 
@@ -48,11 +49,11 @@ def card(tmp_path):
     return root
 
 
-def run(root, steps, expect_ok=True):
+def run(root, steps, expect_ok=True, env=None):
     scen = root / f"scenario{len(list(root.glob('scenario*.lua')))}.lua"
     scen.write_text("return {\n" + ",\n".join(lua_step(s) for s in steps) + "\n}\n")
     p = subprocess.run([str(LUA), str(HARNESS), str(APP), str(scen)], cwd=root, capture_output=True, text=True,
-                       timeout=120)
+                       timeout=120, env=env)
     if expect_ok:
         assert p.returncode == 0, p.stderr + p.stdout
     return p
@@ -173,6 +174,27 @@ def test_menu_in_playback_with_chdk_osd_off_then_restored(card):
                ("expect_state", True, 1), ("expect", "Portra400 0/12")] + shots(1)
         + [("playback",), ("wait", 900), ("expect_state", False, 0), ("key", "shoot_half"), ("wait", 600),
            ("expect_state", True, 1)])
+
+
+def test_menu_cursor_redraws_two_rows_without_clearing(card):
+    # camera test 0.1.7: clearing and repainting the whole menu on each key let
+    # the photo/live view under it show through
+    log = card / "draw.log"
+    run(card, [("wait", 1500), ("snap", "start"), ("key", "down"), ("wait", 400), ("key", "down"), ("wait", 400),
+               ("key", "up"), ("wait", 400), ("snap", "end")], env={**os.environ, "MFILM_DRAWLOG": str(log)})
+    lines = log.read_text().splitlines()
+    i0, i1 = lines.index("SNAP start"), lines.index("SNAP end")
+    assert "C" not in lines[i0:i1]
+    screen, changed = {}, 0
+    for i, ln in enumerate(lines[:i1]):
+        if ln == "C":
+            screen = {}
+        elif ln.startswith("S "):
+            _, x, y, rest = ln.split(" ", 3)
+            if i > i0 and screen.get((x, y)) != rest:
+                changed += 1
+            screen[(x, y)] = rest
+    assert changed == 6   # 3 cursor moves x (old row + new row); the safety repaint rewrites identical rows
 
 
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"

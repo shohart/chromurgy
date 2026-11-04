@@ -117,3 +117,16 @@ camera. 0.1.7 uses the real ids (CONF_OSD 2000 + osd_conf_info id), pinned in
 src/camera/test/chdk-1.6.1-r6355-osd-conf-ids.txt and checked by tests; the
 harness refuses ids below 1000. At start the app switches off CHDK's battery
 icon/percent, clock, temperature, RAW counter and state and card space display.
+
+## 0.1.8: menu redraw without clearing
+
+Camera test 0.1.7 (video): moving the cursor briefly showed the photo or live
+view under the lower part of the menu. screen() called draw_clear() whenever
+the content changed and then repainted every row, so the bitmap was
+transparent until the slow Lua repaint caught up. Now each row's signature is
+cached and only changed rows are redrawn (a cursor move rewrites two rows); the
+screen is never cleared while a menu is up, every row is opaque and full width
+so a new screen overwrites the old one, and graphics (counter, canisters) are
+redrawn only with their row. The safety repaint (every 5 s) rewrites text rows
+only. A test replays the draw log and checks no clear and exactly two changed
+rows per cursor move.

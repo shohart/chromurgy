@@ -177,68 +177,84 @@ local function overlay()
   end
 end
 
--- Menus are drawn only when their content changes (and every few seconds, in
--- case the camera's own display update erased them): redrawing the whole
--- screen on every key poll made it flicker over the live view. No full-screen
--- fill either; each line is drawn with its own background and padded to the
--- screen width. The bottom text row belongs to CHDK's <ALT>/<EXIT> bar.
-local last_key, last_full = nil, 0
+-- Menus are drawn row by row, and only the rows whose content changed are
+-- redrawn: moving the cursor repaints two rows. The screen is never cleared
+-- while a menu is up -- clearing and repainting everything let the photo or
+-- live view under the menu show through for a moment on every key press
+-- (camera test 0.1.7). Every row is padded to the full width with an opaque
+-- background, so a new screen simply overwrites the old one. The graphics
+-- (film counter, canisters) are drawn only when their row changed, so the
+-- periodic safety repaint touches text rows only and never blinks them.
+local drawn = {}                                 -- row -> signature last drawn
+local last_full = 0
+local function invalidate() drawn = {} end
 
 local function pad(s)
   s = string.sub(s or "", 1, COLS)
   return s .. string.rep(" ", COLS - string.len(s))
 end
 
+-- draw one text row unless it is already on screen; returns true if drawn
+local function row_text(row, s, fg, bg, sig, force)
+  local k = (sig or "") .. "|" .. s .. "|" .. tostring(fg) .. "|" .. tostring(bg)
+  if drawn[row] == k and not force then return false end
+  text(0, row, s, fg, bg)
+  drawn[row] = k
+  return true
+end
+
 local function screen(title, lines, items, sel, footer, icons)
   local rows_total = H / FH                     -- CHDK's bar is hidden while the menu is up
-  local key_ = title .. "|" .. tostring(sel) .. "|" .. table.concat(items or {}, "/")
-  for _, l in ipairs(lines or {}) do
-    if type(l) == "table" and l.hero then key_ = key_ .. "|hero" .. l.hero.film .. #l.hero.frames
-    else key_ = key_ .. "|" .. (type(l) == "table" and l[1] or l) end
-  end
-  -- in playback nothing redraws over the menu: repaint only on change (and
-  -- every 2 s as a safety net, without clearing)
-  if key_ == last_key and get_tick_count() - last_full < 2000 then return end
-  if key_ ~= last_key then draw_clear() end
-  last_key, last_full = key_, get_tick_count()
+  -- safety net: every 5 s rewrite plain text rows (same pixels, no blink) in
+  -- case the camera drew over them
+  local refresh = get_tick_count() - last_full >= 5000
+  if refresh then last_full = get_tick_count() end
   local row = 0
-  text(0, row, pad(" " .. title), C.hi)
+  row_text(row, pad(" " .. title), C.hi, C.bg, nil, refresh)
   row = row + 1
   for _, l in ipairs(lines or {}) do
     if row >= rows_total - 1 then break end
     if type(l) == "table" and l.hero then
       -- the loaded film: canister, big counter, strip (two text rows)
       local r = l.hero
-      text(0, row, pad(""), C.fg)
-      text(0, row + 1, pad(""), C.fg)
-      canister(8, row * FH + 8, r.film)
-      draw_string(32, row * FH, string.format("%d/%d", #r.frames, r.length), C.hi, C.bg, 2)
-      local sx = 32 + 16 * string.len(string.format("%d/%d", #r.frames, r.length)) + 12
-      strip(sx, row * FH + 10, W - sx - 8, r.length, #r.frames)
+      local sig = "hero:" .. r.film .. ":" .. #r.frames .. "/" .. r.length
+      local a = row_text(row, pad(""), C.fg, C.bg, sig)
+      local b = row_text(row + 1, pad(""), C.fg, C.bg, sig)
+      if a or b then
+        canister(8, row * FH + 8, r.film)
+        local cs = string.format("%d/%d", #r.frames, r.length)
+        draw_string(32, row * FH, cs, C.hi, C.bg, 2)
+        local sx = 32 + 16 * string.len(cs) + 12
+        strip(sx, row * FH + 10, W - sx - 8, r.length, #r.frames)
+      end
       row = row + 2
     else
       local s, col = l, C.dim
       if type(l) == "table" then s, col = l[1], l[2] or C.dim end
-      text(0, row, pad(" " .. s), col)
+      row_text(row, pad(" " .. s), col, C.bg, nil, refresh)
       row = row + 1
     end
   end
   if items then
-    text(0, row, pad(""), C.fg)
+    row_text(row, pad(""), C.fg, C.bg, nil, refresh)
     row = row + 1
     local rows = rows_total - row - 1
     local first = 1
     if sel > rows then first = sel - rows + 1 end
     for i = first, math.min(#items, first + rows - 1) do
-      local label = icons and icons[i] and ("   " .. items[i]) or items[i]
-      if i == sel then text(0, row, pad(" > " .. label), C.fg, C.sel)
-      else text(0, row, pad("   " .. label), C.fg) end
-      if icons and icons[i] then canister(3 * FW, row * FH, icons[i]) end
+      local icon = icons and icons[i]
+      local label = icon and ("   " .. items[i]) or items[i]
+      local sig = icon and ("icon:" .. icon) or nil
+      local s, bg = pad("   " .. label), C.bg
+      if i == sel then s, bg = pad(" > " .. label), C.sel end
+      if row_text(row, s, C.fg, bg, sig, refresh and not icon) and icon then
+        canister(3 * FW, row * FH, icon)
+      end
       row = row + 1
     end
-    while row < rows_total - 1 do text(0, row, pad(""), C.fg); row = row + 1 end
   end
-  text(0, rows_total - 1, pad(footer or " SET ok  MENU back  half: shoot  VIDEO: quit"), C.dim)
+  while row < rows_total - 1 do row_text(row, pad(""), C.fg, C.bg, nil, refresh); row = row + 1 end
+  row_text(rows_total - 1, pad(footer or " SET ok  MENU back  half: shoot  VIDEO: quit"), C.dim, C.bg, nil, refresh)
 end
 
 -- wait for one of KEYS; returns the key name, "shoot" if alt mode was left, or nil on timeout
@@ -296,6 +312,7 @@ local function load_film()
   if not r then say("ERROR: " .. tostring(err), 8000) return end
   roll = r
   anim_load(r.film, r.length)
+  invalidate()
   say("Loaded " .. mf.film_name(r.film) .. " x" .. r.length, 5000)
   return "shoot"
 end
@@ -323,7 +340,7 @@ local function show_rolls()
 end
 
 local function show_diag()
-  last_key = nil
+  invalidate()
   local lines = {}
   for _, s in ipairs(selftest) do lines[#lines + 1] = s end
   lines[#lines + 1] = "device " .. mf.device.device_id
@@ -377,7 +394,7 @@ local function menu()
   set_rec(false)
   draw_clear()
   title_line(false)
-  last_key = nil
+  invalidate()
   local sel = 1
   while not quit do
     local status = {{"Film: " .. (roll and mf.film_name(roll.film) or "NO FILM"), roll and C.fg or C.warn}}
