@@ -13,7 +13,9 @@
 --   {"shoot", opts}        the camera writes a DNG (+ JPG): opts.dir, opts.lag, opts.raw=false, opts.overwrite
 --   {"wait", ms}           let time pass
 --   {"powercut"}           kill the app mid-flight; the next step restarts it on the same card
---   {"restart"}            start the app again (after powercut or quit)
+--   {"restart"}            start the app again by hand (after powercut or quit)
+--   {"boot"}               power-on: CHDK autostarts the app if autostart is set
+--   {"expect_autostart", n} CHDK's autostart setting is n
 --   {"expect", pattern}    some text drawn since the last expect matches pattern
 --   {"setdir", dir}        the camera starts a new DCIM folder
 -- Exit status 0 = scenario passed.
@@ -78,6 +80,10 @@ function get_vbatt() return 3950 end
 function get_exp_count() return shots end
 function get_buildinfo() return {platform = "sx510hs", platsub = "101a", build_number = "host", build_revision = "0"} end
 hook_raw = {count = function() return shots end}
+local autostart_conf, booted = 0, false
+function get_autostart() return autostart_conf end
+function set_autostart(v) autostart_conf = v end
+function autostarted() return booted end
 
 -- ---------------------------------------------------------------- DryOS file rules
 -- What the SX510 HS taught us (alpha 2026-11-04): os.rename refuses to replace
@@ -147,7 +153,9 @@ while true do
     exited = true
     local s = steps[i]
     if not s then break end
-    if s[1] == "restart" then i = i + 1; co = new_app(); exited = false
+    if s[1] == "restart" or s[1] == "boot" then
+      booted = s[1] == "boot" and autostart_conf == 1   -- power-on with CHDK autostart
+      i = i + 1; co = new_app(); exited = false
     elseif s[1] == "expect_exit" then i = i + 1
     else log("FAIL: app exited before step " .. i .. " (" .. s[1] .. ")") os.exit(1) end
   else
@@ -177,7 +185,9 @@ while true do
             os.exit(1)
           end
           drawn = {}
-        elseif k == "restart" then log("FAIL: restart while app is running") os.exit(1)
+        elseif k == "restart" or k == "boot" then log("FAIL: " .. k .. " while app is running") os.exit(1)
+        elseif k == "expect_autostart" then
+          if autostart_conf ~= s[2] then log("FAIL: autostart is " .. autostart_conf .. ", expected " .. s[2]) os.exit(1) end
         elseif k == "expect_exit" then log("FAIL: app still running at expect_exit") os.exit(1)
         else log("FAIL: unknown step " .. tostring(k)) os.exit(1) end
       end

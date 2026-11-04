@@ -153,3 +153,16 @@ def test_quit_from_menu(card):
     assert "---- quit" in applog(card)
     (r,) = rolls(card)
     assert r["roll_state"] == "LOADED"
+
+
+def test_autostart_goes_straight_to_shooting_with_film_loaded(card):
+    run(card, [("expect_autostart", 1)] + LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2)
+        + [("powercut",), ("boot",), ("wait", 1200), ("expect", "Portra400 2/12")] + shots(1)
+        + [("expect", "Portra400 3/12")])
+    (r,) = rolls(card)
+    assert r["captured_frames"] == 3
+
+
+def test_autostart_can_be_switched_off_from_the_menu(card):
+    run(card, [("expect", "Start with camera: ON"), ("key", "down"), ("key", "down"), ("key", "down"),
+               ("key", "down"), ("key", "set"), ("expect", "Start with camera: OFF"), ("expect_autostart", 0)])

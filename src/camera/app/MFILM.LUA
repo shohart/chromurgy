@@ -250,8 +250,10 @@ local function menu()
     local status = {{"Film: " .. frame_text(roll), roll and C.fg or C.warn}}
     if have("get_raw") and not get_raw() then status[#status + 1] = {"RAW/DNG is OFF: enable it in CHDK RAW menu", C.warn} end
     if notice and get_tick_count() < notice_until then status[#status + 1] = {notice, C.hi} end
+    local auto_on = have("get_autostart") and get_autostart() == 1
     local items = {"Shoot", roll and roll.state ~= "SEALED" and "Load new film (finish this one)" or "Load film",
-                   "Finish roll now", "Rolls on card", "Diagnostics", "Quit M-Film"}
+                   "Finish roll now", "Rolls on card", "Start with camera: " .. (auto_on and "ON" or "OFF"),
+                   "Diagnostics", "Quit M-Film"}
     local i = choose("M-Film " .. mf.VERSION, status, items, sel)
     if i == "shoot" or i == 1 or i == nil then break end
     sel = i
@@ -260,8 +262,13 @@ local function menu()
     if i == 2 then r = load_film()
     elseif i == 3 then seal_now()
     elseif i == 4 then r = show_rolls()
-    elseif i == 5 then show_diag()
-    elseif i == 6 then
+    elseif i == 5 then
+      if have("set_autostart") then
+        set_autostart(auto_on and 0 or 1)
+        mf.log("autostart " .. (auto_on and "off" or "on"))
+      end
+    elseif i == 6 then show_diag()
+    elseif i == 7 then
       if confirm("Quit M-Film", {"Frames shot after quitting are NOT recorded.", "The roll stays loaded."}) then
         quit = true
       end
@@ -348,8 +355,18 @@ local function main()
     mf.journal(roll, "RESUMED app start, " .. #roll.frames .. " frame(s)")
     say("Resumed " .. frame_text(roll), 5000)
   end
+  -- start with the camera: CHDK runs this script at every power-on (the
+  -- setting is CHDK's own, saved by set_autostart; toggle it in the menu)
+  local auto = have("autostarted") and autostarted()
+  if have("get_autostart") and have("set_autostart") and get_autostart() == 0 and not auto then
+    set_autostart(1)
+    mf.log("autostart enabled")
+    say("M-Film now starts with the camera", 5000)
+  end
+  local skip_menu = auto and roll ~= nil            -- powered on with film loaded: straight to shooting
   while not quit do
-    menu()
+    if not skip_menu then menu() end
+    skip_menu = false
     if quit then break end
     shooting()
   end
