@@ -10,7 +10,7 @@ FLTS += $Omfbench.flt
 $Omfbench.flt: $Omfbench.o $Omfbench_cam.o $Omfbench_run.o $Omf_fx.o $Omf_sha256.o $Omf_seed.o
 
 # mfbench.c: CHDK headers only; the rest: GCC's stdint.h + CHDK's libc headers
-$Omfbench.o: $(MF_BENCH)/mfbench.c simple_module.c
+$Omfbench.o: $(MF_BENCH)/mfbench.c
 	@echo $< '->' $@
 	$(CC) $(CFLAGS) -c -o $@ $<
 $Omfbench_cam.o: $(MF_BENCH)/mfbench_cam.c $(MF_BENCH)/mfbench.h

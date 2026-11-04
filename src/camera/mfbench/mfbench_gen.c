@@ -67,7 +67,7 @@ int main(int argc, char **argv)
         }
         mfb_times t;
         int rc = mfb_run(&cs[i], &table.v[0][0], mem, mlen, in, out, hb, cs[i].expect, host_clock, &t,
-                         pv ? ppm_rows : 0, pv);
+                         pv ? ppm_rows : 0, pv, 0);
         if (pv) fclose(pv);
         if (rc != MF_OK) { fprintf(stderr, "run %dx%d: %d\n", w, h, rc); return 1; }
         printf("%s %dx%d ctx %zu B, host ms scan %ld glow %ld render %ld hash %ld, out ", argv[2], w, h, mlen, t.scan,

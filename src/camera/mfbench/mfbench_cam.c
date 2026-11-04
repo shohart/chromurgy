@@ -55,6 +55,8 @@ static void hex32(char *dst, const uint8_t *h)
 
 static long tick(void) { return get_tick_count(); }
 
+static void yield(void) { msleep(10); }      /* let lower-priority camera tasks run */
+
 static void meminfo(const char *what, cam_meminfo *m)
 {
     sprintf(line, "mem %s: free %d, largest free block %d, total %d, allocated %d\n", what, m->free_size,
@@ -137,7 +139,7 @@ static void bench_cases(void)
             mfb_times t;
             uint8_t hash[32];
             long ta = tick();
-            int rc = mfb_run(&cs[i], table, mem, mlen, in, out, hb, hash, tick, &t, ppm_rows, 0);
+            int rc = mfb_run(&cs[i], table, mem, mlen, in, out, hb, hash, tick, &t, ppm_rows, 0, yield);
             long total = tick() - ta;
             if (ppm) fclose(ppm);
             ppm = 0;

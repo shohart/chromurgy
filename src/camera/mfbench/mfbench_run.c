@@ -35,7 +35,8 @@ void mfb_scene_rows(uint16_t *rgb, int w, int h, int y0, int n)
 
 int mfb_run(const mfb_case *c, const uint16_t *table, void *mem, size_t mem_len, uint16_t *in, uint16_t *out,
             uint8_t *hbuf, uint8_t hash[32], mfb_clock clk, mfb_times *t,
-            void (*rows_cb)(void *ctx, const uint16_t *rows, int y0, int n, int w), void *cb_ctx)
+            void (*rows_cb)(void *ctx, const uint16_t *rows, int y0, int n, int w), void *cb_ctx,
+            void (*yield)(void))
 {
     int w = c->look.width, h = c->look.height, rc;
     size_t stride = 3 * (size_t) w;
@@ -51,6 +52,7 @@ int mfb_run(const mfb_case *c, const uint16_t *table, void *mem, size_t mem_len,
         t0 = clk();
         if ((rc = mf_fx_scan_rows(fx, in, stride, y, n)) != MF_OK) return rc;
         t->scan += clk() - t0;
+        if (yield) yield();
     }
     for (int y = 0; y < h; y += MFB_STRIP)
     {
@@ -59,6 +61,7 @@ int mfb_run(const mfb_case *c, const uint16_t *table, void *mem, size_t mem_len,
         t0 = clk();
         if ((rc = mf_fx_glow_rows(fx, in, stride, y, n)) != MF_OK) return rc;
         t->glow += clk() - t0;
+        if (yield) yield();
     }
     memset(hash, 0, 32);
     for (int y = 0; y < h; y += MFB_STRIP)
@@ -74,6 +77,7 @@ int mfb_run(const mfb_case *c, const uint16_t *table, void *mem, size_t mem_len,
         mf_sha256(hbuf, 32 + (size_t) n * stride * 2, hash);
         t->hash += clk() - t0;
         if (rows_cb) rows_cb(cb_ctx, out, y, n, w);
+        if (yield) yield();
     }
     return MF_OK;
 }

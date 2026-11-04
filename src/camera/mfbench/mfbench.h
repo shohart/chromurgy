@@ -32,10 +32,13 @@ typedef long (*mfb_clock)(void);
  * in MFB_STRIP-row strips. hash = sha256 chain over the output strips
  * (h = sha256(h || strip bytes)). mem holds the mf_fx context
  * (mf_fx_ctx_size), in/out hold MFB_STRIP rows each, hbuf 32 + strip bytes.
- * rows_cb (may be 0) sees each output strip, e.g. to write a preview. */
+ * rows_cb (may be 0) sees each output strip, e.g. to write a preview;
+ * yield (may be 0) runs between strips, outside the timed calls, so a
+ * camera task can let other tasks run. */
 int mfb_run(const mfb_case *c, const uint16_t *table, void *mem, size_t mem_len, uint16_t *in, uint16_t *out,
             uint8_t *hbuf, uint8_t hash[32], mfb_clock clk, mfb_times *t,
-            void (*rows_cb)(void *ctx, const uint16_t *rows, int y0, int n, int w), void *cb_ctx);
+            void (*rows_cb)(void *ctx, const uint16_t *rows, int y0, int n, int w), void *cb_ctx,
+            void (*yield)(void));
 
 /* the synthetic scene, integer only: a log exposure ramp across (deep
  * shadow to clipped white), hue bands down, clipped blocks for halation */
