@@ -90,10 +90,13 @@ def cmd_camera_sync(args) -> int:
                 queued.append(worker.enqueue_roll(conn, x.roll_id, x.device_id))
             except Exception as e:
                 queued.append({"roll_id": x.roll_id, "error": str(e)})
-    lines = [f"camera via {r.connection}: downloaded {len(r.downloaded)} file(s)"]
+    lines = [f"camera via {r.connection}: downloaded {len(r.downloaded)} file(s)"
+             + (f", {len(r.failed)} FAILED" if r.failed else "") + (f" (log {r.log_path})" if r.log_path else "")]
+    lines += [f"FAILED     {src}: {why}" for src, why in r.failed]
     lines += [f"{x.status:10} {x.device_id or '-'}/{x.roll_id or '-'}" + (f"  ({x.detail})" if x.detail else "")
               for x in r.rolls]
-    _out(args, {"ok": True, "connection": r.connection, "downloaded": r.downloaded, "rolls": as_dict(r.rolls),
+    _out(args, {"ok": True, "connection": r.connection, "downloaded": r.downloaded,
+                "failed": [{"path": p, "detail": d} for p, d in r.failed], "log": r.log_path, "rolls": as_dict(r.rolls),
                 "queued": queued}, "\n".join(lines))
     if args.run:                      # develop + publish, as one mfilmctl worker pass
         args.max_jobs, args.jobs, args.no_publish = None, None, False

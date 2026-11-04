@@ -79,3 +79,16 @@ median misalignment 0.78 / 0.62 / 0.61 / 0.71 px for 4220 (4.3 mm), 4234 (5.75 m
     uv pip install -e 'src/server[calib]'
     python tools/fit_lens.py --out profiles/lenses/canon-sx510hs.json <dirs with DNG+JPG>
     mfilm-develop --input CRW_xxxx.DNG --profile portra400 --output out.jpg
+
+## Portrait frames (2026-11-05): lens map before rotation
+
+Camera roll 2026-11-04: frames shot with the camera turned (DNG orientation,
+LibRaw flip 5/6) had their right quarter smeared into horizontal streaks.
+LibRaw's postprocess rotated them to 3044x4072 before the lens map, which is
+in landscape sensor coordinates (4072x3044): every source x beyond 3043 was
+clamped to the edge column. The DNGs themselves are intact. decode_raw now
+asks LibRaw not to rotate (user_flip=0), the lens map runs in sensor
+orientation and the image is turned upright afterwards (flip 5 = np.rot90 k=1,
+checked against LibRaw's own rotation). `INPUT_NORMALIZATION =
+mfilm-linear-rgb-v3`, `RAW_ADAPTER_VERSION = rawpy-libraw-v3`; same lens
+table. Provenance `lens_correction.orientation_flip` records the flip.

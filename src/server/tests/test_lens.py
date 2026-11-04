@@ -12,7 +12,9 @@ MODEL = "Canon PowerShot SX510 HS"
 CHDK = {"software": "CHDK ver. 1.6.1", "model": MODEL, "focal_mm": 4.3}
 # The lens table changes pixels without changing render ids, so a new table must
 # come with a new INPUT_NORMALIZATION. Update both together.
-PINNED = {"mfilm-linear-rgb-v2": "613a1c08deff3fce96e798ceb2efeca6f3dfddafc85324bd3691ace5ca630749"}
+# v3: same table, applied before the DNG's orientation (portrait frames)
+PINNED = {"mfilm-linear-rgb-v2": "613a1c08deff3fce96e798ceb2efeca6f3dfddafc85324bd3691ace5ca630749",
+          "mfilm-linear-rgb-v3": "613a1c08deff3fce96e798ceb2efeca6f3dfddafc85324bd3691ace5ca630749"}
 
 
 @pytest.fixture(scope="module")
@@ -78,3 +80,20 @@ def test_dng_info_of_a_non_tiff_is_empty(tmp_path):
     p = tmp_path / "x.DNG"
     p.write_bytes(b"not a dng")
     assert lens.dng_info(p) == {}
+
+
+def test_portrait_frames_are_corrected_in_sensor_orientation(table, monkeypatch, tmp_path):
+    # 2026-11-04: a flip-5 (portrait) DNG was rotated by LibRaw before the
+    # landscape lens map, which clamped and smeared its right quarter
+    rng = np.random.default_rng(1)
+    sensor = rng.random((3044, 4072, 3), dtype=np.float32)
+    monkeypatch.setattr(develop.lens, "dng_info", lambda p: {**CHDK, "focal_mm": 19.054})
+    corrected, info = develop.normalize_geometry(tmp_path / "x.dng", sensor)
+    assert info["applied"] and corrected.shape == (3000, 4000, 3)
+    up = develop.upright(corrected, 5)
+    assert up.shape == (4000, 3000, 3)
+    np.testing.assert_array_equal(up, np.rot90(corrected, 1))
+    # no smear: the right quarter of the sensor image keeps its detail
+    assert float(np.abs(np.diff(corrected[:, 3100:], axis=1)).mean()) > 0.05
+    with pytest.raises(develop.DevelopError):
+        develop.upright(corrected, 7)

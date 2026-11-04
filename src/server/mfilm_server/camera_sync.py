@@ -22,10 +22,18 @@ import json
 import shlex
 import sqlite3
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .importer import IMPORTABLE_CAMERA_STATES, MFILM_DIR, RollResult, card_source, find_manifests, import_card
+from .importer import (
+    IMPORTABLE_CAMERA_STATES,
+    MFILM_DIR,
+    RollResult,
+    card_source,
+    find_manifests,
+    import_card,
+)
 from .store import Store, UnsafePath
 
 DEFAULT_CHDKPTP = ("docker run --rm -i --network host --privileged -v /dev/bus/usb:/dev/bus/usb "
@@ -42,6 +50,8 @@ class SyncError(Exception):
 class SyncResult:
     connection: str
     downloaded: list[str] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)   # (camera path, chdkptp's answer)
+    log_path: str | None = None
     rolls: list[RollResult] = field(default_factory=list)
     log: str = ""
 
@@ -163,19 +173,41 @@ def sync(store: Store, conn: sqlite3.Connection, *, host: str | None = None, mir
         if "ERROR" in out and "no matching files" not in out:
             raise SyncError("CHDKPTP_FAILED", out.strip()[-800:])
         # 2. originals the sealed rolls need
-        for src, size in wanted_files(card, conn):
-            dst = card_source(card, src)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            part = dst.with_name(dst.name + ".part")
-            ses.cmd(f"d {_q(src)} {_q(str(part))}")
-            if part.is_file() and part.stat().st_size == size:
-                part.replace(dst)
-                res.downloaded.append(src)
-            elif part.exists():
-                part.unlink()
+        # a failed file is tried once more at the end; what chdkptp said is
+        # kept (camera session 2026-11-04: a first session got 3 of 18 files
+        # and left no trace why)
+        todo = wanted_files(card, conn)
+        for attempt in (1, 2):
+            failed = []
+            for src, size in todo:
+                dst = card_source(card, src)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                part = dst.with_name(dst.name + ".part")
+                out = ses.cmd(f"d {_q(src)} {_q(str(part))}")
+                if part.is_file() and part.stat().st_size == size:
+                    part.replace(dst)
+                    res.downloaded.append(src)
+                    continue
+                got = part.stat().st_size if part.exists() else 0
+                if part.exists():
+                    part.unlink()
+                failed.append(((src, size), f"attempt {attempt}: got {got} of {size} bytes: "
+                               + (out.strip().splitlines() or ["no output"])[-1][:200]))
+            todo = [f for f, _ in failed]
+            res.failed = [(f[0], why) for f, why in failed]
+            if not todo:
+                break
     finally:
         ses.close()
         res.log = ses.log
+        try:
+            logs = store.root / "logs"
+            logs.mkdir(parents=True, exist_ok=True)
+            lp = logs / f"camera-sync-{time.strftime('%Y%m%d-%H%M%S')}.log"
+            lp.write_text(ses.log)
+            res.log_path = str(lp)
+        except OSError:
+            pass
     # 3. the same import as an SD card
     res.rolls = import_card(card, store, conn)
     return res

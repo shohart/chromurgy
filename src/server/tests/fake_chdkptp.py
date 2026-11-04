@@ -11,6 +11,7 @@ from pathlib import Path
 args = sys.argv[1:]
 card = Path(args[args.index("--card") + 1])
 offline = "--offline" in args
+fail_d = int(args[args.index("--fail-d") + 1]) if "--fail-d" in args else 0   # first n downloads break off
 connected = False
 lines = [a[2:] for a in args if a.startswith("-e")]
 if "-i" in args:                       # interactive: commands on stdin, like chdkptp -i
@@ -46,6 +47,11 @@ for line in lines:
                 out.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(f, out)
     elif words[0] == "d":
+        if fail_d > 0:
+            fail_d -= 1
+            Path(words[2]).write_bytes(b"part")
+            print("ERROR: ptpip read failed", flush=True)
+            continue
         shutil.copyfile(card / words[1][2:], words[2])
     else:
         print(f"unknown command {words[0]}")

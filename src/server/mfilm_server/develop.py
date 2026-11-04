@@ -22,9 +22,9 @@ import numpy as np
 from . import core, lens
 from .ids import frame_seed, render_id, sha256_file
 
-RAW_ADAPTER_VERSION = "rawpy-libraw-v2"
+RAW_ADAPTER_VERSION = "rawpy-libraw-v3"
 # v2: CHDK DNGs of a camera with a lens table are resampled into the camera JPEG frame
-INPUT_NORMALIZATION = "mfilm-linear-rgb-v2"
+INPUT_NORMALIZATION = "mfilm-linear-rgb-v3"
 DEMOSAIC = {"reference": "AHD", "fast": "LINEAR"}
 
 
@@ -71,7 +71,16 @@ def default_recipe(profile: str, bundle_hash: str) -> dict:
                             "jpeg_quality": 92, "orientation_policy": "normalize-pixels"}}
 
 
-def decode_raw(path: Path, wb_mode: str, demosaic: str) -> np.ndarray:
+# LibRaw's flip code -> np.rot90 k that turns the sensor-oriented image upright
+# (flip 5 checked against LibRaw's own rotation on a CHDK DNG: identical)
+_FLIP_ROT90 = {0: 0, 3: 2, 5: 1, 6: 3}
+
+
+def decode_raw(path: Path, wb_mode: str, demosaic: str) -> tuple[np.ndarray, int]:
+    """Linear sRGB in SENSOR orientation (LibRaw does not rotate) and the DNG's
+    flip code. The lens model is in sensor coordinates, so rotation comes after
+    it: rotating first sent portrait frames through a landscape lens map and
+    smeared their right quarter (camera roll 2026-11-04, flip 5)."""
     import rawpy
     try:
         raw = rawpy.imread(str(path))
@@ -84,11 +93,19 @@ def decode_raw(path: Path, wb_mode: str, demosaic: str) -> np.ndarray:
             algo = getattr(rawpy.DemosaicAlgorithm, DEMOSAIC[demosaic])
         except KeyError:
             raise DevelopError("UNSUPPORTED_RECIPE", f"demosaic_mode={demosaic}") from None
-        img = raw.postprocess(gamma=(1, 1), no_auto_bright=True, output_bps=16, user_wb=None,
+        flip = int(raw.sizes.flip)
+        img = raw.postprocess(user_flip=0, gamma=(1, 1), no_auto_bright=True, output_bps=16, user_wb=None,
                               use_camera_wb=wb_mode == "as-shot", use_auto_wb=False,
                               output_color=rawpy.ColorSpace.sRGB, highlight_mode=rawpy.HighlightMode.Clip,
                               demosaic_algorithm=algo)
-    return img.astype(np.float32) / 65535.0
+    return img.astype(np.float32) / 65535.0, flip
+
+
+def upright(img: np.ndarray, flip: int) -> np.ndarray:
+    if flip not in _FLIP_ROT90:
+        raise DevelopError("BAD_DNG", f"unsupported orientation flip={flip}")
+    k = _FLIP_ROT90[flip]
+    return np.ascontiguousarray(np.rot90(img, k)) if k else img
 
 
 def normalize_geometry(path: Path, img: np.ndarray) -> tuple[np.ndarray, dict]:
@@ -192,8 +209,11 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
     seed = recipe_seed(recipe, device_id, roll_id, frame_id)
 
     t0 = dt.datetime.now(dt.timezone.utc)
-    lin = decode_raw(input_path, recipe.get("white_balance_mode", "as-shot"), recipe.get("demosaic_mode", "reference"))
+    lin, flip = decode_raw(input_path, recipe.get("white_balance_mode", "as-shot"),
+                           recipe.get("demosaic_mode", "reference"))
     lin, lens_info = normalize_geometry(input_path, lin)
+    lin = upright(lin, flip)
+    lens_info = {**lens_info, "orientation_flip": flip}
     look = recipe.get("look_controls", {})
     img, scanner_ev = bundle.develop(profile, lin, seed=seed, grain_scale=look.get("grain_scale", 1.0),
                                      halation_scale=look.get("halation_scale", 1.0),
