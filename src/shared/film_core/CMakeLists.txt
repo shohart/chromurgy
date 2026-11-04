@@ -41,3 +41,10 @@ add_test(NAME bundle_parses_all_films
          COMMAND test_bundle ${PROJECT_SOURCE_DIR}/profiles/mfilm-films.bin)
 add_test(NAME develop_frame_properties COMMAND test_develop ${PROJECT_SOURCE_DIR}/profiles/mfilm-films.bin)
 add_test(NAME fx_matches_float_stage COMMAND test_fx ${PROJECT_SOURCE_DIR}/profiles/mfilm-films.bin)
+
+# host side of the camera benchmark (src/camera/mfbench): MFBENCH.BIN + expected hashes
+add_executable(mfbench_gen ${PROJECT_SOURCE_DIR}/src/camera/mfbench/mfbench_gen.c
+               ${PROJECT_SOURCE_DIR}/src/camera/mfbench/mfbench_run.c)
+target_link_libraries(mfbench_gen mf_core)
+add_test(NAME mfbench_gen_runs
+         COMMAND mfbench_gen ${PROJECT_SOURCE_DIR}/profiles/mfilm-films.bin portra400 ${CMAKE_CURRENT_BINARY_DIR}/MFBENCH.BIN)
