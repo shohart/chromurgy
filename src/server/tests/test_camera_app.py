@@ -8,7 +8,6 @@ import re
 import subprocess
 
 import pytest
-
 from conftest import REPO
 from mfilm_server import core
 from mfilm_server.camera_card import write_card
@@ -53,7 +52,7 @@ def run(root, steps, expect_ok=True, env=None):
     scen = root / f"scenario{len(list(root.glob('scenario*.lua')))}.lua"
     scen.write_text("return {\n" + ",\n".join(lua_step(s) for s in steps) + "\n}\n")
     p = subprocess.run([str(LUA), str(HARNESS), str(APP), str(scen)], cwd=root, capture_output=True, text=True,
-                       timeout=120, env=env)
+                       timeout=120, env=env, check=False)
     if expect_ok:
         assert p.returncode == 0, p.stderr + p.stdout
     return p
