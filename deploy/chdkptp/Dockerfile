@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # chdkptp (CLI, USB + PTP/IP) and the Canon UPnP pairing helper, pinned.
-#   docker build -t mfilm-chdkptp deploy/chdkptp
+#   deploy/chdkptp/fetch_svn.py https://subversion.assembla.com/svn/chdkptp 1535 trunk build/chdkptp-src
+#   docker build -t mfilm-chdkptp -f deploy/chdkptp/Dockerfile build/chdkptp-src
 #   USB:    docker run --rm --privileged -v /dev/bus/usb:/dev/bus/usb mfilm-chdkptp -e"connect" -e"ls A/"
 #   Wi-Fi:  docker run --rm --network host mfilm-chdkptp -e"connect -h=<camera ip>" ...
 #   pairing helper: docker run --rm --network host --entrypoint ptpip-canon-upnp-helper mfilm-chdkptp <server ip>
 FROM debian:bookworm-slim AS build
-ARG CHDKPTP_REV=1535
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential subversion ca-certificates libusb-dev liblua5.3-dev libreadline-dev pkg-config \
+      build-essential ca-certificates libusb-dev liblua5.3-dev libreadline-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
-RUN svn export -q --non-interactive --trust-server-cert-failures=unknown-ca --username guest --password guest \
-      -r ${CHDKPTP_REV} https://subversion.assembla.com/svn/chdkptp/trunk /src
+# chdkptp trunk r1535, exported by fetch_svn.py (the svn client hangs on assembla)
+COPY . /src
 WORKDIR /src
 RUN printf 'USE_LUA_VER=53\nPTPIP_SUPPORT=1\nREADLINE_SUPPORT=1\nLUA_INCLUDE_DIR=/usr/include/lua5.3\nLUA_LIB=lua5.3\n' > config.mk \
     && make -j"$(nproc)" && ls -la chdkptp

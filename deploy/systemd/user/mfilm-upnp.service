@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Answers the SX510 HS's UPnP discovery so its Wi-Fi "Connect to computer"
+# flow finds this server (pairing, and every later connection: the camera
+# wants the same UUID each time, kept in ~/.local/share/mfilm-upnp).
+# Edit MFILM_SERVER_IP below to this host's LAN address.
+[Unit]
+Description=M-Film: Canon PTP/IP UPnP responder for the camera
+After=network-online.target
+
+[Service]
+Environment=MFILM_SERVER_IP=192.168.1.123
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/mfilm-upnp
+ExecStart=/usr/bin/docker run --rm --name mfilm-upnp --network host -v %h/.local/share/mfilm-upnp:/work \
+  --entrypoint python3 mfilm-chdkptp /usr/local/bin/ptpip-canon-upnp-helper -v -n mfilm ${MFILM_SERVER_IP}
+ExecStop=/usr/bin/docker stop mfilm-upnp
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
