@@ -92,3 +92,17 @@ Fixed:
 - App 0.1.2: overlay moved below Canon's top icon row and shortened
   ("Portra400 3/12"); the menu repaints every 300 ms without clearing (Canon
   keeps drawing its icons into the same bitmap) and hides CHDK's title bar.
+
+## 0.1.5: the menu leaves the live view
+
+Camera videos of 0.1.2-0.1.4 showed that a Lua menu cannot share the live
+view: Canon (shots left, battery) and CHDK's own OSD (clock, battery %,
+temperature, DNG counter) draw into the same bitmap, and CHDK clears it from
+time to time, so the menu showed the live view and icons through whatever the
+repaint rate. 0.1.5 switches to playback (set_record) while the menu is up and
+turns CHDK's "Show OSD" (conf id 1) off, restoring both when leaving (and the
+OSD at start, in case of a power-off in the menu). While shooting the counter
+and strip appear for 3 s at start and after each shot, centred above Canon's
+bottom row, then the screen is given back (draw_clear). The harness models
+record/playback and the OSD setting and fails if menu text is drawn in shooting
+mode; keys reach the app only when it waits for one; expect waits up to 3 s.

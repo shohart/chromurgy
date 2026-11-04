@@ -166,3 +166,10 @@ def test_autostart_goes_straight_to_shooting_with_film_loaded(card):
 def test_autostart_can_be_switched_off_from_the_menu(card):
     run(card, [("expect", "Start with camera: ON"), ("key", "down"), ("key", "down"), ("key", "down"),
                ("key", "down"), ("key", "set"), ("expect", "Start with camera: OFF"), ("expect_autostart", 0)])
+
+
+def test_menu_in_playback_with_chdk_osd_off_then_restored(card):
+    run(card, [("wait", 300), ("expect_state", False, 0)] + LOAD_PORTRA + LEN12 + [("wait", 600),
+               ("expect_state", True, 1), ("expect", "Portra400 0/12")] + shots(1)
+        + [("playback",), ("wait", 900), ("expect_state", False, 0), ("key", "shoot_half"), ("wait", 600),
+           ("expect_state", True, 1)])

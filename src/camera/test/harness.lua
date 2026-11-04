@@ -29,6 +29,7 @@ local drawn = {}
 local image_dir = "A/DCIM/101___01"
 local file_no = 100
 local exited = false
+local expect_deadline = nil
 
 local function log(s) io.stderr:write(s, "\n") end
 
@@ -71,6 +72,9 @@ function draw_string(x, y, s, fg, bg, scale)
   if x < 0 or y < 0 or x + 8 * sc * string.len(s) > 360 or y + 16 * sc > 240 then
     error(string.format("off-screen draw_string at %d,%d len %d: %s", x, y, string.len(s), s))
   end
+  -- the menu must never be drawn over the live view (shooting mode): it
+  -- flickered and showed Canon's and CHDK's icons through (alpha 0.1.0-0.1.4)
+  if alt and rec_mode then error("menu text drawn in shooting mode: " .. s, 2) end
   drawn[#drawn + 1] = s
   dlog(string.format("S %d %d %d %d %d %s", x, y, sc, fg or 258, bg or 257, s))
 end
@@ -92,6 +96,12 @@ function get_exp_count() return shots end
 function get_buildinfo() return {platform = "sx510hs", platsub = "101a", build_number = "host", build_revision = "0"} end
 hook_raw = {count = function() return shots end}
 local autostart_conf, booted = 0, false
+rec_mode = true                     -- camera starts in shooting mode
+local conf = {[1] = 1}              -- CHDK config: 1 = show_osd
+function get_mode() return rec_mode, false, rec_mode and 1 or 0 end
+function set_record(v) rec_mode = (v == 1 or v == true) end
+function get_config_value(id) return conf[id] end
+function set_config_value(id, v) conf[id] = v end
 function get_autostart() return autostart_conf end
 function set_autostart(v) autostart_conf = v end
 function autostarted() return booted end
@@ -181,7 +191,12 @@ while true do
         if not s then break end
         i = i + 1
         local k = s[1]
-        if k == "key" then click = s[2]
+        if k == "key" and kind ~= "wait" then        -- keys reach the app only when it waits for one
+          i = i - 1
+          k = "-"
+        end
+        if k == "-" then
+        elseif k == "key" then click = s[2]
         elseif k == "playback" then alt = not alt
         elseif k == "shoot" then step_shoot(s[2])
         elseif k == "wait" then pending = s[2]
@@ -189,15 +204,27 @@ while true do
         elseif k == "snap" then dlog("SNAP " .. s[2])
         elseif k == "powercut" then co = coroutine.create(function() end); coroutine.resume(co)
         elseif k == "expect" then
+          -- wait (up to 3 s of camera time) until some text drawn since the last expect matches
           local hit = false
           for _, t in ipairs(drawn) do if string.find(t, s[2]) then hit = true end end
-          if not hit then
-            log("FAIL: step " .. (i - 1) .. ": no text matching '" .. s[2] .. "'; recent:")
-            for j = math.max(1, #drawn - 25), #drawn do log("   " .. drawn[j]) end
-            os.exit(1)
+          if hit then
+            drawn, expect_deadline = {}, nil
+          else
+            expect_deadline = expect_deadline or (clock + 3000)
+            if clock > expect_deadline then
+              log("FAIL: step " .. (i - 1) .. ": no text matching '" .. s[2] .. "'; recent:")
+              for j = math.max(1, #drawn - 25), #drawn do log("   " .. drawn[j]) end
+              os.exit(1)
+            end
+            i = i - 1                               -- retry this step at the next yield
           end
-          drawn = {}
         elseif k == "restart" or k == "boot" then log("FAIL: " .. k .. " while app is running") os.exit(1)
+        elseif k == "expect_state" then
+          local want_rec, want_osd = s[2], s[3]
+          if rec_mode ~= want_rec or conf[1] ~= want_osd then
+            log(string.format("FAIL: rec=%s osd=%s, expected rec=%s osd=%s", tostring(rec_mode), tostring(conf[1]),
+                tostring(want_rec), tostring(want_osd))) os.exit(1)
+          end
         elseif k == "expect_autostart" then
           if autostart_conf ~= s[2] then log("FAIL: autostart is " .. autostart_conf .. ", expected " .. s[2]) os.exit(1) end
         elseif k == "expect_exit" then log("FAIL: app still running at expect_exit") os.exit(1)

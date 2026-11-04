@@ -38,8 +38,10 @@ local function shot_count()
   return 0
 end
 
+local overlay_until_ref = nil
 local function say(msg, ms)
   notice, notice_until = msg, get_tick_count() + (ms or 4000)
+  if overlay_until_ref then overlay_until_ref(ms or 4000) end
   mf.log("notice: " .. msg)
 end
 
@@ -153,21 +155,25 @@ local function frame_text(r)
   return string.format("%s %d/%d", mf.film_name(r.film), #r.frames, r.length)
 end
 
--- small status line drawn over the live view while shooting
--- below Canon's top row of icons (battery, shots left, clock), left side:
--- the top row itself is Canon's (first alpha drew over it)
-local OVL_Y = 2 * FH + 6
+-- While shooting the counter is shown only briefly (3 s after start, after
+-- each shot, with a notice) in the lower part of the frame above Canon's
+-- bottom row, then erased: permanent text collided with Canon's and CHDK's
+-- own icons (camera tests 0.1.0-0.1.4).
+local OVL_Y = 0                                  -- set in main from the screen height
+local overlay_until = 0
+local function show_overlay(ms) overlay_until = get_tick_count() + (ms or 3000) end
 local function overlay()
   local s = roll and string.format("%s %d/%d", mf.film_short(roll.film), #roll.frames, roll.length) or "NO FILM"
   if roll and roll.state == "SEALED" then s = s .. " done" end
-  draw_string(4, OVL_Y, string.sub(s, 1, 22), roll and C.fg or C.warn, C.bg)
-  local ny = OVL_Y + FH + 2
-  if roll then
-    strip(4, ny, roll.length * 4, roll.length, #roll.frames)   -- 48..144 px: frames left at a glance
-    ny = ny + 14
-  end
+  local x = (W - 8 * string.len(string.sub(s, 1, 22))) / 2
   if notice and get_tick_count() < notice_until then
-    draw_string(4, ny, string.sub(notice, 1, COLS - 1), C.hi, C.bg)
+    local ns = string.sub(notice, 1, COLS - 1)
+    draw_string((W - 8 * string.len(ns)) / 2, OVL_Y - FH - 4, ns, C.hi, C.bg)
+  end
+  draw_string(x, OVL_Y, string.sub(s, 1, 22), roll and C.fg or C.warn, C.bg)
+  if roll then
+    local w = roll.length * 4                                  -- 48..144 px: frames left at a glance
+    strip((W - w) / 2, OVL_Y + FH + 2, w, roll.length, #roll.frames)
   end
 end
 
@@ -190,9 +196,9 @@ local function screen(title, lines, items, sel, footer, icons)
     if type(l) == "table" and l.hero then key_ = key_ .. "|hero" .. l.hero.film .. #l.hero.frames
     else key_ = key_ .. "|" .. (type(l) == "table" and l[1] or l) end
   end
-  -- the camera keeps drawing its own icons into the same bitmap in shooting
-  -- mode: repaint the same lines every 300 ms (no clear, so no flicker)
-  if key_ == last_key and get_tick_count() - last_full < 300 then return end
+  -- in playback nothing redraws over the menu: repaint only on change (and
+  -- every 2 s as a safety net, without clearing)
+  if key_ == last_key and get_tick_count() - last_full < 2000 then return end
   if key_ ~= last_key then draw_clear() end
   last_key, last_full = key_, get_tick_count()
   local row = 0
@@ -330,7 +336,41 @@ local function title_line(on)
   if have("set_draw_title_line") then set_draw_title_line(on and 1 or 0) end
 end
 
+-- The menu is shown in PLAYBACK mode with CHDK's own OSD switched off. In
+-- shooting mode Canon (shots left, battery) and CHDK (clock, battery %,
+-- temperature, DNG counter) keep drawing into the same bitmap and CHDK
+-- clears it now and then, so a Lua menu over the live view showed through
+-- and flickered whatever the repaint rate (camera tests 0.1.0-0.1.4).
+-- Playback is static: drawn once, nothing redraws over it.
+local CONF_SHOW_OSD = 1                          -- CHDK conf id of "Show OSD" (core/conf.c)
+local osd_saved = nil
+
+local function is_rec() return not have("get_mode") or get_mode() end
+
+local function set_rec(on)
+  if not have("set_record") or is_rec() == on then return true end
+  set_record(on and 1 or 0)
+  local t = get_tick_count()
+  while is_rec() ~= on and get_tick_count() - t < 5000 do sleep(100) end
+  if is_rec() ~= on then mf.log("mode switch to " .. (on and "record" or "playback") .. " timed out") return false end
+  sleep(on and 300 or 700)                       -- let the camera finish drawing its own screen first
+  return true
+end
+
+local function chdk_osd(on)
+  if not have("get_config_value") or not have("set_config_value") then return end
+  if not on then
+    if osd_saved == nil then osd_saved = get_config_value(CONF_SHOW_OSD) end
+    set_config_value(CONF_SHOW_OSD, 0)
+  elseif osd_saved ~= nil then
+    set_config_value(CONF_SHOW_OSD, osd_saved)
+    osd_saved = nil
+  end
+end
+
 local function menu()
+  chdk_osd(false)
+  set_rec(false)
   draw_clear()
   title_line(false)
   last_key = nil
@@ -367,6 +407,9 @@ local function menu()
   end
   draw_clear()
   title_line(true)
+  if not quit then set_rec(true) end
+  chdk_osd(true)
+  draw_clear()
 end
 
 -- ------------------------------------------------------------ shooting
@@ -400,8 +443,10 @@ end
 
 local function shooting()
   if have("exit_alt") then exit_alt() end
-  local last_draw, pending_since = 0, nil
+  show_overlay(3000)
+  local last_draw, pending_since, shown = 0, nil, false
   while not quit do
+    if have("get_alt_mode") and get_alt_mode() then return end   -- Playback pressed: menu (before drawing)
     local dir = get_image_dir()
     local n = shot_count()
     if n ~= shots_seen then
@@ -410,15 +455,20 @@ local function shooting()
     end
     local found = watcher.poll(dir)
     for _, f in ipairs(found) do on_new_dng(f) end
-    if #found > 0 then pending_since = nil end
+    if #found > 0 then pending_since = nil; show_overlay(3000) end
     if pending_since and get_tick_count() - pending_since > 10000 then
       pending_since = nil
       mf.log("shot without a new DNG within 10 s (RAW off?)")
       say("No DNG written: is RAW/DNG on in CHDK?", 8000)
     end
-    if get_tick_count() - last_draw > 500 then
-      overlay()
-      last_draw = get_tick_count()
+    if get_tick_count() < overlay_until then
+      if get_tick_count() - last_draw > 400 then
+        overlay()
+        last_draw, shown = get_tick_count(), true
+      end
+    elseif shown then
+      draw_clear()                                 -- give the screen back to Canon
+      shown = false
     end
     if have("get_alt_mode") and get_alt_mode() then return end   -- Playback pressed: menu
     sleep(pending_since and 100 or 200)
@@ -436,6 +486,14 @@ local function main()
   selftest = run_selftest()
   for _, p in ipairs(problems) do selftest[#selftest + 1] = "CONFIG: " .. p; mf.log("CONFIG problem: " .. p) end
   if have("set_exit_key") then set_exit_key("video") end
+  OVL_Y = H - 3 * FH - 16                        -- above Canon's bottom row
+  overlay_until_ref = function(ms) show_overlay(ms) end
+  -- the menu switches CHDK's OSD off while it is up; a power-off in the menu
+  -- must not leave it off
+  if have("get_config_value") and get_config_value(CONF_SHOW_OSD) == 0 then
+    set_config_value(CONF_SHOW_OSD, 1)
+    mf.log("CHDK OSD was off: switched back on")
+  end
   roll = mf.active_roll()
   if roll and roll.state == "SEALED" then roll = nil end
   watcher = mf.watcher(get_image_dir())
