@@ -12,6 +12,15 @@
 -- camera settings except switching to shooting mode if needed for the shot.
 
 local out = {}
+-- functions differ between CHDK versions (get_focal_length is 1.7+): never
+-- let a missing one stop the probe
+local function call(name, ...)
+  local f = _G[name]
+  if type(f) ~= "function" then return "n/a" end
+  local ok, v = pcall(f, ...)
+  if ok then return tostring(v) end
+  return "error"
+end
 local function p(...) local s = string.format(...) out[#out+1] = s print(s) end
 local function save()
   local f = io.open("A/MFPROBE.TXT", "wb")
@@ -34,12 +43,13 @@ for _, h in ipairs({"combined", "system", "aram", "exmem"}) do
     p("mem.%s: not available", h)
   end
 end
-p("battery mV: %d", get_vbatt())
-p("temperature optical/CCD/battery: %d / %d / %d C", get_temperature(0), get_temperature(1), get_temperature(2))
-p("zoom: step %d of %d, focal %d um", get_zoom(), get_zoom_steps(), get_focal_length())
-p("card: free %d KB of %d KB, image dir %s", get_free_disk_space(), get_disk_size(), tostring(get_image_dir()))
-p("raw: supported %s, enabled %s, raw nr %s", tostring(get_raw_support()), tostring(get_raw()), tostring(get_raw_nr()))
-p("canon raw support: %s", tostring(get_canon_raw_support and get_canon_raw_support()))
+p("battery mV: %s", call("get_vbatt"))
+p("temperature optical/CCD/battery: %s / %s / %s C", call("get_temperature", 0), call("get_temperature", 1),
+  call("get_temperature", 2))
+p("zoom: step %s of %s, focal %s um", call("get_zoom"), call("get_zoom_steps"), call("get_focal_length"))
+p("card: free %s KB of %s KB, image dir %s", call("get_free_disk_space"), call("get_disk_size"), call("get_image_dir"))
+p("raw: supported %s, enabled %s, raw nr %s", call("get_raw_support"), call("get_raw"), call("get_raw_nr"))
+p("canon raw support: %s", call("get_canon_raw_support"))
 save()
 
 -- CPU reference for interpreted Lua (the film core runs as C, see MFBENCH.FLT)
@@ -66,7 +76,7 @@ if a == 1 then
   end
   local dir = get_image_dir()
   local before_dng = dir and newest(dir, "%.DNG$")
-  p("before shot: last DNG %s, raw count left %d", tostring(before_dng), get_raw_count())
+  p("before shot: last DNG %s, raw count left %s", tostring(before_dng), call("get_raw_count"))
   local t1 = get_tick_count()
   shoot()
   local t2 = get_tick_count()
@@ -89,7 +99,7 @@ if a == 1 then
     p("no new DNG within 30 s (is RAW/DNG enabled in CHDK RAW parameters?)")
   end
   p("JPEG: %s", tostring(newest(dir, "%.JPG$")))
-  p("battery mV after shot: %d", get_vbatt())
+  p("battery mV after shot: %s", call("get_vbatt"))
 end
 p("done")
 save()
