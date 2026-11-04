@@ -82,6 +82,72 @@ local function text(col, row, s, fg, bg)
   draw_string(col * FW, row * FH, s, fg or C.fg, bg or C.bg)
 end
 
+-- ------------------------------------------------------------ graphics
+-- CHDK Lua draws only rectangles, lines, ellipses and text (no images, no
+-- emoji). Everything stays inside the 360x240 bitmap: CHDK does not clip.
+local CC = {black = 256 + 1, white = 256 + 2, red = 256 + 3, red_lt = 256 + 5, green = 256 + 6, blue_lt = 256 + 11,
+            grey = 256 + 12, grey_dk = 256 + 13, grey_lt = 256 + 14, yellow = 256 + 15, magenta = 256 + 19}
+
+local function box(x1, y1, x2, y2, col)
+  if x1 < 0 then x1 = 0 end
+  if y1 < 0 then y1 = 0 end
+  if x2 > W - 1 then x2 = W - 1 end
+  if y2 > H - 1 then y2 = H - 1 end
+  if x2 < x1 or y2 < y1 then return end
+  draw_rect_filled(x1, y1, x2, y2, col, col)
+end
+
+-- canister colour by maker, from the film's display name
+local function brand_colour(key)
+  local n = string.lower(mf.film_name(key) or key)
+  if string.find(n, "^kodak") then return CC.yellow end
+  if string.find(n, "^fuji") then return CC.green end
+  if string.find(n, "^cinestill") then return CC.red end
+  if string.find(n, "^ilford") or string.find(n, "^kentmere") then return CC.grey_lt end
+  if string.find(n, "^agfa") then return CC.red_lt end
+  if string.find(n, "^lomo") then return CC.magenta end
+  return CC.blue_lt
+end
+
+-- a 35 mm canister, 16x16, top-left at x,y
+local function canister(x, y, key)
+  local col = brand_colour(key)
+  box(x + 6, y, x + 8, y + 1, CC.grey)           -- spool knob
+  box(x + 1, y + 2, x + 11, y + 3, CC.grey_lt)   -- top cap
+  box(x + 2, y + 4, x + 10, y + 12, col)         -- body
+  box(x + 3, y + 6, x + 9, y + 7, CC.white)      -- label stripe
+  box(x + 1, y + 13, x + 11, y + 14, CC.grey_lt) -- bottom cap
+  box(x + 11, y + 6, x + 15, y + 11, CC.grey_dk) -- film leader
+end
+
+-- film strip: n frames across width w, the first `shot` exposed; 12 px high
+local function strip(x, y, w, n, shot)
+  if n < 1 then return end
+  local cw = w / n
+  if cw < 3 then cw = 3 end
+  box(x, y, x + cw * n, y + 11, CC.black)
+  for i = 0, n - 1 do
+    local cx = x + i * cw
+    if cw >= 5 then
+      box(cx + 1, y + 1, cx + 2, y + 2, CC.grey)  -- sprocket holes
+      box(cx + 1, y + 9, cx + 2, y + 10, CC.grey)
+    end
+    box(cx + 1, y + 4, cx + cw - 1, y + 7, i < shot and CC.yellow or CC.grey_dk)
+  end
+end
+
+-- loading: the film slides into the frame (~0.4 s)
+local function anim_load(key, n)
+  local y = H / 2 - 8
+  for step = 0, 8 do
+    local x = W - (step * (W - 40)) / 8
+    box(0, y - 4, W - 1, y + 19, CC.black)
+    canister(x - 18, y, key)
+    strip(x, y + 2, W - 40, n, 0)
+    sleep(40)
+  end
+end
+
 local function frame_text(r)
   if not r then return "NO FILM" end
   return string.format("%s %d/%d", mf.film_name(r.film), #r.frames, r.length)
@@ -95,8 +161,13 @@ local function overlay()
   local s = roll and string.format("%s %d/%d", mf.film_short(roll.film), #roll.frames, roll.length) or "NO FILM"
   if roll and roll.state == "SEALED" then s = s .. " done" end
   draw_string(4, OVL_Y, string.sub(s, 1, 22), roll and C.fg or C.warn, C.bg)
+  local ny = OVL_Y + FH + 2
+  if roll then
+    strip(4, ny, roll.length * 4, roll.length, #roll.frames)   -- 48..144 px: frames left at a glance
+    ny = ny + 14
+  end
   if notice and get_tick_count() < notice_until then
-    draw_string(4, OVL_Y + FH + 2, string.sub(notice, 1, COLS - 1), C.hi, C.bg)
+    draw_string(4, ny, string.sub(notice, 1, COLS - 1), C.hi, C.bg)
   end
 end
 
@@ -112,10 +183,13 @@ local function pad(s)
   return s .. string.rep(" ", COLS - string.len(s))
 end
 
-local function screen(title, lines, items, sel, footer)
+local function screen(title, lines, items, sel, footer, icons)
   local rows_total = H / FH                     -- CHDK's bar is hidden while the menu is up
   local key_ = title .. "|" .. tostring(sel) .. "|" .. table.concat(items or {}, "/")
-  for _, l in ipairs(lines or {}) do key_ = key_ .. "|" .. (type(l) == "table" and l[1] or l) end
+  for _, l in ipairs(lines or {}) do
+    if type(l) == "table" and l.hero then key_ = key_ .. "|hero" .. l.hero.film .. #l.hero.frames
+    else key_ = key_ .. "|" .. (type(l) == "table" and l[1] or l) end
+  end
   -- the camera keeps drawing its own icons into the same bitmap in shooting
   -- mode: repaint the same lines every 300 ms (no clear, so no flicker)
   if key_ == last_key and get_tick_count() - last_full < 300 then return end
@@ -126,10 +200,22 @@ local function screen(title, lines, items, sel, footer)
   row = row + 1
   for _, l in ipairs(lines or {}) do
     if row >= rows_total - 1 then break end
-    local s, col = l, C.dim
-    if type(l) == "table" then s, col = l[1], l[2] or C.dim end
-    text(0, row, pad(" " .. s), col)
-    row = row + 1
+    if type(l) == "table" and l.hero then
+      -- the loaded film: canister, big counter, strip (two text rows)
+      local r = l.hero
+      text(0, row, pad(""), C.fg)
+      text(0, row + 1, pad(""), C.fg)
+      canister(8, row * FH + 8, r.film)
+      draw_string(32, row * FH, string.format("%d/%d", #r.frames, r.length), C.hi, C.bg, 2)
+      local sx = 32 + 16 * string.len(string.format("%d/%d", #r.frames, r.length)) + 12
+      strip(sx, row * FH + 10, W - sx - 8, r.length, #r.frames)
+      row = row + 2
+    else
+      local s, col = l, C.dim
+      if type(l) == "table" then s, col = l[1], l[2] or C.dim end
+      text(0, row, pad(" " .. s), col)
+      row = row + 1
+    end
   end
   if items then
     text(0, row, pad(""), C.fg)
@@ -138,8 +224,10 @@ local function screen(title, lines, items, sel, footer)
     local first = 1
     if sel > rows then first = sel - rows + 1 end
     for i = first, math.min(#items, first + rows - 1) do
-      if i == sel then text(0, row, pad(" > " .. items[i]), C.fg, C.sel)
-      else text(0, row, pad("   " .. items[i]), C.fg) end
+      local label = icons and icons[i] and ("   " .. items[i]) or items[i]
+      if i == sel then text(0, row, pad(" > " .. label), C.fg, C.sel)
+      else text(0, row, pad("   " .. label), C.fg) end
+      if icons and icons[i] then canister(3 * FW, row * FH, icons[i]) end
       row = row + 1
     end
     while row < rows_total - 1 do text(0, row, pad(""), C.fg); row = row + 1 end
@@ -158,10 +246,10 @@ local function key(ms)
 end
 
 -- generic list chooser: returns index or nil (back) or "shoot"
-local function choose(title, lines, items, sel)
+local function choose(title, lines, items, sel, icons)
   sel = sel or 1
   while true do
-    screen(title, lines, items, sel)
+    screen(title, lines, items, sel, nil, icons)
     local k = key()
     if k == "up" then sel = (sel > 1) and sel - 1 or #items
     elseif k == "down" then sel = (sel < #items) and sel + 1 or 1
@@ -190,10 +278,10 @@ local function load_film()
     roll.state = "SEALED"
     mf.set_active(nil)
   end
-  local names = {}
-  for _, f in ipairs(mf.cfg.films) do names[#names + 1] = f.name end
+  local names, icons = {}, {}
+  for _, f in ipairs(mf.cfg.films) do names[#names + 1] = f.name; icons[#icons + 1] = f.key end
   mf.log("film list: " .. #names .. " films")
-  local fi = choose("Choose film", {}, names, 1)
+  local fi = choose("Choose film", {}, names, 1, icons)
   if type(fi) ~= "number" then return fi end
   mf.log("film chosen: " .. mf.cfg.films[fi].key)
   local li = choose("Roll length: " .. mf.cfg.films[fi].name, {}, {"36 frames", "24 frames", "12 frames"}, 1)
@@ -201,6 +289,7 @@ local function load_film()
   local r, err = mf.new_roll(mf.cfg.films[fi].key, ({36, 24, 12})[li])
   if not r then say("ERROR: " .. tostring(err), 8000) return end
   roll = r
+  anim_load(r.film, r.length)
   say("Loaded " .. mf.film_name(r.film) .. " x" .. r.length, 5000)
   return "shoot"
 end
@@ -247,7 +336,8 @@ local function menu()
   last_key = nil
   local sel = 1
   while not quit do
-    local status = {{"Film: " .. frame_text(roll), roll and C.fg or C.warn}}
+    local status = {{"Film: " .. (roll and mf.film_name(roll.film) or "NO FILM"), roll and C.fg or C.warn}}
+    if roll then status[#status + 1] = {hero = roll} end
     if have("get_raw") and not get_raw() then status[#status + 1] = {"RAW/DNG is OFF: enable it in CHDK RAW menu", C.warn} end
     if notice and get_tick_count() < notice_until then status[#status + 1] = {notice, C.hi} end
     local auto_on = have("get_autostart") and get_autostart() == 1

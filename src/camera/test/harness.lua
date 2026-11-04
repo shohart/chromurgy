@@ -52,6 +52,10 @@ local function dng_bytes(n)
 end
 
 -- ---------------------------------------------------------------- CHDK API stubs
+-- optional draw log for screenshots (tools/render_screens.py): MFILM_DRAWLOG=path
+local drawlog = os.getenv and os.getenv("MFILM_DRAWLOG")
+local dl = drawlog and io.open(drawlog, "wb")
+local function dlog(s) if dl then dl:write(s, "\n") end end
 
 function get_tick_count() return clock end
 function sleep(ms) coroutine.yield("sleep", ms) end
@@ -62,15 +66,22 @@ function exit_alt() alt = false end
 function enter_alt() alt = true end
 function set_exit_key(k) exit_key = k end
 -- CHDK does not clip: text past the bitmap edge writes outside the screen buffer
-function draw_string(x, y, s, fg, bg)
-  if x < 0 or y < 0 or x + 8 * string.len(s) > 360 or y + 16 > 240 then
+function draw_string(x, y, s, fg, bg, scale)
+  local sc = scale or 1
+  if x < 0 or y < 0 or x + 8 * sc * string.len(s) > 360 or y + 16 * sc > 240 then
     error(string.format("off-screen draw_string at %d,%d len %d: %s", x, y, string.len(s), s))
   end
   drawn[#drawn + 1] = s
+  dlog(string.format("S %d %d %d %d %d %s", x, y, sc, fg or 258, bg or 257, s))
 end
-function draw_rect_filled() end
-function draw_rect() end
-function draw_clear() drawn[#drawn + 1] = "<clear>" end
+local function check_rect(x1, y1, x2, y2)
+  if x1 < 0 or y1 < 0 or x2 > 359 or y2 > 239 or x2 < x1 or y2 < y1 then
+    error(string.format("off-screen rect %d,%d-%d,%d", x1, y1, x2, y2), 3)
+  end
+end
+function draw_rect_filled(x1, y1, x2, y2, c1, c2) check_rect(x1, y1, x2, y2); dlog(string.format("R %d %d %d %d %d", x1, y1, x2, y2, c2 or c1)) end
+function draw_rect(x1, y1, x2, y2) check_rect(x1, y1, x2, y2) end
+function draw_clear() drawn[#drawn + 1] = "<clear>"; dlog("C") end
 function set_draw_title_line(on) title_line = on end
 function get_gui_screen_width() return 360 end
 function get_gui_screen_height() return 240 end
@@ -175,6 +186,7 @@ while true do
         elseif k == "shoot" then step_shoot(s[2])
         elseif k == "wait" then pending = s[2]
         elseif k == "setdir" then image_dir = s[2]
+        elseif k == "snap" then dlog("SNAP " .. s[2])
         elseif k == "powercut" then co = coroutine.create(function() end); coroutine.resume(co)
         elseif k == "expect" then
           local hit = false
