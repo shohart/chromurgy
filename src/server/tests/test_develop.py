@@ -38,6 +38,7 @@ def test_develop_sample_and_provenance(tmp_path, bundle):
     prov = develop.develop(SAMPLE, out, profile=None, recipe=recipe(bundle), bundle=bundle)
     side = json.loads((tmp_path / "a.jpg.json").read_text())
     assert side == prov
+    assert prov["lens_correction"]["applied"] is False       # a CR2 is not a CHDK DNG
     assert (prov["output_width"], prov["output_height"]) == (720, 480)
     for key in ("render_id", "profile_bundle_hash", "film_core_git_commit", "grain_seed", "original_sha256",
                 "raw_adapter_version", "developed_by", "output_sha256"):

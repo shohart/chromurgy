@@ -5,7 +5,7 @@
   "profile_bundle_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "film_core_abi_version": 1,
   "film_core_commit": "UNPINNED_EXAMPLE_REPLACE_WITH_GIT_HASH",
-  "input_normalization_version": "mfilm-linear-rgb-v1",
+  "input_normalization_version": "mfilm-linear-rgb-v2",
   "white_balance_mode": "as-shot",
   "demosaic_mode": "reference",
   "exposure_compensation_ev": 0.0,

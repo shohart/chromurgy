@@ -3,8 +3,9 @@
 
     mfilm-develop --input IMG.DNG --profile portra400 --output out.jpg [--recipe r.json] [--json]
 
-Pipeline: LibRaw (rawpy) decode -> linear sRGB -> shared C film core ->
-optional crop/downscale (never upscale) -> 8-bit sRGB JPEG with ICC.
+Pipeline: LibRaw (rawpy) decode -> linear sRGB -> lens geometry for CHDK
+DNGs of calibrated cameras (lens.py) -> shared C film core -> optional
+crop/downscale (never upscale) -> 8-bit sRGB JPEG with ICC.
 """
 from __future__ import annotations
 
@@ -18,11 +19,12 @@ from pathlib import Path
 
 import numpy as np
 
-from . import core
+from . import core, lens
 from .ids import frame_seed, render_id, sha256_file
 
-RAW_ADAPTER_VERSION = "rawpy-libraw-v1"
-INPUT_NORMALIZATION = "mfilm-linear-rgb-v1"
+RAW_ADAPTER_VERSION = "rawpy-libraw-v2"
+# v2: CHDK DNGs of a camera with a lens table are resampled into the camera JPEG frame
+INPUT_NORMALIZATION = "mfilm-linear-rgb-v2"
 DEMOSAIC = {"reference": "AHD", "fast": "LINEAR"}
 
 
@@ -87,6 +89,18 @@ def decode_raw(path: Path, wb_mode: str, demosaic: str) -> np.ndarray:
                               output_color=rawpy.ColorSpace.sRGB, highlight_mode=rawpy.HighlightMode.Clip,
                               demosaic_algorithm=algo)
     return img.astype(np.float32) / 65535.0
+
+
+def normalize_geometry(path: Path, img: np.ndarray) -> tuple[np.ndarray, dict]:
+    """Lens correction for CHDK DNGs (lens.py); other sources pass through unchanged."""
+    info = lens.dng_info(path)
+    table = lens.table_for(info)
+    if table is None:
+        return img, {"applied": False, "reason": "no lens table for this source"}
+    if not info.get("focal_mm"):
+        return img, {"applied": False, "reason": "DNG has no focal length", "table": table["file"]}
+    return lens.correct(img, table, info["focal_mm"]), {
+        "applied": True, "table": table["file"], "table_sha256": table["sha256"], "focal_mm": info["focal_mm"]}
 
 
 def fit_output(img: np.ndarray, width: int, height: int) -> np.ndarray:
@@ -179,6 +193,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
 
     t0 = dt.datetime.now(dt.timezone.utc)
     lin = decode_raw(input_path, recipe.get("white_balance_mode", "as-shot"), recipe.get("demosaic_mode", "reference"))
+    lin, lens_info = normalize_geometry(input_path, lin)
     look = recipe.get("look_controls", {})
     img, scanner_ev = bundle.develop(profile, lin, seed=seed, grain_scale=look.get("grain_scale", 1.0),
                                      halation_scale=look.get("halation_scale", 1.0),
@@ -201,6 +216,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
         "recipe_schema_version": recipe.get("schema_version", 1), "recipe": recipe, "grain_seed": f"{seed:016x}",
         "raw_adapter_version": RAW_ADAPTER_VERSION, "demosaic_mode": recipe.get("demosaic_mode", "reference"),
         "wb_mode": recipe.get("white_balance_mode", "as-shot"), "scanner_ev": round(scanner_ev, 4),
+        "lens_correction": lens_info,
         "source_width": int(lin.shape[1]), "source_height": int(lin.shape[0]),
         "output_width": out_w, "output_height": out_h, "jpeg_quality": int(spec.get("jpeg_quality", 92)),
         "developed_by": "linux", "development_timestamp": t1.isoformat(timespec="seconds"),
