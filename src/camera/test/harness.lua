@@ -59,7 +59,13 @@ function get_alt_mode() return alt end
 function exit_alt() alt = false end
 function enter_alt() alt = true end
 function set_exit_key(k) exit_key = k end
-function draw_string(x, y, s) drawn[#drawn + 1] = s end
+-- CHDK does not clip: text past the bitmap edge writes outside the screen buffer
+function draw_string(x, y, s, fg, bg)
+  if x < 0 or y < 0 or x + 8 * string.len(s) > 360 or y + 16 > 240 then
+    error(string.format("off-screen draw_string at %d,%d len %d: %s", x, y, string.len(s), s))
+  end
+  drawn[#drawn + 1] = s
+end
 function draw_rect_filled() end
 function draw_rect() end
 function draw_clear() drawn[#drawn + 1] = "<clear>" end

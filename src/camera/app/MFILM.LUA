@@ -21,6 +21,7 @@ local C = {bg = 256 + 1, fg = 256 + 2, hi = 256 + 15, dim = 256 + 14, warn = 256
            sel = 256 + 10, clear = 256 + 0}
 local W, H = 360, 240
 local FW, FH = 8, 16
+local COLS = 40            -- text columns that fit the screen (set in main)
 
 local roll = nil          -- active roll (state table) or nil
 local watcher = nil
@@ -96,33 +97,55 @@ local function overlay()
   local s = "M-Film " .. frame_text(roll)
   if roll and roll.state == "SEALED" then s = s .. " DONE" end
   local fg = roll and C.fg or C.warn
-  draw_string(4, 4, s, fg, C.bg)
+  draw_string(4, 4, string.sub(s, 1, COLS - 1), fg, C.bg)
   if notice and get_tick_count() < notice_until then
-    draw_string(4, 4 + FH + 2, notice, C.hi, C.bg)
+    draw_string(4, 4 + FH + 2, string.sub(notice, 1, COLS - 1), C.hi, C.bg)
   end
 end
 
+-- Menus are drawn only when their content changes (and every few seconds, in
+-- case the camera's own display update erased them): redrawing the whole
+-- screen on every key poll made it flicker over the live view. No full-screen
+-- fill either; each line is drawn with its own background and padded to the
+-- screen width. The bottom text row belongs to CHDK's <ALT>/<EXIT> bar.
+local last_key, last_full = nil, 0
+
+local function pad(s)
+  s = string.sub(s or "", 1, COLS)
+  return s .. string.rep(" ", COLS - string.len(s))
+end
+
 local function screen(title, lines, items, sel, footer)
-  draw_rect_filled(0, 0, W - 1, H - 1, C.bg, C.bg)
-  text(1, 0, title, C.hi)
-  local row = 1
+  local rows_total = H / FH - 1                 -- last row: CHDK's bar
+  local key_ = title .. "|" .. tostring(sel) .. "|" .. table.concat(items or {}, "/")
+  for _, l in ipairs(lines or {}) do key_ = key_ .. "|" .. (type(l) == "table" and l[1] or l) end
+  if key_ == last_key and get_tick_count() - last_full < 3000 then return end
+  if key_ ~= last_key then draw_clear() end
+  last_key, last_full = key_, get_tick_count()
+  local row = 0
+  text(0, row, pad(" " .. title), C.hi)
+  row = row + 1
   for _, l in ipairs(lines or {}) do
-    text(1, row, string.sub(l[1] or l, 1, W / FW - 2), l[2] or C.dim)
+    if row >= rows_total - 1 then break end
+    local s, col = l, C.dim
+    if type(l) == "table" then s, col = l[1], l[2] or C.dim end
+    text(0, row, pad(" " .. s), col)
     row = row + 1
   end
   if items then
+    text(0, row, pad(""), C.fg)
     row = row + 1
-    local rows = H / FH - row - 2
+    local rows = rows_total - row - 1
     local first = 1
     if sel > rows then first = sel - rows + 1 end
     for i = first, math.min(#items, first + rows - 1) do
-      local label = string.sub(items[i], 1, W / FW - 4)
-      if i == sel then text(1, row, "> " .. label .. " ", C.fg, C.sel)
-      else text(1, row, "  " .. label, C.fg) end
+      if i == sel then text(0, row, pad(" > " .. items[i]), C.fg, C.sel)
+      else text(0, row, pad("   " .. items[i]), C.fg) end
       row = row + 1
     end
+    while row < rows_total - 1 do text(0, row, pad(""), C.fg); row = row + 1 end
   end
-  text(1, H / FH - 1, footer or "SET ok  MENU back  Half-press: shoot", C.dim)
+  text(0, rows_total - 1, pad(footer or " SET ok  MENU back  half-press: shoot"), C.dim)
 end
 
 -- wait for one of KEYS; returns the key name, "shoot" if alt mode was left, or nil on timeout
@@ -170,8 +193,10 @@ local function load_film()
   end
   local names = {}
   for _, f in ipairs(mf.cfg.films) do names[#names + 1] = f.name end
+  mf.log("film list: " .. #names .. " films")
   local fi = choose("Choose film", {}, names, 1)
   if type(fi) ~= "number" then return fi end
+  mf.log("film chosen: " .. mf.cfg.films[fi].key)
   local li = choose("Roll length: " .. mf.cfg.films[fi].name, {}, {"36 frames", "24 frames", "12 frames"}, 1)
   if type(li) ~= "number" then return li end
   local r, err = mf.new_roll(mf.cfg.films[fi].key, ({36, 24, 12})[li])
@@ -204,6 +229,7 @@ local function show_rolls()
 end
 
 local function show_diag()
+  last_key = nil
   local lines = {}
   for _, s in ipairs(selftest) do lines[#lines + 1] = s end
   lines[#lines + 1] = "device " .. mf.device.device_id
@@ -214,6 +240,7 @@ end
 
 local function menu()
   draw_clear()
+  last_key = nil
   local sel = 1
   while not quit do
     local status = {{"Film: " .. frame_text(roll), roll and C.fg or C.warn}}
@@ -224,6 +251,7 @@ local function menu()
     local i = choose("M-Film " .. mf.VERSION, status, items, sel)
     if i == "shoot" or i == 1 or i == nil then break end
     sel = i
+    mf.log("menu: " .. items[i])
     local r
     if i == 2 then r = load_film()
     elseif i == 3 then seal_now()
@@ -299,6 +327,8 @@ end
 
 local function main()
   if have("get_gui_screen_width") then W, H = get_gui_screen_width(), get_gui_screen_height() end
+  COLS = W / FW
+  if COLS > 60 then COLS = 60 end
   local problems = mf.init()
   mf.log("---- start " .. mf.VERSION)
   selftest = run_selftest()

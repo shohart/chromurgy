@@ -83,6 +83,9 @@ def test_app_uses_only_chdk_161_functions():
     for f in ("MFILM.LUA", "mfroll.lua"):
         listing = subprocess.run([str(LUAC), "-p", "-l", str(APP / f)], capture_output=True, text=True, check=True)
         used |= set(re.findall(r"[GS]ETGLOBAL\s.*;\s*(\w+)", listing.stdout))
+    for f in ("MFILM.LUA", "mfroll.lua"):
+        listing = subprocess.run([str(LUAC), "-p", "-l", str(APP / f)], capture_output=True, text=True, check=True)
+        assert not re.findall(r"SETGLOBAL\s.*;\s*(\w+)", listing.stdout), f"{f} assigns a global"
     unknown = used - have - lua_std - chdk_tables
     # names the app guards with have()/type() checks before use are allowed to be missing on the camera
     assert not unknown, f"not in CHDK 1.6.1: {sorted(unknown)}"
