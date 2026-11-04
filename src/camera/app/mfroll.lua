@@ -22,7 +22,7 @@
 
 local M = {}
 
-M.VERSION = "0.1.6-alpha"
+M.VERSION = "0.1.7-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 

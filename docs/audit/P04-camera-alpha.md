@@ -106,3 +106,14 @@ and strip appear for 3 s at start and after each shot, centred above Canon's
 bottom row, then the screen is given back (draw_clear). The harness models
 record/playback and the OSD setting and fails if menu text is drawn in shooting
 mode; keys reach the app only when it waits for one; expect waits up to 3 s.
+
+## 0.1.7: CHDK config ids
+
+`set_config_value(id)` treats ids below CONF_CORE (1000) as OLD 1.2 ids and
+remaps them (modules/conf_migrate.c): 0.1.5 used 1 for Show OSD (maps to 2001,
+correct by luck) and 0.1.6 used 102/104 for the battery display, which map to
+core settings 1112/1121 instead. 0.1.6 was withdrawn before it ran on the
+camera. 0.1.7 uses the real ids (CONF_OSD 2000 + osd_conf_info id), pinned in
+src/camera/test/chdk-1.6.1-r6355-osd-conf-ids.txt and checked by tests; the
+harness refuses ids below 1000. At start the app switches off CHDK's battery
+icon/percent, clock, temperature, RAW counter and state and card space display.

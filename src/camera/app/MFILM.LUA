@@ -342,7 +342,11 @@ end
 -- clears it now and then, so a Lua menu over the live view showed through
 -- and flickered whatever the repaint rate (camera tests 0.1.0-0.1.4).
 -- Playback is static: drawn once, nothing redraws over it.
-local CONF_SHOW_OSD = 1                          -- CHDK conf id of "Show OSD" (core/conf.c)
+-- CHDK config ids (release-1_6 r6355): CONF_OSD 2000 + osd_conf_info id. Ids
+-- below 1000 are OLD ids remapped by conf_migrate: never use those.
+local CONF = {show_osd = 2001, batt_perc_show = 2102, batt_icon_show = 2104, show_clock = 2080, show_temp = 2220,
+              show_remaining_raw = 2200, show_raw_state = 2201, space_mb_show = 2182, space_bar_show = 2183}
+local CONF_SHOW_OSD = CONF.show_osd
 local osd_saved = nil
 
 local function is_rec() return not have("get_mode") or get_mode() end
@@ -494,14 +498,17 @@ local function main()
     set_config_value(CONF_SHOW_OSD, 1)
     mf.log("CHDK OSD was off: switched back on")
   end
-  -- CHDK's battery icon and percent sit at the top centre (178,0 / 178,16)
-  -- right on Canon's own battery and shots-left icons; Canon already shows
-  -- the battery, so switch CHDK's duplicate off (conf ids 104, 102)
+  -- CHDK's own OSD items overlap Canon's display (battery icon/percent at the
+  -- top centre on Canon's battery and shots-left icons, clock, temperature,
+  -- RAW counter and state, card space): Canon shows what matters, so switch
+  -- these off for good (CHDK saves them with its config)
   if have("get_config_value") then
-    for _, id in ipairs({104, 102}) do
-      if get_config_value(id) ~= 0 then
-        set_config_value(id, 0)
-        mf.log("CHDK OSD: switched off battery " .. (id == 104 and "icon" or "percent"))
+    for _, name in ipairs({"batt_icon_show", "batt_perc_show", "show_clock", "show_temp", "show_remaining_raw",
+                           "show_raw_state", "space_mb_show", "space_bar_show"}) do
+      local v = get_config_value(CONF[name])
+      if v and v ~= 0 then
+        set_config_value(CONF[name], 0)
+        mf.log("CHDK OSD: " .. name .. " off (was " .. tostring(v) .. ")")
       end
     end
   end

@@ -175,5 +175,20 @@ def test_menu_in_playback_with_chdk_osd_off_then_restored(card):
            ("expect_state", True, 1)])
 
 
-def test_chdk_battery_osd_switched_off(card):
-    run(card, [("wait", 1200), ("expect_conf", 104, 0), ("expect_conf", 102, 0)])
+OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
+
+
+def test_chdk_osd_clutter_switched_off(card):
+    ids = {n: int(i) for n, i in (ln.split() for ln in OSD_IDS.read_text().splitlines()
+                                  if ln and not ln.startswith("#"))}
+    run(card, [("wait", 1200)] + [("expect_conf", ids[n], 0) for n in
+                                  ("batt_icon_show", "batt_perc_show", "show_clock", "show_temp", "show_remaining_raw",
+                                   "show_raw_state", "space_mb_show", "space_bar_show")])
+
+
+def test_app_conf_ids_match_chdk_161():
+    ids = {n: int(i) for n, i in (ln.split() for ln in OSD_IDS.read_text().splitlines()
+                                  if ln and not ln.startswith("#"))}
+    src = (APP / "MFILM.LUA").read_text()
+    table = dict(re.findall(r"(\w+) = (\d{4})", src[src.index("local CONF = {"):src.index("local CONF_SHOW_OSD")]))
+    assert {k: int(v) for k, v in table.items()} == ids

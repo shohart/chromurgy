@@ -97,11 +97,19 @@ function get_buildinfo() return {platform = "sx510hs", platsub = "101a", build_n
 hook_raw = {count = function() return shots end}
 local autostart_conf, booted = 0, false
 rec_mode = true                     -- camera starts in shooting mode
-local conf = {[1] = 1, [102] = 1, [104] = 1}   -- CHDK config: 1 show_osd, 102 batt %, 104 batt icon
+-- CHDK config (new ids, CONF_OSD 2000 + osd id); an id below 1000 is an OLD id
+-- the camera would remap to some other setting: the stub refuses those
+local conf = {[2001] = 1, [2102] = 1, [2104] = 1, [2080] = 2, [2220] = 1, [2200] = 1, [2201] = 1, [2182] = 1, [2183] = 1}
 function get_mode() return rec_mode, false, rec_mode and 1 or 0 end
 function set_record(v) rec_mode = (v == 1 or v == true) end
-function get_config_value(id) return conf[id] end
-function set_config_value(id, v) conf[id] = v end
+function get_config_value(id)
+  if id < 1000 then error("old CHDK config id " .. id .. " (remapped by conf_migrate)", 2) end
+  return conf[id]
+end
+function set_config_value(id, v)
+  if id < 1000 then error("old CHDK config id " .. id .. " (remapped by conf_migrate)", 2) end
+  conf[id] = v
+end
 function get_autostart() return autostart_conf end
 function set_autostart(v) autostart_conf = v end
 function autostarted() return booted end
@@ -221,8 +229,8 @@ while true do
         elseif k == "restart" or k == "boot" then log("FAIL: " .. k .. " while app is running") os.exit(1)
         elseif k == "expect_state" then
           local want_rec, want_osd = s[2], s[3]
-          if rec_mode ~= want_rec or conf[1] ~= want_osd then
-            log(string.format("FAIL: rec=%s osd=%s, expected rec=%s osd=%s", tostring(rec_mode), tostring(conf[1]),
+          if rec_mode ~= want_rec or conf[2001] ~= want_osd then
+            log(string.format("FAIL: rec=%s osd=%s, expected rec=%s osd=%s", tostring(rec_mode), tostring(conf[2001]),
                 tostring(want_rec), tostring(want_osd))) os.exit(1)
           end
         elseif k == "expect_conf" then

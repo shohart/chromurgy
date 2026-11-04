@@ -1,0 +1,12 @@
+# CHDK release-1_6 r6355 config ids used by the M-Film app: CONF_OSD (2000) +
+# the id in core/conf.c osd_conf_info[]. Ids below CONF_CORE (1000) are OLD
+# 1.2 ids that set_config_value maps through modules/conf_migrate.c, never use them.
+show_osd 2001
+batt_perc_show 2102
+batt_icon_show 2104
+show_clock 2080
+show_temp 2220
+show_remaining_raw 2200
+show_raw_state 2201
+space_mb_show 2182
+space_bar_show 2183
