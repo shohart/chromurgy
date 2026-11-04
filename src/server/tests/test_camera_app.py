@@ -169,11 +169,23 @@ def test_autostart_can_be_switched_off_from_the_menu(card):
                ("key", "down"), ("key", "set"), ("expect", "Start with camera: OFF"), ("expect_autostart", 0)])
 
 
-def test_menu_in_playback_with_chdk_osd_off_then_restored(card):
-    run(card, [("wait", 300), ("expect_state", False, 0)] + LOAD_PORTRA + LEN12 + [("wait", 600),
-               ("expect_state", True, 1), ("expect", "Portra400 0/12")] + shots(1)
-        + [("playback",), ("wait", 900), ("expect_state", False, 0), ("key", "shoot_half"), ("wait", 600),
-           ("expect_state", True, 1)])
+def test_menu_in_shooting_mode_with_canon_info_off_chdk_osd_off_then_restored(card):
+    # 0.2.0: Canon's information display is switched off (DISP) for the app's
+    # lifetime; the menu stays in shooting mode with CHDK's OSD off
+    run(card, [("wait", 300), ("expect_state", True, 0), ("expect_prop", 105, 1)] + LOAD_PORTRA + LEN12
+        + [("wait", 600), ("expect_state", True, 1), ("expect", "Portra400 0/12")] + shots(1)
+        + [("playback",), ("wait", 900), ("expect_state", True, 0), ("key", "shoot_half"), ("wait", 600),
+           ("expect_state", True, 1), ("expect_prop", 105, 1)])
+
+
+def test_owner_turning_canon_info_back_on_is_undone_at_the_menu(card):
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("set_prop", 105, 0), ("playback",), ("wait", 900),
+                                     ("expect_prop", 105, 1), ("expect", "Shoot")])
+
+
+def test_quit_restores_canon_info(card):
+    run(card, [("wait", 600), ("expect_prop", 105, 1), ("key", "up"), ("key", "set"), ("expect", "NOT recorded"),
+               ("key", "up"), ("key", "set"), ("expect_exit",), ("expect_prop", 105, 0)])
 
 
 def test_menu_cursor_redraws_two_rows_without_clearing(card):
@@ -203,8 +215,8 @@ OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
 def test_chdk_osd_clutter_switched_off(card):
     ids = {n: int(i) for n, i in (ln.split() for ln in OSD_IDS.read_text().splitlines()
                                   if ln and not ln.startswith("#"))}
-    run(card, [("wait", 1200)] + [("expect_conf", ids[n], 0) for n in
-                                  ("batt_icon_show", "batt_perc_show", "show_clock", "show_temp", "show_remaining_raw",
+    run(card, [("wait", 1200), ("expect_conf", ids["batt_icon_show"], 1)] + [("expect_conf", ids[n], 0) for n in
+                                  ("batt_perc_show", "show_clock", "show_temp", "show_remaining_raw",
                                    "show_raw_state", "space_mb_show", "space_bar_show")])
 
 

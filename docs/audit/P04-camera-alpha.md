@@ -130,3 +130,29 @@ so a new screen overwrites the old one, and graphics (counter, canisters) are
 redrawn only with their row. The safety repaint (every 5 s) rewrites text rows
 only. A test replays the draw log and checks no clear and exactly two changed
 rows per cursor move.
+
+## 0.2.0: Canon's information display off, CHDK UI only
+
+Owner's decision after 0.1.7/0.1.8: Canon's own UI is unwanted; the camera
+should show CHDK's UI and the app. Canon draws its icons (shots left, battery,
+mode, focus) into the same bitmap as CHDK's OSD and the app, redraws them on
+its own schedule and CHDK repaints over them: that collision is the likely
+source of the overlaps and of the CHDK OSD flicker seen so far.
+
+- The app switches Canon's information display off by pressing DISP
+  (`click("display")`) until propcase 105 (PROPCASE_DISPLAY_MODE, propset 6)
+  is non-zero (0 = information shown; CHDK's osd_visible uses the same
+  meaning). It does so on entering the menu and on starting to shoot, so an
+  owner pressing DISP is undone at the next menu; Quit restores the original
+  mode. The values seen are logged to APP.LOG and shown in Diagnostics.
+  HARDWARE-TEST REQUIRED: which non-zero mode the SX510 HS lands on.
+- The menu stays in shooting mode (no switch to playback) over the live view;
+  every row is opaque and full width. CHDK's OSD is off while the menu is up.
+- While shooting CHDK's OSD shows its battery icon (Canon's is hidden now);
+  clock, temperature, RAW counter/state and card space stay off.
+- CHDK's hide_osd default (1, "in playback") keeps its OSD visible in
+  shooting mode whatever Canon's display mode.
+- `click`/`press`/`release` are registered as closures in
+  register_lua_funcs, so they are added to the pinned function list. The
+  harness models propcase 105 and DISP and refuses menu text drawn while
+  Canon's information display is on.

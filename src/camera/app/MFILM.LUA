@@ -56,7 +56,8 @@ local function run_selftest()
   local missing = {}
   for _, n in ipairs({"get_image_dir", "exit_alt", "enter_alt", "get_alt_mode", "draw_string", "draw_rect_filled",
                       "draw_clear", "wait_click", "is_key", "set_exit_key", "get_exp_count", "get_tick_count",
-                      "get_gui_screen_width", "get_gui_screen_height", "get_raw", "get_vbatt", "sleep"}) do
+                      "get_gui_screen_width", "get_gui_screen_height", "get_raw", "get_vbatt", "sleep",
+                     "get_prop", "click"}) do
     if not have(n) then missing[#missing + 1] = n end
   end
   for _, n in ipairs({"listdir", "stat", "rename", "remove", "mkdir", "date", "time"}) do
@@ -75,6 +76,7 @@ local function run_selftest()
   if have("get_raw") then add("RAW/DNG saving: " .. (get_raw() and "on" or "OFF")) end
   add("screen " .. W .. "x" .. H .. ", image dir " .. tostring(have("get_image_dir") and get_image_dir()))
   if have("get_vbatt") then add("battery " .. get_vbatt() .. " mV") end
+  if have("get_prop") then add("Canon display mode " .. tostring(get_prop(105)) .. " (0 = info shown)") end
   return t
 end
 
@@ -353,12 +355,15 @@ local function title_line(on)
   if have("set_draw_title_line") then set_draw_title_line(on and 1 or 0) end
 end
 
--- The menu is shown in PLAYBACK mode with CHDK's own OSD switched off. In
--- shooting mode Canon (shots left, battery) and CHDK (clock, battery %,
--- temperature, DNG counter) keep drawing into the same bitmap and CHDK
--- clears it now and then, so a Lua menu over the live view showed through
--- and flickered whatever the repaint rate (camera tests 0.1.0-0.1.4).
--- Playback is static: drawn once, nothing redraws over it.
+-- Canon's own information display is switched off (DISP) for as long as the
+-- app runs: its icons (shots left, battery, mode, focus) are drawn into the
+-- same bitmap as CHDK's OSD and the app's menu, Canon redraws them whenever it
+-- likes and CHDK repaints over them -- the source of the overlaps and flicker
+-- seen in camera tests 0.1.0-0.1.7. The menu is drawn in shooting mode over the
+-- live view (every row opaque and full width), with CHDK's OSD off while it is
+-- up; while shooting only CHDK's OSD and the app's transient counter are shown.
+-- Before 0.2.0 the menu went to playback mode instead, which still showed
+-- the photo under it and Canon's playback icons.
 -- CHDK config ids (release-1_6 r6355): CONF_OSD 2000 + osd_conf_info id. Ids
 -- below 1000 are OLD ids remapped by conf_migrate: never use those.
 local CONF = {show_osd = 2001, batt_perc_show = 2102, batt_icon_show = 2104, show_clock = 2080, show_temp = 2220,
@@ -378,6 +383,36 @@ local function set_rec(on)
   return true
 end
 
+-- Canon display mode: propcase 105 (propset 6, SX510 HS); 0 = information
+-- shown. DISP cycles the modes; the app presses it until the mode is not 0.
+local PROP_DISP = 105
+local disp_saved = nil
+
+local function disp_mode() return get_prop(PROP_DISP) end
+
+local function canon_info(show)
+  if not have("get_prop") or not have("click") or not is_rec() then return end
+  local v = disp_mode()
+  if show then
+    if disp_saved == nil or v == disp_saved then return end
+    for _ = 1, 4 do
+      click("display"); sleep(250)
+      if disp_mode() == disp_saved then break end
+    end
+    mf.log("Canon display restored: " .. tostring(disp_mode()))
+    disp_saved = nil
+    return
+  end
+  if v ~= 0 then return end                      -- already without information
+  if disp_saved == nil then disp_saved = v end
+  for _ = 1, 4 do
+    click("display"); sleep(250)
+    v = disp_mode()
+    if v ~= 0 then break end
+  end
+  mf.log("Canon display mode " .. tostring(v) .. (v ~= 0 and " (info off)" or " (could not switch info off)"))
+end
+
 local function chdk_osd(on)
   if not have("get_config_value") or not have("set_config_value") then return end
   if not on then
@@ -391,7 +426,8 @@ end
 
 local function menu()
   chdk_osd(false)
-  set_rec(false)
+  set_rec(true)                                  -- the menu lives in shooting mode
+  canon_info(false)
   draw_clear()
   title_line(false)
   invalidate()
@@ -428,7 +464,6 @@ local function menu()
   end
   draw_clear()
   title_line(true)
-  if not quit then set_rec(true) end
   chdk_osd(true)
   draw_clear()
 end
@@ -463,6 +498,7 @@ local function on_new_dng(f)
 end
 
 local function shooting()
+  canon_info(false)                              -- straight to shooting after autostart
   if have("exit_alt") then exit_alt() end
   show_overlay(3000)
   local last_draw, pending_since, shown = 0, nil, false
@@ -515,17 +551,18 @@ local function main()
     set_config_value(CONF_SHOW_OSD, 1)
     mf.log("CHDK OSD was off: switched back on")
   end
-  -- CHDK's own OSD items overlap Canon's display (battery icon/percent at the
-  -- top centre on Canon's battery and shots-left icons, clock, temperature,
-  -- RAW counter and state, card space): Canon shows what matters, so switch
-  -- these off for good (CHDK saves them with its config)
+  -- CHDK's OSD replaces Canon's information display: only its battery icon
+  -- stays (Canon's is hidden now); clock, temperature, RAW counter and state
+  -- and card space are switched off as the owner asked (CHDK saves them)
   if have("get_config_value") then
+    local want = {batt_icon_show = 1, batt_perc_show = 0, show_clock = 0, show_temp = 0, show_remaining_raw = 0,
+                  show_raw_state = 0, space_mb_show = 0, space_bar_show = 0}
     for _, name in ipairs({"batt_icon_show", "batt_perc_show", "show_clock", "show_temp", "show_remaining_raw",
                            "show_raw_state", "space_mb_show", "space_bar_show"}) do
       local v = get_config_value(CONF[name])
-      if v and v ~= 0 then
-        set_config_value(CONF[name], 0)
-        mf.log("CHDK OSD: " .. name .. " off (was " .. tostring(v) .. ")")
+      if v ~= nil and v ~= want[name] then
+        set_config_value(CONF[name], want[name])
+        mf.log("CHDK OSD: " .. name .. " " .. want[name] .. " (was " .. tostring(v) .. ")")
       end
     end
   end
@@ -553,6 +590,7 @@ local function main()
     if quit then break end
     shooting()
   end
+  canon_info(true)                               -- quitting: the camera is Canon's again
   mf.log("---- quit")
 end
 

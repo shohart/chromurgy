@@ -18,13 +18,15 @@
 --   {"expect_autostart", n} CHDK's autostart setting is n
 --   {"expect", pattern}    some text drawn since the last expect matches pattern
 --   {"setdir", dir}        the camera starts a new DCIM folder
+--   {"expect_prop", id, v} Canon propcase id is v (105 = display mode, 0 = info shown)
+--   {"set_prop", id, v}    the owner changes a Canon setting (e.g. presses DISP)
 -- Exit status 0 = scenario passed.
 
 local app_dir, scen_path = arg[1], arg[2]
 package.path = app_dir .. "/?.lua;" .. package.path
 local steps = dofile(scen_path)
 
-local clock, shots, alt, click = 1000, 0, true, nil
+local clock, shots, alt, pressed_key = 1000, 0, true, nil
 local drawn = {}
 local image_dir = "A/DCIM/101___01"
 local file_no = 100
@@ -60,8 +62,8 @@ local function dlog(s) if dl then dl:write(s, "\n") end end
 
 function get_tick_count() return clock end
 function sleep(ms) coroutine.yield("sleep", ms) end
-function wait_click(ms) click = nil; coroutine.yield("wait", ms or 0) end
-function is_key(k) return click == k end
+function wait_click(ms) pressed_key = nil; coroutine.yield("wait", ms or 0) end
+function is_key(k) return pressed_key == k end
 function get_alt_mode() return alt end
 function exit_alt() alt = false end
 function enter_alt() alt = true end
@@ -72,9 +74,9 @@ function draw_string(x, y, s, fg, bg, scale)
   if x < 0 or y < 0 or x + 8 * sc * string.len(s) > 360 or y + 16 * sc > 240 then
     error(string.format("off-screen draw_string at %d,%d len %d: %s", x, y, string.len(s), s))
   end
-  -- the menu must never be drawn over the live view (shooting mode): it
-  -- flickered and showed Canon's and CHDK's icons through (alpha 0.1.0-0.1.4)
-  if alt and rec_mode then error("menu text drawn in shooting mode: " .. s, 2) end
+  -- the menu must never be drawn while Canon's information display is on:
+  -- Canon's icons collided with it and it flickered (alpha 0.1.0-0.1.7)
+  if alt and rec_mode and props[105] == 0 then error("menu text drawn over Canon's information display: " .. s, 2) end
   drawn[#drawn + 1] = s
   dlog(string.format("S %d %d %d %d %d %s", x, y, sc, fg or 258, bg or 257, s))
 end
@@ -97,6 +99,16 @@ function get_buildinfo() return {platform = "sx510hs", platsub = "101a", build_n
 hook_raw = {count = function() return shots end}
 local autostart_conf, booted = 0, false
 rec_mode = true                     -- camera starts in shooting mode
+-- Canon display mode (propcase 105): 0 = information shown; DISP in shooting
+-- mode cycles 0 -> 1 -> 0
+props = {[105] = 0}
+local disp_modes = 2
+function get_prop(id) return props[id] end
+function set_prop(id, v) props[id] = v end
+function click(k)
+  if k == "display" and rec_mode then props[105] = (props[105] + 1) % disp_modes end
+  coroutine.yield("sleep", 10)
+end
 -- CHDK config (new ids, CONF_OSD 2000 + osd id); an id below 1000 is an OLD id
 -- the camera would remap to some other setting: the stub refuses those
 local conf = {[2001] = 1, [2102] = 1, [2104] = 1, [2080] = 2, [2220] = 1, [2200] = 1, [2201] = 1, [2182] = 1, [2183] = 1}
@@ -185,7 +197,10 @@ while true do
     if s[1] == "restart" or s[1] == "boot" then
       booted = s[1] == "boot" and autostart_conf == 1   -- power-on with CHDK autostart
       i = i + 1; co = new_app(); exited = false
-    elseif s[1] == "expect_exit" then i = i + 1
+    elseif s[1] == "expect_exit" then i = i + 1; expect_deadline = nil
+    elseif s[1] == "expect_prop" then              -- what the app left behind
+      if props[s[2]] ~= s[3] then log("FAIL: prop " .. s[2] .. " = " .. tostring(props[s[2]]) .. " after exit, expected " .. s[3]) os.exit(1) end
+      i = i + 1
     else log("FAIL: app exited before step " .. i .. " (" .. s[1] .. ")") os.exit(1) end
   else
     local ok, kind, ms = coroutine.resume(co)
@@ -204,7 +219,7 @@ while true do
           k = "-"
         end
         if k == "-" then
-        elseif k == "key" then click = s[2]
+        elseif k == "key" then pressed_key = s[2]
         elseif k == "playback" then alt = not alt
         elseif k == "shoot" then step_shoot(s[2])
         elseif k == "wait" then pending = s[2]
@@ -233,11 +248,17 @@ while true do
             log(string.format("FAIL: rec=%s osd=%s, expected rec=%s osd=%s", tostring(rec_mode), tostring(conf[2001]),
                 tostring(want_rec), tostring(want_osd))) os.exit(1)
           end
+        elseif k == "expect_prop" then
+          if props[s[2]] ~= s[3] then log("FAIL: prop " .. s[2] .. " = " .. tostring(props[s[2]]) .. ", expected " .. s[3]) os.exit(1) end
+        elseif k == "set_prop" then props[s[2]] = s[3]
         elseif k == "expect_conf" then
           if conf[s[2]] ~= s[3] then log("FAIL: conf " .. s[2] .. " = " .. tostring(conf[s[2]]) .. ", expected " .. s[3]) os.exit(1) end
         elseif k == "expect_autostart" then
           if autostart_conf ~= s[2] then log("FAIL: autostart is " .. autostart_conf .. ", expected " .. s[2]) os.exit(1) end
-        elseif k == "expect_exit" then log("FAIL: app still running at expect_exit") os.exit(1)
+        elseif k == "expect_exit" then                -- patient: quitting restores Canon's display first
+          expect_deadline = expect_deadline or (clock + 3000)
+          if clock > expect_deadline then log("FAIL: app still running at expect_exit") os.exit(1) end
+          i = i - 1
         else log("FAIL: unknown step " .. tostring(k)) os.exit(1) end
       end
     end

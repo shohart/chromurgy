@@ -1,5 +1,6 @@
 # Lua functions registered by CHDK release-1_6 r6355 modules/luascript.c (the camera's build)
 # fetched from https://subversion.assembla.com/svn/chdk/!svn/bc/6355/branches/release-1_6/modules/luascript.c
+# plus click, press, release: registered as closures in register_lua_funcs
 aperture_to_av96
 autostarted
 av96_to_aperture
@@ -12,6 +13,7 @@ bitshru
 bitxor
 call_event_proc
 call_func_ptr
+click
 cls
 console_redraw
 draw_clear
@@ -79,8 +81,8 @@ get_nd_value_ev96
 get_orientation_sensor
 get_parameter_data
 get_prop
-get_propset
 get_prop_str
+get_propset
 get_raw
 get_raw_count
 get_raw_nr
@@ -107,10 +109,10 @@ get_zoom_steps
 init_usb_capture
 is_capture_mode_valid
 is_key
+is_pressed
 iso_market_to_real
 iso_real_to_market
 iso_to_sv96
-is_pressed
 load_config_file
 md_af_led_control
 md_detect_motion
@@ -121,12 +123,14 @@ play_sound
 poke
 post_levent_for_npt
 post_levent_to_ui
+press
 print_screen
 raw_merge_add_file
 raw_merge_end
 raw_merge_start
 read_usb_msg
 reboot
+release
 save_config_file
 seconds_to_tv96
 set_aelock
