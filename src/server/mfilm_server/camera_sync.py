@@ -25,7 +25,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .importer import IMPORTABLE_CAMERA_STATES, MFILM_DIR, RollResult, card_source, import_card
+from .importer import IMPORTABLE_CAMERA_STATES, MFILM_DIR, RollResult, card_source, find_manifests, import_card
 from .store import Store, UnsafePath
 
 DEFAULT_CHDKPTP = ("docker run --rm --network host --privileged -v /dev/bus/usb:/dev/bus/usb "
@@ -77,8 +77,7 @@ def _q(s: str) -> str:
 def wanted_files(card: Path, conn: sqlite3.Connection) -> list[tuple[str, int]]:
     """(camera path, size) of the DNGs of sealed rolls not yet fully imported."""
     out = []
-    base = card / MFILM_DIR
-    for m in sorted(base.glob("*/manifest.json")) if base.is_dir() else []:
+    for m in find_manifests(card):
         try:
             doc = json.loads(m.read_text())
         except (OSError, ValueError):

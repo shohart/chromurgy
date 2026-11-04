@@ -11,7 +11,7 @@ import pytest
 from conftest import REPO
 from mfilm_server import core
 from mfilm_server.camera_card import write_card
-from mfilm_server.importer import import_card
+from mfilm_server.importer import find_manifests, import_card
 
 LUA = REPO / "build" / "hostlua" / "lua"
 LUAC = REPO / "build" / "hostlua" / "luac"
@@ -59,14 +59,11 @@ def run(root, steps, expect_ok=True):
 
 
 def rolls(root):
-    out = []
-    for m in sorted((root / "A" / "CHDK" / "MFILM" / "ROLLS").glob("*/manifest.json")):
-        out.append(json.loads(m.read_text()))
-    return out
+    return [json.loads(m.read_text()) for m in find_manifests(root / "A")]
 
 
 def applog(root):
-    return (root / "A" / "CHDK" / "MFILM" / "LOGS" / "app.log").read_text()
+    return (root / "A" / "CHDK" / "MFILM" / "LOGS" / "APP.LOG").read_text()
 
 
 def shots(n, **o):
@@ -112,7 +109,7 @@ def test_power_cut_resume_and_finish_from_menu(card, store, conn):
            ("expect", "Seal it now"), ("key", "up"), ("key", "set"), ("wait", 300), ("expect", "NO FILM")])
     (r,) = rolls(card)
     assert r["roll_state"] == "SEALED" and r["captured_frames"] == 5 and r["roll_length"] == 36
-    journal = next((card / "A" / "CHDK" / "MFILM" / "ROLLS").glob("*/journal.log")).read_text()
+    journal = next((card / "A" / "CHDK" / "MFILM" / "ROLLS").glob("*/JOURNAL.LOG")).read_text()
     assert "RESUMED" in journal and "SEALED frames=5" in journal
     assert [x.status for x in import_card(card / "A", store, conn)] == ["IMPORTED"]
 

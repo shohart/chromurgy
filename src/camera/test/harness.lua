@@ -36,10 +36,10 @@ local function mkfile(p, data)
   f:close()
 end
 
-local function mkdirs(p)
-  local acc = ""
-  for part in string.gmatch(p, "[^/]+") do
-    acc = (acc == "") and part or (acc .. "/" .. part)
+local function mkdirs(p)                  -- "A/..." paths; the card root A exists already
+  local acc = "A"
+  for part in string.gmatch(string.sub(p, 3), "[^/]+") do
+    acc = acc .. "/" .. part
     os.mkdir(acc)
   end
 end
@@ -77,6 +77,35 @@ function get_vbatt() return 3950 end
 function get_exp_count() return shots end
 function get_buildinfo() return {platform = "sx510hs", platsub = "101a", build_number = "host", build_revision = "0"} end
 hook_raw = {count = function() return shots end}
+
+-- ---------------------------------------------------------------- DryOS file rules
+-- What the SX510 HS taught us (alpha 2026-11-04): os.rename refuses to replace
+-- and powered the camera off inside a long-named directory. The app must use
+-- 8.3 names only (upper case when it creates them) and never rename.
+local function is83(c, create)
+  local name, ext = string.match(c, "^([^.]+)%.?([^.]*)$")
+  if not name or string.len(name) > 8 or string.len(ext) > 3 then return false end
+  if string.find(c, "[^%w_%-~.]") then return false end
+  if create and string.find(c, "%l") then return false end
+  return true
+end
+local function check_path(p, create, what)
+  if p == "A" or p == "A/" then error(what .. ": bare drive path (DriveLetterManager assert on the camera)", 3) end
+  if string.sub(p, 1, 2) ~= "A/" then return end           -- harness-internal files
+  for c in string.gmatch(string.sub(p, 3), "[^/]+") do
+    if not is83(c, create) then error(what .. ": not an 8.3" .. (create and " upper-case" or "") .. " name: " .. p, 2) end
+  end
+end
+local raw_open, raw_mkdir, raw_stat, raw_remove, raw_listdir = io.open, os.mkdir, os.stat, os.remove, os.listdir
+io.open = function(p, mode)
+  check_path(p, mode and string.find(mode, "[wa]") ~= nil, "io.open")
+  return raw_open(p, mode)
+end
+os.mkdir = function(p) check_path(p, true, "os.mkdir") return raw_mkdir(p) end
+os.stat = function(p) check_path(p, false, "os.stat") return raw_stat(p) end
+os.remove = function(p) check_path(p, false, "os.remove") return raw_remove(p) end
+os.listdir = function(p, ...) check_path(p, false, "os.listdir") return raw_listdir(p, ...) end
+os.rename = function(a, b) error("os.rename is not used on the camera (refuses to replace; crashed in long dirs)", 2) end
 
 -- ---------------------------------------------------------------- driver
 

@@ -62,15 +62,10 @@ local function run_selftest()
   end
   add("missing functions: " .. (#missing > 0 and table.concat(missing, " ") or "none"))
   add("hook_raw: " .. ((type(hook_raw) == "table" and type(hook_raw.count) == "function") and "yes" or "no (using get_exp_count)"))
-  -- rename semantics on this DryOS (manifest atomicity depends on it)
+  -- no rename test: on this camera rename refuses to replace a file, and the
+  -- camera powered off renaming inside a long-named directory. Nothing renames.
   local d = mf.ROOT .. "/LOGS"
-  local a, b = d .. "/rn_a.tmp", d .. "/rn_b.tmp"
-  local fa = io.open(a, "wb"); if fa then fa:write("new"); fa:close() end
-  local fb = io.open(b, "wb"); if fb then fb:write("old"); fb:close() end
-  local ok = os.rename(a, b)
-  add("rename over existing file: " .. (ok and ("allowed, content=" .. tostring(mf.read(b))) or "refused"))
-  os.remove(a); os.remove(b)
-  local ap = d .. "/ap.tmp"
+  local ap = d .. "/APTEST.TMP"
   local f = io.open(ap, "a")
   add("append mode: " .. (f and "yes" or "no (rewrite fallback)"))
   if f then f:close() end
@@ -233,7 +228,7 @@ local function show_diag()
   local lines = {}
   for _, s in ipairs(selftest) do lines[#lines + 1] = s end
   lines[#lines + 1] = "device " .. mf.device.device_id
-  lines[#lines + 1] = "log: CHDK/MFILM/LOGS/app.log"
+  lines[#lines + 1] = "log: CHDK/MFILM/LOGS/APP.LOG"
   screen("Diagnostics", lines, nil, 1, "any key: back")
   repeat until key(1000)
 end

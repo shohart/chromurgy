@@ -1,4 +1,4 @@
-# Camera alpha 0.1.0: roll capture app, card import, USB/Wi-Fi sync (2026-11-04)
+# Camera alpha 0.1.x: roll capture app, card import, USB/Wi-Fi sync (2026-11-04)
 
 What a first camera session must confirm. Everything below is tested on the
 host; items marked HARDWARE-TEST REQUIRED have not run on the SX510 HS yet.
@@ -47,3 +47,24 @@ host; items marked HARDWARE-TEST REQUIRED have not run on the SX510 HS yet.
   reader, reduction, JPEG encoder still to do).
 - Wi-Fi sync is started from the server (`mfilmctl camera-sync --host IP`), not
   automatically when the camera connects.
+
+## First camera session (2026-11-04, 0.1.0) and fixes in 0.1.1
+
+VERIFIED on the camera (self-test in the app log): all Lua functions present,
+`hook_raw` present, append mode works, RAW on, screen 360x240, image dir
+`A/DCIM/127___11`. `os.rename` over an existing file is **refused**.
+
+Failures:
+- Menu flickered over the live view: full-screen fill + redraw every 250 ms.
+  0.1.1 redraws only on change (or every 3 s), pads lines instead of filling,
+  keeps off CHDK's bottom bar.
+- "Load film" powered the camera off. ROMLOG: `ASSERT!! DriveLetterManager.c
+  Line 105`, task PhySw (the script task), camera in playback. The roll
+  directory had only `state.cfg.tmp`: it died in write-tmp -> stat -> rename
+  inside a long-named (UUID) directory; `mkdirs` also stat-ed the bare drive "A".
+  0.1.1: 8.3 upper-case names only (roll dirs = 8 hex digits, MANIFEST.JSN,
+  STATE_A|B.CFG, JOURNAL.LOG, APP.LOG), no rename anywhere (state in two
+  alternating copies with a generation marker; manifest rewritten from state on
+  every start), no path without "A/". The importer finds MANIFEST.JSN and the
+  CHDK/MFILM/ROLLS path case-insensitively. The harness now fails on rename,
+  non-8.3 or lower-case created names and bare-drive paths; 0.1.0 fails it.

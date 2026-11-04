@@ -48,7 +48,7 @@ def write_card(out: Path, *, utc_offset: str | None = None, bench: bool = False,
     files = {
         out / "CHDK" / "SCRIPTS" / "MFILM.LUA": (APP / "MFILM.LUA").read_bytes(),
         out / "CHDK" / "LUALIB" / "mfroll.lua": (APP / "mfroll.lua").read_bytes(),
-        out / "CHDK" / "MFILM" / "CONFIG" / "mfilm.cfg": card_config(bundle, utc_offset or utc_offset_now()).encode(),
+        out / "CHDK" / "MFILM" / "CONFIG" / "MFILM.CFG": card_config(bundle, utc_offset or utc_offset_now()).encode(),
     }
     written = []
     for p, data in files.items():

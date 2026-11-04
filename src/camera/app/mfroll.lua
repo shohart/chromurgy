@@ -5,21 +5,24 @@
 -- the files the camera writes, manifest + journal on the card. CHDK Lua
 -- numbers are integers (no floats anywhere here).
 --
--- Card layout (docs/04):
---   A/CHDK/MFILM/CONFIG/mfilm.cfg      written by the host (bundle hash, films, utc offset)
---   A/CHDK/MFILM/CONFIG/device.cfg     device id, generated on first run
---   A/CHDK/MFILM/CONFIG/active.cfg     id of the roll in the camera
---   A/CHDK/MFILM/ROLLS/<roll_id>/state.cfg     roll state (Lua table, rewritten atomically)
---   A/CHDK/MFILM/ROLLS/<roll_id>/manifest.json docs/04 + contracts/roll-manifest.schema.json
---   A/CHDK/MFILM/ROLLS/<roll_id>/journal.log   one line per event
---   A/CHDK/MFILM/LOGS/app.log
+-- Card layout (docs/04). Every name is 8.3 and upper case, and nothing is
+-- ever renamed: on the SX510 HS (CHDK 1.6.1, DryOS) os.rename refuses to
+-- replace a file and the camera powered off renaming inside a long-named
+-- directory (alpha test 2026-11-04).
+--   A/CHDK/MFILM/CONFIG/MFILM.CFG       written by the host (bundle hash, films, utc offset)
+--   A/CHDK/MFILM/CONFIG/DEVICE_A|B.CFG  device id, generated on first run
+--   A/CHDK/MFILM/CONFIG/ACTIVE_A|B.CFG  the roll in the camera
+--   A/CHDK/MFILM/ROLLS/<8 hex>/STATE_A|B.CFG  roll state: two alternating copies with a generation
+--   A/CHDK/MFILM/ROLLS/<8 hex>/MANIFEST.JSN   docs/04 + contracts/roll-manifest.schema.json
+--   A/CHDK/MFILM/ROLLS/<8 hex>/JOURNAL.LOG    one line per event
+--   A/CHDK/MFILM/LOGS/APP.LOG
 -- Frames are the DNGs CHDK writes; they stay where the camera put them.
 -- The camera does not hash them (~10 s per DNG): frames are WRITTEN and the
 -- receiver hashes them on import.
 
 local M = {}
 
-M.VERSION = "0.1.0-alpha"
+M.VERSION = "0.1.1-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 
@@ -34,10 +37,12 @@ M.stat = stat
 
 function M.exists(p) return stat(p) ~= nil end
 
+-- create the directories of an "A/..." path; never touches the bare drive "A"
+-- (DryOS asserts in DriveLetterManager on odd paths and powers off)
 function M.mkdirs(p)
-  local acc = ""
-  for part in string.gmatch(p, "[^/]+") do
-    acc = (acc == "") and part or (acc .. "/" .. part)
+  local acc = "A"
+  for part in string.gmatch(string.sub(p, 3), "[^/]+") do
+    acc = acc .. "/" .. part
     if not stat(acc) then os.mkdir(acc) end
   end
 end
@@ -59,27 +64,44 @@ local function write_plain(p, data)
   return true
 end
 
--- Replace p with data so that a power cut leaves either the old or the new
--- file: write p.tmp, remove p, rename. DryOS rename may not overwrite, hence
--- the remove; M.recover() finishes an interrupted replace on the next start.
-function M.write_atomic(p, data)
-  local tmp = p .. ".tmp"
-  local ok, err = write_plain(tmp, data)
-  if not ok then return nil, err end
-  local st = stat(tmp)
-  if not st or st.size ~= string.len(data) then return nil, "short write " .. tmp end
-  if stat(p) then os.remove(p) end
-  local r, e = os.rename(tmp, p)
-  if not r then return nil, "rename " .. tostring(e) end
-  return true
+-- Crash-safe small state without rename: two copies NAME_A.CFG / NAME_B.CFG,
+-- written alternately, each ending in a marker with its generation. A torn
+-- write leaves the other copy intact; load picks the newest complete one.
+local slot_gen = {}
+
+local function slot_read(p)
+  local s = M.read(p)
+  if not s then return nil end
+  local gen = string.match(s, "\n%-%- end gen=(%d+)\n$")
+  if not gen then return nil end
+  local f = loadstring(s)
+  if not f then return nil end
+  local ok, t = pcall(f)
+  if ok and type(t) == "table" then return t, tonumber(gen) end
+  return nil
 end
 
-function M.recover(p)
-  local tmp = p .. ".tmp"
-  if stat(tmp) then
-    if stat(p) then os.remove(tmp)      -- replace finished but tmp left? keep the complete one
-    else os.rename(tmp, p) end
-  end
+function M.load_slots(dir, name)
+  local a, ga = slot_read(dir .. "/" .. name .. "_A.CFG")
+  local b, gb = slot_read(dir .. "/" .. name .. "_B.CFG")
+  local key = dir .. "/" .. name
+  if a and (not b or ga > gb) then slot_gen[key] = {ga, "A"} return a end
+  if b then slot_gen[key] = {gb, "B"} return b end
+  slot_gen[key] = {0, "B"}
+  return nil
+end
+
+function M.save_slots(dir, name, t, ser_fn)
+  local key = dir .. "/" .. name
+  if not slot_gen[key] then M.load_slots(dir, name) end
+  local g = slot_gen[key]
+  local slot = g[2] == "A" and "B" or "A"
+  local gen = g[1] + 1
+  local ok, err = write_plain(dir .. "/" .. name .. "_" .. slot .. ".CFG",
+                              "return " .. ser_fn(t) .. "\n-- end gen=" .. gen .. "\n")
+  if not ok then return nil, err end
+  slot_gen[key] = {gen, slot}
+  return true
 end
 
 -- append a line; "a" mode is not guaranteed on every DryOS, fall back to rewrite
@@ -103,7 +125,7 @@ function M.now_iso()
 end
 
 function M.log(msg)
-  M.append(M.ROOT .. "/LOGS/app.log", os.date("%Y-%m-%d %H:%M:%S") .. " " .. msg)
+  M.append(M.ROOT .. "/LOGS/APP.LOG", os.date("%Y-%m-%d %H:%M:%S") .. " " .. msg)
 end
 
 local seeded = false
@@ -150,17 +172,9 @@ local function ser(v, ind)
   return "nil"
 end
 
-function M.save_table(p, t) return M.write_atomic(p, "return " .. ser(t, "") .. "\n") end
-
-function M.load_table(p)
-  M.recover(p)
-  if not stat(p) then return nil end
-  local f = loadfile(p)
-  if not f then return nil, "corrupt " .. p end
-  local ok, t = pcall(f)
-  if ok and type(t) == "table" then return t end
-  return nil, "corrupt " .. p
-end
+local function ser0(t) return ser(t, "") end
+function M.save(dir, name, t) return M.save_slots(dir, name, t, ser0) end
+function M.load(dir, name) return M.load_slots(dir, name) end
 
 local function jstr(s)
   s = string.gsub(s, '[%c"\\]', function(c)
@@ -216,13 +230,20 @@ function M.init()
   M.mkdirs(M.ROOT .. "/CONFIG")
   M.mkdirs(M.ROOT .. "/ROLLS")
   M.mkdirs(M.ROOT .. "/LOGS")
-  M.cfg = M.parse_cfg(M.read(M.ROOT .. "/CONFIG/mfilm.cfg"))
+  M.cfg = M.parse_cfg(M.read(M.ROOT .. "/CONFIG/MFILM.CFG"))
   if M.cfg.utc_offset and string.match(M.cfg.utc_offset, "^[+-]%d%d:%d%d$") then M.utc_offset = M.cfg.utc_offset end
-  local dev = M.load_table(M.ROOT .. "/CONFIG/device.cfg")
+  local cdir = M.ROOT .. "/CONFIG"
+  local dev = M.load(cdir, "DEVICE")
   if not dev or not dev.device_id then
-    dev = {device_id = "sx510hs-" .. string.sub(M.uuid(), 1, 8), created_at = M.now_iso()}
-    M.save_table(M.ROOT .. "/CONFIG/device.cfg", dev)
-    M.log("new device id " .. dev.device_id)
+    -- 0.1.0-alpha kept it in device.cfg (written once, readable)
+    local s = M.read(cdir .. "/DEVICE.CFG")
+    local f = s and loadstring(s)
+    local ok, t = false, nil
+    if f then ok, t = pcall(f) end
+    if ok and type(t) == "table" and t.device_id then dev = t
+    else dev = {device_id = "sx510hs-" .. string.sub(M.uuid(), 1, 8), created_at = M.now_iso()} end
+    M.save(cdir, "DEVICE", dev)
+    M.log("device id " .. dev.device_id)
   end
   M.device = dev
   local problems = {}
@@ -243,7 +264,8 @@ end
 
 -- ------------------------------------------------------------------ rolls
 
-function M.roll_dir(id) return M.ROOT .. "/ROLLS/" .. id end
+-- the roll's directory: 8 upper-case hex digits (8.3), the full roll_id is inside
+function M.roll_dir(r) return M.ROOT .. "/ROLLS/" .. r.dir end
 
 function M.manifest(r)
   local frames = {}
@@ -261,44 +283,56 @@ end
 
 -- state first, then manifest: on restart the state is the truth and the
 -- manifest is regenerated from it
-function M.save_roll(r)
-  local d = M.roll_dir(r.roll_id)
-  local ok, err = M.save_table(d .. "/state.cfg", r)
-  if not ok then M.log("ERROR saving state " .. r.roll_id .. ": " .. tostring(err)) return nil, err end
-  ok, err = M.write_atomic(d .. "/manifest.json", M.manifest(r))
-  if not ok then M.log("ERROR saving manifest " .. r.roll_id .. ": " .. tostring(err)) return nil, err end
-  return true
+-- the state (two copies) is the truth; the manifest is written after it and
+-- rewritten from it on every start, so a torn manifest heals itself
+function M.write_manifest(r)
+  local ok, err = write_plain(M.roll_dir(r) .. "/MANIFEST.JSN", M.manifest(r))
+  if not ok then M.log("ERROR saving manifest " .. r.roll_id .. ": " .. tostring(err)) end
+  return ok, err
 end
 
-function M.journal(r, line) M.append(M.roll_dir(r.roll_id) .. "/journal.log", M.now_iso() .. " " .. line) end
+function M.save_roll(r)
+  local ok, err = M.save(M.roll_dir(r), "STATE", r)
+  if not ok then M.log("ERROR saving state " .. r.roll_id .. ": " .. tostring(err)) return nil, err end
+  return M.write_manifest(r)
+end
 
-function M.load_roll(id)
-  local r, err = M.load_table(M.roll_dir(id) .. "/state.cfg")
-  if not r then return nil, err end
-  M.recover(M.roll_dir(id) .. "/manifest.json")
-  if not M.exists(M.roll_dir(id) .. "/manifest.json") then M.save_roll(r) end
+function M.journal(r, line) M.append(M.roll_dir(r) .. "/JOURNAL.LOG", M.now_iso() .. " " .. line) end
+
+function M.load_roll(dir)
+  local r = M.load(M.ROOT .. "/ROLLS/" .. dir, "STATE")
+  if not r or not r.roll_id then return nil, "no state in " .. dir end
+  r.dir = dir
   return r
 end
 
 function M.active_roll()
-  local a = M.load_table(M.ROOT .. "/CONFIG/active.cfg")
-  if not a or not a.roll_id then return nil end
-  local r, err = M.load_roll(a.roll_id)
-  if not r then M.log("active roll " .. a.roll_id .. " unreadable: " .. tostring(err)) end
+  local a = M.load(M.ROOT .. "/CONFIG", "ACTIVE")
+  if not a or not a.dir then return nil end
+  local r, err = M.load_roll(a.dir)
+  if not r then M.log("active roll " .. a.dir .. " unreadable: " .. tostring(err)) return nil end
+  M.write_manifest(r)
   return r
 end
 
 function M.set_active(r)
-  M.save_table(M.ROOT .. "/CONFIG/active.cfg", {roll_id = r and r.roll_id or false})
+  M.save(M.ROOT .. "/CONFIG", "ACTIVE", {dir = r and r.dir or false})
 end
 
 function M.new_roll(film, length)
   local ok_len = false
   for _, l in ipairs(M.LENGTHS) do if l == length then ok_len = true end end
   if not ok_len then return nil, "bad length" end
-  local r = {roll_id = M.uuid(), device_id = M.device.device_id, film = film, bundle = M.cfg.profile_bundle_hash,
-             length = length, state = "LOADED", created_at = M.now_iso(), frames = {}, app = M.VERSION}
-  M.mkdirs(M.roll_dir(r.roll_id))
+  local id, dir
+  for _ = 1, 20 do
+    id = M.uuid()
+    dir = string.upper(string.sub(id, 1, 8))
+    if not M.exists(M.ROOT .. "/ROLLS/" .. dir) then break end
+  end
+  local r = {roll_id = id, dir = dir, device_id = M.device.device_id, film = film,
+             bundle = M.cfg.profile_bundle_hash, length = length, state = "LOADED", created_at = M.now_iso(),
+             frames = {}, app = M.VERSION}
+  M.mkdirs(M.roll_dir(r))
   local ok, err = M.save_roll(r)
   if not ok then return nil, err end
   M.set_active(r)
@@ -346,9 +380,11 @@ function M.list_rolls()
   local out = {}
   local names = os.listdir(M.ROOT .. "/ROLLS") or {}
   table.sort(names)
-  for _, id in ipairs(names) do
-    local r = M.load_table(M.roll_dir(id) .. "/state.cfg")
-    if r and r.roll_id then out[#out + 1] = r end
+  for _, dir in ipairs(names) do
+    if string.match(dir, "^%x%x%x%x%x%x%x%x$") then     -- 8.3 roll dirs only (0.1.0 left long names)
+      local r = M.load_roll(dir)
+      if r then out[#out + 1] = r end
+    end
   end
   table.sort(out, function(a, b) return (a.created_at or "") > (b.created_at or "") end)
   return out

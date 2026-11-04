@@ -54,9 +54,38 @@ def _check_dng_header(path: Path) -> None:
         raise ValueError("not a TIFF/DNG container")
 
 
+# the camera writes 8.3 names (MANIFEST.JSN; it cannot rename, see src/camera/app/mfroll.lua);
+# how a FAT card shows their case depends on the OS and mount options
+MANIFEST_NAMES = ("manifest.json", "manifest.jsn")
+
+
+def _child_ci(d: Path, name: str) -> Path | None:
+    p = d / name
+    if p.exists():
+        return p
+    if d.is_dir():
+        for c in d.iterdir():
+            if c.name.lower() == name.lower():
+                return c
+    return None
+
+
+def rolls_dir(card_root: Path) -> Path | None:
+    d: Path | None = Path(card_root)
+    for part in MFILM_DIR.parts:
+        d = _child_ci(d, part) if d else None
+    return d if d and d.is_dir() else None
+
+
 def find_manifests(card_root: Path) -> list[Path]:
-    base = card_root / MFILM_DIR
-    return sorted(base.glob("*/manifest.json")) if base.is_dir() else []
+    base = rolls_dir(card_root)
+    if not base:
+        return []
+    out = []
+    for roll in sorted(base.iterdir()):
+        if roll.is_dir():
+            out += [f for f in sorted(roll.iterdir()) if f.is_file() and f.name.lower() in MANIFEST_NAMES][:1]
+    return out
 
 
 def import_card(card_root: Path, store: Store, conn: sqlite3.Connection, *, dry_run: bool = False) -> list[RollResult]:
