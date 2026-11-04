@@ -494,6 +494,17 @@ local function main()
     set_config_value(CONF_SHOW_OSD, 1)
     mf.log("CHDK OSD was off: switched back on")
   end
+  -- CHDK's battery icon and percent sit at the top centre (178,0 / 178,16)
+  -- right on Canon's own battery and shots-left icons; Canon already shows
+  -- the battery, so switch CHDK's duplicate off (conf ids 104, 102)
+  if have("get_config_value") then
+    for _, id in ipairs({104, 102}) do
+      if get_config_value(id) ~= 0 then
+        set_config_value(id, 0)
+        mf.log("CHDK OSD: switched off battery " .. (id == 104 and "icon" or "percent"))
+      end
+    end
+  end
   roll = mf.active_roll()
   if roll and roll.state == "SEALED" then roll = nil end
   watcher = mf.watcher(get_image_dir())

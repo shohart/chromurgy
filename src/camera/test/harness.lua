@@ -97,7 +97,7 @@ function get_buildinfo() return {platform = "sx510hs", platsub = "101a", build_n
 hook_raw = {count = function() return shots end}
 local autostart_conf, booted = 0, false
 rec_mode = true                     -- camera starts in shooting mode
-local conf = {[1] = 1}              -- CHDK config: 1 = show_osd
+local conf = {[1] = 1, [102] = 1, [104] = 1}   -- CHDK config: 1 show_osd, 102 batt %, 104 batt icon
 function get_mode() return rec_mode, false, rec_mode and 1 or 0 end
 function set_record(v) rec_mode = (v == 1 or v == true) end
 function get_config_value(id) return conf[id] end
@@ -225,6 +225,8 @@ while true do
             log(string.format("FAIL: rec=%s osd=%s, expected rec=%s osd=%s", tostring(rec_mode), tostring(conf[1]),
                 tostring(want_rec), tostring(want_osd))) os.exit(1)
           end
+        elseif k == "expect_conf" then
+          if conf[s[2]] ~= s[3] then log("FAIL: conf " .. s[2] .. " = " .. tostring(conf[s[2]]) .. ", expected " .. s[3]) os.exit(1) end
         elseif k == "expect_autostart" then
           if autostart_conf ~= s[2] then log("FAIL: autostart is " .. autostart_conf .. ", expected " .. s[2]) os.exit(1) end
         elseif k == "expect_exit" then log("FAIL: app still running at expect_exit") os.exit(1)

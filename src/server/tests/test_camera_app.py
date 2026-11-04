@@ -173,3 +173,7 @@ def test_menu_in_playback_with_chdk_osd_off_then_restored(card):
                ("expect_state", True, 1), ("expect", "Portra400 0/12")] + shots(1)
         + [("playback",), ("wait", 900), ("expect_state", False, 0), ("key", "shoot_half"), ("wait", 600),
            ("expect_state", True, 1)])
+
+
+def test_chdk_battery_osd_switched_off(card):
+    run(card, [("wait", 1200), ("expect_conf", 104, 0), ("expect_conf", 102, 0)])
