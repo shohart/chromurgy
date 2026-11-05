@@ -31,7 +31,15 @@ static void *h_alloc(size_t n)
     return p + 1;
 }
 static void h_release(void *q) { size_t *p = (size_t *) q - 1; cur -= (long) *p; free(p); }
-static long h_tick(void) { return (long) (clock() * 1000.0 / CLOCKS_PER_SEC); }
+/* with MFDEV_CANCEL_AT the clock runs fast (40 ms a call), so the developer
+ * yields often and the stop lands where the test asks (it yields by time) */
+static int fast_clock;
+static long fake_ms;
+static long h_tick(void)
+{
+    if (fast_clock) return fake_ms += 40;
+    return (long) (clock() * 1000.0 / CLOCKS_PER_SEC);
+}
 static int cancel_limit = -1;
 static volatile int *cancel_flag, *progress_seen;
 static void h_yield(void) { if (cancel_flag && *progress_seen >= cancel_limit) *cancel_flag = 1; }
@@ -58,7 +66,7 @@ int main(int argc, char **argv)
                    .out_w = look.width, .out_h = look.height, .quality = 90, .hash = 1, .progress = &prog,
                    .cancel = &cancel};
     mfd_result res;
-    if (cancel_at) { cancel_limit = atoi(cancel_at); cancel_flag = &cancel; progress_seen = &prog; }
+    if (cancel_at) { cancel_limit = atoi(cancel_at); cancel_flag = &cancel; progress_seen = &prog; fast_clock = 1; }
     rc = mfd_develop(&env, &job, &res);
     printf("rc=%d progress=%d w=%d h=%d focal_q8=%d scanner_ev_q16=%d ms_total=%ld mem_peak=%ld ring_rows=%u "
            "jpeg_bytes=%u ms_dng_io=%ld ms_bin=%ld ms_lens=%ld ms_scan=%ld ms_glow=%ld ms_render=%ld ms_tmp_io=%ld "
