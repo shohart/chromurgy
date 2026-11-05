@@ -9,6 +9,21 @@ Branch `web-darkroom`. Camera code is untouched. Shared files changed additively
     mfilm-web --port 8766                      # UI at /darkroom
     mfilmctl worker --watch --interval 5       # develops queued web items and camera rolls
 
+## Tests
+`ci/check.sh` runs everything (fresh venv, so it also proves packaging: the `mfilm-web` script and `static/`).
+Real RAW fixtures are not in git. Without them the RAW tests skip (silently, `-rs` shows why):
+
+    scp octopusreborn:/mnt/theVault/RAW_LIB/photos/10.11.2015/DSC_0174.NEF ~/fixtures/   # Nikon D5100 NEF
+    export MFILM_TEST_NEF=~/fixtures/DSC_0174.NEF                                       # CHDK DNGs default to theVault/Archives/roshal_old_photos/mfilm_calibration
+    # from a worktree whose build/ is missing: MFILM_CORE_LIB=<main checkout>/build/src/shared/film_core/libmf_core.so PYTHONPATH=src/server:src/server/tests
+
+## Deploy (octopusreborn, not done)
+Migrations 5 and 6 are taken by this branch (user_version 6): the camera branch must use 7+.
+After merging: update the service checkout (`deploy/update-user.sh`, empty queue only), **reinstall the venv's
+package** so the `mfilm-web` entry point and `static/` exist (`uv pip install -e src/server`), `mfilmctl web-passwd`,
+install `deploy/systemd/user/mfilm-web.service`. The worker polls every 30 s, so a web job starts up to 30 s late;
+lower `--interval` if that matters. Never point a dev run at /mnt/theVault/mfilm.
+
 ## Work packages
 | WP | State | Evidence |
 |---|---|---|
