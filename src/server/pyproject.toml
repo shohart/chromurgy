@@ -15,13 +15,17 @@ calib = ["scipy>=1.11", "opencv-python-headless>=4.8"]   # tools/fit_lens.py onl
 mfilmctl = "mfilm_server.cli:main"
 mfilm-develop = "mfilm_server.develop:main"
 mfilm-receiver = "mfilm_server.api:main"
+mfilm-web = "mfilm_server.darkroom.app:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["mfilm_server"]
+packages = ["mfilm_server", "mfilm_server.darkroom"]
+
+[tool.setuptools.package-data]
+"mfilm_server.darkroom" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

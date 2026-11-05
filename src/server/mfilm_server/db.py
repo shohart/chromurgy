@@ -139,6 +139,43 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE uploads ADD COLUMN meta TEXT
     """,
+    # 5: Web Darkroom (docs/web/30). Additive only: a web batch is NOT a camera roll, so none of the
+    # camera tables (CHECKs on ordinal/roll_length/asset kind, FKs to frames) is touched or reused.
+    """
+    CREATE TABLE sources (
+        id           TEXT PRIMARY KEY,
+        sha256       TEXT NOT NULL CHECK (length(sha256) = 64),
+        origin       TEXT NOT NULL CHECK (origin IN ('upload', 'photoprism', 'camera_roll')),
+        filename     TEXT NOT NULL,
+        format       TEXT NOT NULL,
+        bytes        INTEGER NOT NULL,
+        path         TEXT NOT NULL,
+        eligible     INTEGER NOT NULL DEFAULT 1,
+        reason       TEXT,
+        meta         TEXT NOT NULL DEFAULT '{}',
+        provenance   TEXT NOT NULL DEFAULT '{}',
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE INDEX sources_sha ON sources(sha256);
+    CREATE TABLE web_uploads (
+        id               TEXT PRIMARY KEY,
+        filename         TEXT NOT NULL,
+        declared_bytes   INTEGER NOT NULL,
+        declared_sha256  TEXT,
+        offset_bytes     INTEGER NOT NULL DEFAULT 0,
+        state            TEXT NOT NULL CHECK (state IN ('OPEN', 'COMPLETE', 'ABORTED')),
+        source_id        TEXT,
+        error_code       TEXT,
+        created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE TABLE web_sessions (
+        token_sha256 TEXT PRIMARY KEY CHECK (length(token_sha256) = 64),
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        expires_at   TEXT NOT NULL,
+        revoked_at   TEXT
+    )
+    """,
 ]
 
 

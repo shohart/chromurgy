@@ -283,6 +283,24 @@ def cmd_device_revoke(args) -> int:
     return 0
 
 
+def cmd_web_passwd(args) -> int:
+    import getpass
+
+    from .darkroom import auth
+    store, _ = _open(args.data_dir, args.cfg)
+    pw = os.environ.get("MFILM_WEB_PASSWORD") or getpass.getpass("Web Darkroom password: ")
+    if not os.environ.get("MFILM_WEB_PASSWORD") and getpass.getpass("Again: ") != pw:
+        print("passwords differ", file=sys.stderr)
+        return 1
+    try:
+        auth.set_password(store, pw)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(f"Web Darkroom password set ({store.root / 'web' / 'auth.json'})")
+    return 0
+
+
 def cmd_camera_card(args) -> int:
     from .camera_card import write_card
     for p in write_card(Path(args.out), utc_offset=args.utc_offset, bench=args.bench, chdk=args.chdk):
@@ -389,6 +407,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--mirror", help="local mirror of the card (default <data_dir>/camera-mirror/<host|usb>)")
     s.add_argument("--run", action="store_true", help="then develop and publish (like mfilmctl worker)")
     s.set_defaults(fn=cmd_camera_sync)
+    sub.add_parser("web-passwd", parents=[common],
+                   help="set the operator password of the Web Darkroom (mfilm-web)").set_defaults(fn=cmd_web_passwd)
     s = sub.add_parser("camera-card", parents=[common], help="lay out the M-Film camera app files to copy onto a CHDK card")
     s.add_argument("out")
     s.add_argument("--utc-offset", help="camera clock offset, e.g. +02:00 (default: this host's)")

@@ -11,7 +11,8 @@ EXAMPLE = core.REPO / "contracts" / "v0.5" / "render-recipe-v2.example.json"
 
 @pytest.fixture(scope="module")
 def bundle():
-    return core.Bundle()
+    from mfilm_server.darkroom import engine
+    return engine.current_bundle()
 
 
 def example():
