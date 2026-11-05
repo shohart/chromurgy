@@ -5,6 +5,7 @@ A separate app from the camera receiver (mfilm-receiver): different port, a
 different credential (operator login, not device tokens), same store/catalog."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -19,7 +20,7 @@ from .. import config as config_mod
 from .. import core, db
 from ..bundles import Bundles
 from ..store import Store, UnsafePath, safe_id
-from . import auth, catalog, engine, recipe2, sources
+from . import auth, catalog, engine, preview, recipe2, sources
 
 API = "/api/v1/darkroom"
 COOKIE = "mfilm_session"
@@ -39,7 +40,14 @@ class ApiError(Exception):
 def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
     store.init()
     cfg = cfg or config_mod.Config()
-    app = FastAPI(title="M-Film Web Darkroom", version="0.5-draft", docs_url=None, redoc_url=None)
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        yield
+        if "l" in lane:
+            lane["l"].close()
+
+    lane: dict[str, preview.PreviewLane] = {}
+    app = FastAPI(title="M-Film Web Darkroom", version="0.5-draft", docs_url=None, redoc_url=None, lifespan=lifespan)
     c0 = db.connect(store.db_path)
     db.migrate(c0)
     c0.close()
@@ -49,6 +57,11 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
     except core.CoreError:
         pass
     app.state.store, app.state.cfg = store, cfg
+    def get_lane() -> preview.PreviewLane:          # started on first use: spawning costs a process
+        if "l" not in lane:
+            lane["l"] = preview.PreviewLane(workers=int(os.environ.get("MFILM_WEB_PREVIEW_WORKERS", "1")))
+        return lane["l"]
+
 
     def conn() -> sqlite3.Connection:
         c = db.connect(store.db_path, threads=True)
@@ -271,6 +284,79 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
                          "LIMIT ?2 OFFSET ?3", (origin, count, max(0, offset))).fetchall()
         total = c.execute("SELECT count(*) FROM sources WHERE (?1 IS NULL OR origin=?1)", (origin,)).fetchone()[0]
         return {"total": total, "items": [sources.row_public(r) for r in rows]}
+
+    # ---- previews (docs/web/31) ----------------------------------------------------------------
+    def source_row(c, asset_id: str) -> sqlite3.Row:
+        row = c.execute("SELECT * FROM sources WHERE id=?", (asset_id,)).fetchone()
+        if not row:
+            raise ApiError(404, "UNKNOWN_ASSET", asset_id)
+        if not row["eligible"]:
+            raise ApiError(422, "ASSET_NOT_ELIGIBLE", row["reason"] or "")
+        return row
+
+    @app.get(f"{API}/sources/{{asset_id}}")
+    def get_source(asset_id: str, _t: str = Depends(session), c=Depends(conn)):
+        try:
+            safe_id(asset_id, "asset_id")
+        except UnsafePath:
+            raise ApiError(404, "UNKNOWN_ASSET", "") from None
+        row = c.execute("SELECT * FROM sources WHERE id=?", (asset_id,)).fetchone()
+        if not row:
+            raise ApiError(404, "UNKNOWN_ASSET", asset_id)
+        return sources.row_public(row)
+
+    @app.post(f"{API}/previews", status_code=202)
+    async def create_preview(request: Request, _t: str = Depends(session), c=Depends(conn)):
+        try:
+            body = json.loads(await request.body())
+            asset_id, kind = str(body["asset_id"]), body.get("kind", "treated")
+            max_edge = int(body.get("max_edge", 1280))
+            stream = str(body.get("stream") or "default")[:64]
+        except (ValueError, KeyError, TypeError):
+            raise ApiError(400, "BAD_REQUEST", "asset_id and recipe required") from None
+        if kind not in ("treated", "before") or not 320 <= max_edge <= 2048:
+            raise ApiError(422, "INVALID_REQUEST", "kind: treated|before, max_edge: 320..2048")
+        row = source_row(c, asset_id)
+        b = bundle()
+        v2 = v1 = None
+        if kind == "treated":
+            try:
+                v2 = recipe2.normalize(body.get("recipe"), b)
+            except recipe2.RecipeError as e:
+                raise ApiError(422, e.code, e.detail) from None
+            v1 = recipe2.to_v1(v2)
+        rhash = recipe2.recipe_hash(v2) if v2 else "before"
+        key = preview.preview_key(sha=row["sha256"], kind=kind, recipe_hash=rhash, max_edge=max_edge,
+                                  bundle_hash=b.sha256)
+        meta = json.loads(row["meta"])
+        job = {"root": str(store.root), "src_path": str(store.root / row["path"]), "sha": row["sha256"], "kind": kind,
+               "v1": v1, "max_edge": max_edge, "key": key, "recipe_hash": rhash,
+               "wb": preview.wb_mode(v2) if v2 else "daylight", "captured_at": meta.get("captured_at"),
+               "seed_ids": ("web", "web", row["sha256"])}
+        get_lane().submit(job, f"{stream}:{kind}")
+        return {"preview_id": key, "recipe_hash": rhash, "status_url": f"{API}/previews/{key}",
+                "image_url": f"{API}/previews/{key}/image", **get_lane().status(store.root, key)}
+
+    def preview_key_ok(pid: str) -> str:
+        if len(pid) != 64 or any(ch not in "0123456789abcdef" for ch in pid):
+            raise ApiError(404, "UNKNOWN_PREVIEW", "")
+        return pid
+
+    @app.get(f"{API}/previews/{{preview_id}}")
+    def preview_status(preview_id: str, _t: str = Depends(session)):
+        key = preview_key_ok(preview_id)
+        st = get_lane().status(store.root, key)
+        if st["status"] == "UNKNOWN":
+            raise ApiError(404, "UNKNOWN_PREVIEW", key)
+        return {"preview_id": key, **st}
+
+    @app.get(f"{API}/previews/{{preview_id}}/image")
+    def preview_image(preview_id: str, _t: str = Depends(session)):
+        key = preview_key_ok(preview_id)
+        f = store.root / "web-previews" / "img" / f"{key}.jpg"
+        if not f.is_file():
+            raise ApiError(404, "PREVIEW_NOT_READY", key)
+        return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
     return app
 

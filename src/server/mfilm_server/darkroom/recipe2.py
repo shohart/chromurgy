@@ -85,6 +85,9 @@ def normalize(recipe: dict, bundle: core.Bundle) -> dict:
     rd = r["render"]
     if rd["output_format"] != "jpeg" or rd["output_color_space"] != "srgb":
         raise RecipeError("UNSUPPORTED_OUTPUT", f"{rd['output_format']}/{rd['output_color_space']}: only jpeg/srgb")
+    wb = (r.get("extensions") or {}).get("white_balance", "daylight")
+    if wb not in ("daylight", "as-shot"):
+        raise RecipeError("INVALID_RECIPE", f"extensions.white_balance={wb!r}: use daylight or as-shot")
     if bool(rd.get("width")) != bool(rd.get("height")):
         raise RecipeError("INVALID_RECIPE", "render.width and render.height go together")
     return r
@@ -106,7 +109,7 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
     return {"schema_version": 1, "recipe_id": f"web2-{h[:16]}", "film_profile_id": r["film"]["id"],
             "profile_bundle_hash": r["film"]["bundle_hash"], "film_core_abi_version": core.abi_version(),
             "input_normalization_version": INPUT_NORMALIZATION,
-            "white_balance_mode": "daylight", "demosaic_mode": "reference", "exposure_compensation_ev": 0.0,
+            "white_balance_mode": (r.get("extensions") or {}).get("white_balance", "daylight"), "demosaic_mode": "reference", "exposure_compensation_ev": 0.0,
             "grain_seed_mode": "derived-per-frame", "user_seed": int(r["seed"]),
             "look_controls": {k: r["film"][k] for k in ("grain_scale", "halation_scale", "softness_scale")},
             "output_spec": {"format": "image/jpeg", "colorspace": "sRGB", "width": width, "height": height,
