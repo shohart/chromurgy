@@ -17,8 +17,11 @@ static int h_seek(void *f, long o) { return fseek(f, o, SEEK_SET); }
 static void h_close(void *f) { fclose(f); }
 static int h_remove(const char *p) { return remove(p); }
 static long peak, cur;
+/* camera-like heap limits (tests): MFDEV_HEAP=total,largest in bytes */
+static long heap_total = -1, heap_largest = -1;
 static void *h_alloc(size_t n)
 {
+    if (heap_largest >= 0 && ((long) n > heap_largest || cur + (long) n > heap_total)) return 0;
     size_t *p = malloc(n + sizeof(size_t));
     if (!p) return 0;
     *p = n, cur += (long) n;
@@ -36,6 +39,8 @@ static void h_yield(void) { if (cancel_flag && *progress_seen >= cancel_limit) *
 int main(int argc, char **argv)
 {
     if (argc < 7) { fprintf(stderr, "usage: mfdev_host MFCAM.BIN MFDEV.BIN FILM SEED_HEX IN.DNG OUT.JPG [OUT.MFV]\n"); return 2; }
+    const char *hl = getenv("MFDEV_HEAP");
+    if (hl && sscanf(hl, "%ld,%ld", &heap_total, &heap_largest) != 2) heap_total = heap_largest = -1;
     mfd_env env = {h_open, h_read, h_write, h_seek, h_close, h_remove, h_alloc, h_release, h_tick, h_yield};
     static mfd_camera cam;
     static mf_table table;

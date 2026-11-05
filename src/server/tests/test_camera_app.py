@@ -349,3 +349,16 @@ def test_app_conf_ids_match_chdk_161():
     src = (APP / "MFILM.LUA").read_text()
     table = dict(re.findall(r"(\w+) = (\d{4})", src[src.index("local CONF = {"):src.index("local CONF_SHOW_OSD")]))
     assert {k: int(v) for k, v in table.items()} == ids
+
+
+def test_fuzz_walks_all_screens_without_flicker():
+    # tools/fuzz_camera_app.py: random walks with Canon flipping/erasing the
+    # overlay, power cuts, developing and the viewer (a few seeds here; run the
+    # tool for hundreds)
+    import sys as _sys
+    _sys.path.insert(0, str(REPO / "tools"))
+    import fuzz_camera_app as fz
+    for seed in (101, 202, 303):
+        r = fz.run_one((seed, 120, None))
+        assert not r["problems"], (seed, r["problems"], r["log"][-600:])
+        assert r.get("flip", 0) == 0

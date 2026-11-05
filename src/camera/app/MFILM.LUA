@@ -33,6 +33,13 @@ local boot_alive = function() end                -- crash-loop guard heartbeat (
 
 local function have(name) return type(_G[name]) == "function" end
 
+-- after drawing outside the menu painter (animations, captions): copy the
+-- overlay buffer just drawn into the other one (M-Film CHDK build), so a
+-- buffer flip by Canon cannot show a half-old picture
+local function overlay_commit()
+  if have("mf_overlay_mirror") then mf_overlay_mirror() end
+end
+
 local function shot_count()
   if type(hook_raw) == "table" and type(hook_raw.count) == "function" then return hook_raw.count() end
   if have("get_exp_count") then return get_exp_count() end
@@ -149,6 +156,7 @@ local function anim_load(key, n)
     box(0, y - 4, W - 1, y + 19, CC.black)
     canister(x - 18, y, key)
     strip(x, y + 2, W - 40, n, 0)
+    overlay_commit()
     sleep(40)
   end
 end
@@ -276,7 +284,9 @@ local function screen(...)
     local b = active_buffer()
     if b ~= 9 and not samples_ok(b) then caches[b] = {} end
     drawn = caches[b]
-    local full = b == 9 and get_tick_count() - last_full >= 300
+    -- untracked: full repaint every 300 ms; tracked: every 1 s as well (same
+    -- pixels, no flicker), in case an erase slipped past the sampled bytes
+    local full = get_tick_count() - last_full >= (b == 9 and 300 or 1000)
     if full then last_full = get_tick_count() end
     painted = false
     paint(full, ...)
@@ -491,12 +501,25 @@ end
 -- makes the overlay transparent, so Canon's own gallery is never seen. Needs
 -- the M-Film CHDK build (mf_show, mf_overlay_clear in its Lua module).
 local function caption_row(text_, painted)
-  -- one opaque text row at the bottom, in whichever overlay buffer is active
-  local b = active_buffer()
+  -- one opaque text row at the bottom. Redrawn every 250 ms even when
+  -- unchanged (same pixels): Canon may erase the overlay at any time and the
+  -- viewer has no other way to notice (fuzz: a caption gone for a second)
   local k = text_ or ""
-  if painted[b] == k and b ~= 9 then return end
+  local off = (H - FH / 2) * BITMAP_W + 40         -- a byte inside the caption row
+  local intact = true
+  intact = get_tick_count() - (painted.t or 0) < 250  -- repaint (same pixels) at least every 250 ms
+  if intact and fb and text_ then
+    local b = active_buffer()
+    intact = b ~= 9 and painted.sample == peek(fb.base[b] + off, 1)
+  end
+  if painted.k == k and intact then return end
   if text_ then text(0, H / FH - 1, pad(" " .. text_), C.fg, C.bg) end
-  painted[b] = k
+  painted.k, painted.t = k, get_tick_count()
+  overlay_commit()
+  if fb and text_ then
+    local b = active_buffer()
+    if b ~= 9 then painted.sample = peek(fb.base[b] + off, 1) end
+  end
 end
 
 local function viewer(title, frames, start)

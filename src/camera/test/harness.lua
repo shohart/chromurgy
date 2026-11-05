@@ -28,6 +28,18 @@
 --   {"canon_playback"}     the owner switches the camera to Canon's playback
 --   {"expect_shown", pat}  the last frame the viewer showed matches pat
 --   {"expect_rec", bool}   shooting (true) or playback (false) mode
+--   {"chaos", seed, flips_per_s, erases_per_s}  Canon flips / erases the overlay
+--                          at random moments from now on (0, 0: off)
+--   {"heap", free, largest} the camera's free heap (the developer needs a big block)
+--   {"open_menu"}          press Playback if the M-Film menu is not up
+--   {"fuzz"}               random walks: keys while shooting go to Canon, a quit app is started again
+--   {"expect_glitches", max_flip, max_erase_ms}  display model, see below
+-- Display model: at every yield the app has finished a pass, so the active
+-- overlay buffer is what it means to show. Canon's events then happen; if the
+-- buffer the screen shows differs from it, that is a visible glitch (flicker)
+-- until the app's next pass. Counted while the app is in ALT mode (menus,
+-- viewer, developer), split by cause; printed at the end as
+-- "glitches: flip N, erase N, longest N ms".
 -- Exit status 0 = scenario passed.
 
 local app_dir, scen_path = arg[1], arg[2]
@@ -39,6 +51,8 @@ local drawn = {}
 local image_dir = "A/DCIM/101___01"
 local file_no = 100
 local exited = false
+titles = {}                                 -- screens seen (row 0 text), for fuzz coverage
+fuzz = false                                -- {"fuzz"}: keys in shooting mode go to Canon; quit -> start again
 local expect_deadline = nil
 
 local function log(s) io.stderr:write(s, "\n") end
@@ -69,6 +83,11 @@ local dl = drawlog and io.open(drawlog, "wb")
 local function dlog(s) if dl then dl:write(s, "\n") end end
 
 function get_tick_count() return clock end
+-- camera time from the harness clock, so runs replay exactly (uuid seeds, dates)
+local raw_time, raw_date = os.time, os.date
+local EPOCH = raw_time({year = 2026, month = 11, day = 5, hour = 10, min = 0, sec = 0})
+os.time = function(t) if t then return raw_time(t) end return EPOCH + clock / 1000 end
+os.date = function(f, t) return raw_date(f, t or os.time()) end
 function sleep(ms) coroutine.yield("sleep", ms) end
 function wait_click(ms) pressed_key = nil; coroutine.yield("wait", ms or 0) end
 function is_key(k) return pressed_key == k end
@@ -96,10 +115,65 @@ end
 local function fb_row_text(b, r)
   local row, xs, t = fbuf[b][r], {}, {}
   if not row then return "" end
-  for x in pairs(row) do xs[#xs + 1] = x end
+  for x in pairs(row) do xs[#xs + 1] = tostring(x) end
   table.sort(xs)
-  for _, x in ipairs(xs) do t[#t + 1] = x .. ":" .. row[x] end
+  for _, x in ipairs(xs) do t[#t + 1] = x .. ":" .. (row[x] or row[tonumber(x)]) end
   return table.concat(t, "|")
+end
+local function fb_sig(b)
+  local t = {}
+  for r = 0, 14 do t[#t + 1] = fb_row_text(b, r) end
+  return table.concat(t, "\n")
+end
+local rng = 12345
+-- CHDK's Lua numbers are 32-bit integers: the generator must not overflow
+-- (a classic 1103515245 LCG did, went negative and fired on every tick)
+local function lcg()
+  rng = (rng * 75 + 74) % 65537             -- ZX81 generator: rng * 75 < 2^31
+  return rng
+end
+local function rnd(n)                       -- 30 bits from two draws
+  return ((lcg() % 32768) * 32768 + lcg() % 32768) % n
+end
+local chaos = {flips = 0, erases = 0}       -- events per second
+local glitch = {flip = 0, erase = 0, longest = 0, since = nil, cause = nil}
+splash_at = nil                             -- clock when CHDK's splash ends (erases the overlay)
+heap = {free = 968000, largest = 964000}
+transition_until = 0                        -- Canon redraws its whole screen after a mode switch / DISP
+local function display_tick(dt)
+  if not alt or clock < transition_until then glitch.since = nil; return end
+  local meant = fb_sig(fb_active)
+  local cause = nil
+  if splash_at and clock >= splash_at then
+    splash_at = nil
+    fbuf = {[0] = {}, [1] = {}}
+    cause = "erase"
+  end
+  local p = dt * 1000                       -- per-mille chance scaled by elapsed ms
+  if chaos.flips > 0 and rnd(1000000) < chaos.flips * p then fb_active = 1 - fb_active; cause = cause or "flip" end
+  if chaos.erases > 0 and rnd(1000000) < chaos.erases * p then fbuf[fb_active] = {}; cause = "erase" end
+  if cause and os.getenv("MFILM_CHAOS_LOG") then
+    log(string.format("chaos %s at %d dt %d active %d differs %s", cause, clock, dt, fb_active, tostring(fb_sig(fb_active) ~= meant)))
+  end
+  if cause and not glitch.since and fb_sig(fb_active) ~= meant then
+    glitch[cause] = glitch[cause] + 1
+    -- the event happened at some moment of the wait just ended: count it from its start
+    glitch.since, glitch.cause, glitch.sig = clock - dt, cause, fb_sig(fb_active)
+    glitch.where = app_co and string.gsub(debug.traceback(app_co, "", 1), "\n%s*", " | ") or nil
+  end
+end
+local function glitch_close()
+  -- after the app's pass: the glitch lasts until the app has changed what is shown
+  if glitch.since and fb_sig(fb_active) ~= glitch.sig then
+    local d = clock - glitch.since
+    if d > glitch.longest then glitch.longest = d end
+    if (d > 150 or glitch.cause == "flip") and os.getenv("MFILM_GLITCH_LOG") then
+      log(string.format("glitch %s %d ms at %d, screen: %s / %s", glitch.cause, d, clock,
+                        tostring(drawn[#drawn - 1]), tostring(drawn[#drawn])))
+      if glitch.where then log("  app was at: " .. glitch.where) end
+    end
+    glitch.since = nil
+  end
 end
 function peek(addr, size)
   size = size or 4
@@ -111,7 +185,7 @@ function peek(addr, size)
     if size == 1 and off > 0 and off < 960 * 270 then
       local t, sum = fb_row_text(b, off / 960 / 16), 0
       for k = 1, string.len(t) do sum = (sum * 31 + string.byte(t, k)) % 251 end
-      return sum
+      return t == "" and 0 or sum + 1           -- an erased row (transparent) reads 0, a drawn one never
     end
   end
   error(string.format("peek at unexpected address %x size %d", addr, size), 2)
@@ -126,6 +200,10 @@ function draw_string(x, y, s, fg, bg, scale)
   -- Canon's icons collided with it and it flickered (alpha 0.1.0-0.1.7)
   if alt and rec_mode and props[105] == 0 then error("menu text drawn over Canon's information display: " .. s, 2) end
   drawn[#drawn + 1] = s
+  if x == 0 and y == 0 then
+    local t = string.match(s, "^%s*(%a[%a ]-)%s*[%d(]") or string.match(s, "^%s*(.-)%s*$")
+    titles[t] = (titles[t] or 0) + 1
+  end
   fb_draw(x, y, sc, s)
   dlog(string.format("S %d %d %d %d %d %s", x, y, sc, fg or 258, bg or 257, s))
 end
@@ -134,7 +212,18 @@ local function check_rect(x1, y1, x2, y2)
     error(string.format("off-screen rect %d,%d-%d,%d", x1, y1, x2, y2), 3)
   end
 end
-function draw_rect_filled(x1, y1, x2, y2, c1, c2) check_rect(x1, y1, x2, y2); dlog(string.format("R %d %d %d %d %d", x1, y1, x2, y2, c2 or c1)) end
+function draw_rect_filled(x1, y1, x2, y2, c1, c2)
+  check_rect(x1, y1, x2, y2)
+  if alt and rec_mode and props[105] == 0 then error("menu graphics drawn over Canon's information display", 2) end
+  -- rows hold rects keyed by their origin, next to the text drawn there
+  local k = string.format("r%d.%d", x1, y1)
+  for r = y1 / 16, y2 / 16 do
+    local row = fbuf[fb_active][r]
+    if not row then row = {}; fbuf[fb_active][r] = row end
+    row[k] = string.format("%d,%d,%d", x2, y2, c2 or c1)
+  end
+  dlog(string.format("R %d %d %d %d %d", x1, y1, x2, y2, c2 or c1))
+end
 function draw_rect(x1, y1, x2, y2) check_rect(x1, y1, x2, y2) end
 function draw_clear() drawn[#drawn + 1] = "<clear>"; fbuf = {[0] = {}, [1] = {}}; dlog("C") end
 function set_draw_title_line(on) title_line = on end
@@ -175,6 +264,7 @@ function mf_dev_start(camf, devf, film, dng, jpg, mfv, tmp, hi, lo)
     local f = io.open(p, "rb"); if not f then return nil, "bad arguments" end; f:close()
   end
   dev_job = {state = "running", t0 = clock, dng = dng, jpg = jpg, mfv = mfv, film = film, rc = 0}
+  if heap.largest < 240000 or heap.free < 640000 then dev_job.state, dev_job.rc = "error", -22 end
   dev_log[#dev_log + 1] = dng .. " " .. film .. " " .. tostring(hi) .. "/" .. tostring(lo)
   local f = io.open(dng, "rb")
   if not f then dev_job.state, dev_job.rc = "error", -20 else f:close() end
@@ -210,14 +300,14 @@ function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; dlog("C"); return true 
 function get_prop(id) return props[id] end
 function set_prop(id, v) props[id] = v end
 function click(k)
-  if k == "display" and rec_mode then props[105] = (props[105] + 1) % disp_modes end
+  if k == "display" and rec_mode then props[105] = (props[105] + 1) % disp_modes; transition_until = clock + 600 end
   coroutine.yield("sleep", 10)
 end
 -- CHDK config (new ids, CONF_OSD 2000 + osd id); an id below 1000 is an OLD id
 -- the camera would remap to some other setting: the stub refuses those
 local conf = {[2001] = 1, [2102] = 1, [2104] = 1, [2080] = 2, [2220] = 1, [2200] = 1, [2201] = 1, [2182] = 1, [2183] = 1, [2120] = 1}
 function get_mode() return rec_mode, false, rec_mode and 1 or 0 end
-function set_record(v) rec_mode = (v == 1 or v == true) end
+function set_record(v) rec_mode = (v == 1 or v == true); transition_until = clock + 1500 end
 function get_config_value(id)
   if id < 1000 then error("old CHDK config id " .. id .. " (remapped by conf_migrate)", 2) end
   return conf[id]
@@ -263,6 +353,7 @@ os.rename = function(a, b) error("os.rename is not used on the camera (refuses t
 
 local function new_app()
   local chunk = assert(loadfile(app_dir .. "/MFILM.LUA"))
+  if conf[2120] == 1 then splash_at = clock + 2500 end   -- CHDK's splash ends and is erased
   package.loaded["mfroll"] = nil
   alt = true                                   -- CHDK starts scripts in ALT mode
   return coroutine.create(chunk)
@@ -275,6 +366,7 @@ for _, n in ipairs(os.listdir(image_dir) or {}) do
 end
 
 local co = new_app()
+app_co = co
 local i, pending, guard = 1, 0, 0
 
 local function step_shoot(o)
@@ -298,9 +390,11 @@ while true do
     exited = true
     local s = steps[i]
     if not s then break end
-    if s[1] == "restart" or s[1] == "boot" then
+    if fuzz and s[1] ~= "restart" and s[1] ~= "boot" then
+      co = new_app(); exited = false; app_co = co  -- the owner starts M-Film again
+    elseif s[1] == "restart" or s[1] == "boot" then
       booted = s[1] == "boot" and autostart_conf == 1   -- power-on with CHDK autostart
-      i = i + 1; co = new_app(); exited = false
+      i = i + 1; co = new_app(); exited = false; app_co = co
     elseif s[1] == "expect_exit" then i = i + 1; expect_deadline = nil
     elseif s[1] == "expect_prop" then              -- what the app left behind
       if props[s[2]] ~= s[3] then log("FAIL: prop " .. s[2] .. " = " .. tostring(props[s[2]]) .. " after exit, expected " .. s[3]) os.exit(1) end
@@ -310,7 +404,10 @@ while true do
     local ok, kind, ms = coroutine.resume(co)
     if not ok then log("FAIL: app error: " .. tostring(kind)) os.exit(1) end
     if coroutine.status(co) ~= "dead" then
-      clock = clock + ((kind == "sleep" or kind == "wait") and math.max(ms or 0, 10) or 10)
+      local dt = ((kind == "sleep" or kind == "wait") and math.max(ms or 0, 10) or 10)
+      glitch_close()
+      clock = clock + dt
+      display_tick(dt)
       if pending > 0 then
         pending = pending - (ms or 10)
       else
@@ -319,12 +416,13 @@ while true do
         i = i + 1
         local k = s[1]
         if k == "key" and kind ~= "wait" then        -- keys reach the app only when it waits for one
-          i = i - 1
-          k = "-"
+          if not alt and fuzz then k = "-"            -- shooting: the key went to Canon
+          else i = i - 1; k = "-" end
         end
         if k == "-" then
         elseif k == "key" then pressed_key = s[2]
         elseif k == "playback" then alt = not alt
+        elseif k == "open_menu" then alt = true            -- Playback pressed only if the menu is not up
         elseif k == "shoot" then step_shoot(s[2])
         elseif k == "wait" then pending = s[2]
         elseif k == "setdir" then image_dir = s[2]
@@ -353,6 +451,15 @@ while true do
                 tostring(want_rec), tostring(want_osd))) os.exit(1)
           end
         elseif k == "flip" then fb_active = 1 - fb_active
+        elseif k == "chaos" then rng, chaos.flips, chaos.erases = s[2] % 65537, s[3], s[4]
+        elseif k == "fuzz" then fuzz = true
+        elseif k == "heap" then heap.free, heap.largest = s[2], s[3]
+        elseif k == "expect_glitches" then
+          glitch_close()
+          if glitch.flip > s[2] or glitch.longest > s[3] then
+            log(string.format("FAIL: step %d: glitches flip %d (max %d), erase %d, longest %d ms (max %d)", i - 1,
+                glitch.flip, s[2], glitch.erase, glitch.longest, s[3])) os.exit(1)
+          end
         elseif k == "stock_chdk" then
           mf_show, mf_overlay_clear, mf_viewport, mf_dev_start, mf_overlay_mirror = nil, nil, nil, nil, nil
         elseif k == "canon_playback" then rec_mode = false     -- the owner opens Canon's gallery
@@ -394,4 +501,13 @@ while true do
     end
   end
 end
-print("harness: OK, " .. shots .. " shot(s), " .. (i - 1) .. " step(s)")
+glitch_close()
+print(string.format("harness: OK, %d shot(s), %d step(s); glitches: flip %d, erase %d, longest %d ms", shots, i - 1,
+                    glitch.flip, glitch.erase, glitch.longest))
+local tl = {}
+for t, n in pairs(titles) do tl[#tl + 1] = t end
+table.sort(tl)
+-- io.write: CHDK hostlua's print truncates long lines
+io.write("screens: ")
+for _, t in ipairs(tl) do io.write(t, "; ") end
+io.write(string.format("viewer frames %d; developed %d\n", #shown_frames, #dev_log))

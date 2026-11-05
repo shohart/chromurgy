@@ -100,10 +100,11 @@ def files(tmp_path_factory):
     return d
 
 
-def develop(files, dng, film="portra400", cancel_at=None):
+def develop(files, dng, film="portra400", cancel_at=None, heap=None):
     import os
     jpg, mfv = dng.with_suffix(".jpg"), dng.with_suffix(".mfv")
-    env = {**os.environ, **({"MFDEV_CANCEL_AT": str(cancel_at)} if cancel_at is not None else {})}
+    env = {**os.environ, **({"MFDEV_CANCEL_AT": str(cancel_at)} if cancel_at is not None else {}),
+           **({"MFDEV_HEAP": f"{heap[0]},{heap[1]}"} if heap else {})}
     p = subprocess.run([str(HOST), str(files / "MFCAM.BIN"), str(files / "MFDEV.BIN"), film, "0123456789abcdef",
                         str(dng), str(jpg), str(mfv)], capture_output=True, text=True, check=False, env=env)
     kv = dict(x.split("=", 1) for x in p.stdout.split())
@@ -166,3 +167,27 @@ def test_stop_in_every_pass_cleans_up_on_a_dirty_heap(files, tmp_path, at):
     rc, kv, jpg, mfv = develop(files, dng, cancel_at=at)
     assert kv["rc"] == "-25", kv
     assert not jpg.exists() and not mfv.exists()
+
+
+# The camera with the app running (APP.LOG 2026-11-05): ~950 KB free, largest
+# block down to ~320 KB after a first attempt. The film table (216 KB) and
+# camera constants are loaded by the task outside mfd_develop; what is left
+# for mfd_develop must do, in blocks well under the largest one.
+CAMERA_HEAP = (950_000 - 216_000 - 1_000, 120_000)
+
+
+@pytest.mark.parametrize("orientation", [1, 6, 8])
+def test_develops_within_the_camera_heap(files, tmp_path, orientation):
+    dng = tmp_path / f"CRW_H{orientation}.DNG"
+    chdk_like_dng(dng, orientation=orientation)
+    rc, kv, _, mfv = develop(files, dng, heap=CAMERA_HEAP)
+    assert rc == 0, kv
+    assert int(kv["mem_peak"]) < 450_000
+    assert mfv.stat().st_size == 12 + HEIGHT * 1080
+
+
+def test_out_of_memory_is_reported_not_fatal(files, tmp_path):
+    dng = tmp_path / "CRW_OOM.DNG"
+    chdk_like_dng(dng, orientation=8)
+    rc, kv, jpg, mfv = develop(files, dng, heap=(200_000, 60_000))
+    assert kv["rc"] == "-22" and not jpg.exists() and not mfv.exists()
