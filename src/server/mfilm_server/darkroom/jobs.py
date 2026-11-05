@@ -11,7 +11,6 @@ import json
 import os
 import sqlite3
 import uuid
-from pathlib import Path
 
 import jsonschema
 

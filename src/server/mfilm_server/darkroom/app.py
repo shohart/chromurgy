@@ -5,15 +5,16 @@ A separate app from the camera receiver (mfilm-receiver): different port, a
 different credential (operator login, not device tokens), same store/catalog."""
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
 import sqlite3
-import time
 import uuid
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 
 from .. import config as config_mod
@@ -135,8 +136,8 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             pw = ""
         if request.headers.get(CSRF_HEADER) != "1":
             raise ApiError(403, "CSRF", f"missing {CSRF_HEADER} header")
-        if not isinstance(pw, str) or not auth.check_password(store, pw):
-            time.sleep(0.7)
+        if not isinstance(pw, str) or not await run_in_threadpool(auth.check_password, store, pw):
+            await asyncio.sleep(0.7)
             raise ApiError(401, "BAD_CREDENTIALS", "wrong password")
         tok = auth.new_session(c)
         response.set_cookie(COOKIE, tok, httponly=True, samesite="strict", secure=request.url.scheme == "https",
@@ -239,12 +240,15 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         if not data or len(data) > MAX_CHUNK or u["offset_bytes"] + len(data) > u["declared_bytes"]:
             raise ApiError(409, "CHUNK_PAST_END", "", next_offset=u["offset_bytes"])
         p = part(upload_id)
-        with open(p, "r+b" if p.exists() else "w+b") as f:
-            f.truncate(u["offset_bytes"])
-            f.seek(u["offset_bytes"])
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
+
+        def write() -> None:                          # blocking I/O + fsync: off the event loop
+            with open(p, "r+b" if p.exists() else "w+b") as f:
+                f.truncate(u["offset_bytes"])
+                f.seek(u["offset_bytes"])
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+        await run_in_threadpool(write)
         new = u["offset_bytes"] + len(data)
         c.execute("UPDATE web_uploads SET offset_bytes=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
                   "WHERE id=? AND offset_bytes=?", (new, upload_id, u["offset_bytes"]))

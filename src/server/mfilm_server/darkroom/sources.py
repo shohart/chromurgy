@@ -8,7 +8,6 @@ point at the file where it already lives."""
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
 import subprocess
@@ -41,7 +40,7 @@ def probe(path: Path) -> dict:
     """Run the decoder probe in an isolated child; returns {ok, meta} or {ok False, code, detail}."""
     try:
         p = subprocess.run([sys.executable, "-I", str(INSPECT), str(path)], capture_output=True, text=True,
-                           timeout=PROBE_TIMEOUT_S)
+                           timeout=PROBE_TIMEOUT_S, check=False)
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": "DECODER_TIMEOUT", "detail": f"no result in {PROBE_TIMEOUT_S} s"}
     try:
