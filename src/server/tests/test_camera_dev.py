@@ -100,10 +100,12 @@ def files(tmp_path_factory):
     return d
 
 
-def develop(files, dng, film="portra400"):
+def develop(files, dng, film="portra400", cancel_at=None):
+    import os
     jpg, mfv = dng.with_suffix(".jpg"), dng.with_suffix(".mfv")
+    env = {**os.environ, **({"MFDEV_CANCEL_AT": str(cancel_at)} if cancel_at is not None else {})}
     p = subprocess.run([str(HOST), str(files / "MFCAM.BIN"), str(files / "MFDEV.BIN"), film, "0123456789abcdef",
-                        str(dng), str(jpg), str(mfv)], capture_output=True, text=True, check=False)
+                        str(dng), str(jpg), str(mfv)], capture_output=True, text=True, check=False, env=env)
     kv = dict(x.split("=", 1) for x in p.stdout.split())
     return p.returncode, kv, jpg, mfv
 
@@ -152,3 +154,15 @@ def test_unknown_film_is_refused(files, tmp_path):
     chdk_like_dng(dng)
     rc, kv, _, _ = develop(files, dng, film="no-such-film")
     assert rc != 0 and kv["rc"] == "-23"
+
+
+@pytest.mark.parametrize("at", [50, 650, 850])
+def test_stop_in_every_pass_cleans_up_on_a_dirty_heap(files, tmp_path, at):
+    # camera 0.4.2: "stop" before the render pass ended a viewer that had never
+    # begun; its heap block held garbage and the camera died. The host driver
+    # fills every allocation with 0xA5 like a used camera heap.
+    dng = tmp_path / "CRW_0003.DNG"
+    chdk_like_dng(dng, orientation=8)
+    rc, kv, jpg, mfv = develop(files, dng, cancel_at=at)
+    assert kv["rc"] == "-25", kv
+    assert not jpg.exists() and not mfv.exists()

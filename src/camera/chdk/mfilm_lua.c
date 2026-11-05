@@ -98,6 +98,30 @@ static int luaCB_mf_show(lua_State *L)
  * built platform independent, so the camera is checked at run time. */
 #define MF_BITMAP_BUFFERS ((unsigned char **)0x413c)
 
+/* the two overlay buffers, checked like mf_overlay_clear; 0 if not this camera */
+static unsigned char **mf_bitmaps(void)
+{
+    if (strcmp(camera_info.platform, "sx510hs") != 0 || strcmp(camera_info.platformsub, "101a") != 0) return 0;
+    if (camera_screen.buffer_width != 960 || camera_screen.buffer_height != 270) return 0;
+    if (!MF_BITMAP_BUFFERS[0] || !MF_BITMAP_BUFFERS[1] || MF_BITMAP_BUFFERS[0] == MF_BITMAP_BUFFERS[1]) return 0;
+    return MF_BITMAP_BUFFERS;
+}
+
+/* mf_overlay_mirror() -> true | nil, error
+ * Copies the active overlay buffer (the one CHDK just drew into) to the other,
+ * so Canon's flips show the same picture. active_bitmap_buffer: 0x4138. */
+#define MF_ACTIVE_BITMAP ((volatile int *)0x4138)
+static int luaCB_mf_overlay_mirror(lua_State *L)
+{
+    unsigned char **b = mf_bitmaps();
+    if (!b) return mf_fail(L, "not the SX510 HS 1.01A");
+    int a = *MF_ACTIVE_BITMAP;
+    if (a != 0 && a != 1) return mf_fail(L, "active buffer unknown");
+    memcpy(b[a ^ 1], b[a], 960 * 270);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 static int luaCB_mf_overlay_clear(lua_State *L)
 {
     if (strcmp(camera_info.platform, "sx510hs") != 0 || strcmp(camera_info.platformsub, "101a") != 0)

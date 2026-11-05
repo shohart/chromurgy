@@ -22,16 +22,20 @@ static void *h_alloc(size_t n)
     size_t *p = malloc(n + sizeof(size_t));
     if (!p) return 0;
     *p = n, cur += (long) n;
+    memset(p + 1, 0xA5, n);                       /* like the camera: fresh heap is not zeroed */
     if (cur > peak) peak = cur;
     return p + 1;
 }
 static void h_release(void *q) { size_t *p = (size_t *) q - 1; cur -= (long) *p; free(p); }
 static long h_tick(void) { return (long) (clock() * 1000.0 / CLOCKS_PER_SEC); }
+static int cancel_limit = -1;
+static volatile int *cancel_flag, *progress_seen;
+static void h_yield(void) { if (cancel_flag && *progress_seen >= cancel_limit) *cancel_flag = 1; }
 
 int main(int argc, char **argv)
 {
     if (argc < 7) { fprintf(stderr, "usage: mfdev_host MFCAM.BIN MFDEV.BIN FILM SEED_HEX IN.DNG OUT.JPG [OUT.MFV]\n"); return 2; }
-    mfd_env env = {h_open, h_read, h_write, h_seek, h_close, h_remove, h_alloc, h_release, h_tick, 0};
+    mfd_env env = {h_open, h_read, h_write, h_seek, h_close, h_remove, h_alloc, h_release, h_tick, h_yield};
     static mfd_camera cam;
     static mf_table table;
     mf_fx_look look;
@@ -41,11 +45,14 @@ int main(int argc, char **argv)
     if (rc) { printf("rc=%d stage=film\n", rc); return 1; }
     char tmp[4096];
     snprintf(tmp, sizeof tmp, "%s.tmp", argv[6]);
-    volatile int prog = 0;
+    volatile int prog = 0, cancel = 0;
+    const char *cancel_at = getenv("MFDEV_CANCEL_AT");   /* permille: stop there (tests) */
     mfd_job job = {.dng_path = argv[5], .jpeg_path = argv[6], .tmp_path = tmp, .mfv_path = argc > 7 ? argv[7] : 0,
                    .cam = &cam, .look = &look, .table = &table.v[0][0], .seed = strtoull(argv[4], 0, 16),
-                   .out_w = look.width, .out_h = look.height, .quality = 90, .hash = 1, .progress = &prog};
+                   .out_w = look.width, .out_h = look.height, .quality = 90, .hash = 1, .progress = &prog,
+                   .cancel = &cancel};
     mfd_result res;
+    if (cancel_at) { cancel_limit = atoi(cancel_at); cancel_flag = &cancel; progress_seen = &prog; }
     rc = mfd_develop(&env, &job, &res);
     printf("rc=%d progress=%d w=%d h=%d focal_q8=%d scanner_ev_q16=%d ms_total=%ld mem_peak=%ld ring_rows=%u "
            "jpeg_bytes=%u sha256=", rc, prog, job.out_w, job.out_h, res.focal_q8, res.scanner_ev_q16, res.ms_total,

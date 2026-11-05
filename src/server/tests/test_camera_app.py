@@ -323,6 +323,15 @@ def test_crash_loop_guard_switches_autostart_off(card):
     assert "previous start did not finish" in applog(card)
 
 
+def test_both_overlay_buffers_hold_the_menu_before_any_flip(card):
+    # 0.4.2 still flickered now and then: the flipped-to buffer was repainted
+    # only after the flip. Now every paint is mirrored into the other buffer.
+    log = card / "draw.log"
+    run(card, [("wait", 1500), ("key", "down"), ("wait", 200), ("expect_screen_full",), ("flip",),
+               ("expect_screen_full",), ("key", "down"), ("wait", 200), ("expect_screen_full",)],
+        env={**os.environ, "MFILM_DRAWLOG": str(log)})
+
+
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
 
 

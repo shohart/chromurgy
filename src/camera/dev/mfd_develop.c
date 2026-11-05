@@ -300,6 +300,11 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
     ctx = xalloc(&D, ctx_len);
     jp = job->jpeg_path ? xalloc(&D, mfd_jpeg_size()) : 0;
     vw = job->mfv_path ? xalloc(&D, mfd_view_size()) : 0;
+    /* zeroed: the clean-up below ends the view even when mfd_view_begin never
+     * ran (stop or error before the render pass). Camera heap is not zeroed:
+     * 0.4.2 closed and freed garbage there and the camera died on "stop". */
+    if (vw) memset(vw, 0, mfd_view_size());
+    if (jp) memset(jp, 0, mfd_jpeg_size());
     if (!D.ring || !D.rawbuf || !lin || !disp || !rgb8 || !ctx || (job->jpeg_path && !jp) || (job->mfv_path && !vw))
     { rc = MFD_E_MEM; goto out; }
     res->mem_peak = D.mem;

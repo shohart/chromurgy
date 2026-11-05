@@ -245,12 +245,26 @@ local function pad(s)
 end
 
 -- draw one text row unless it is already on screen; returns true if drawn
+local painted = false                            -- this pass changed the active buffer
 local function row_text(row, s, fg, bg, sig, force)
   local k = (sig or "") .. "|" .. s .. "|" .. tostring(fg) .. "|" .. tostring(bg)
   if drawn[row] == k and not force then return false end
   text(0, row, s, fg, bg)
   drawn[row] = k
+  painted = true
   return true
+end
+
+-- M-Film CHDK build: copy the freshly painted overlay buffer into the other
+-- one, so a flip by Canon shows the same menu (0.4.2 still flickered now and
+-- then: the 60 ms until the flipped-to buffer was repainted were visible)
+local function mirror(b)
+  if b == 9 or not have("mf_overlay_mirror") then return end
+  if not mf_overlay_mirror() then return end
+  local o, c = 1 - b, {}
+  for k, v in pairs(caches[b]) do c[k] = v end
+  caches[o] = c
+  samples[o] = read_samples(o)
 end
 
 local paint                                      -- forward: one pass into the active buffer
@@ -264,9 +278,14 @@ local function screen(...)
     drawn = caches[b]
     local full = b == 9 and get_tick_count() - last_full >= 300
     if full then last_full = get_tick_count() end
+    painted = false
     paint(full, ...)
     if b == 9 then return end
-    if active_buffer() == b then samples[b] = read_samples(b) return end
+    if active_buffer() == b then
+      samples[b] = read_samples(b)
+      if painted then mirror(b) end
+      return
+    end
     caches[0], caches[1], samples = {}, {}, {}
   end
 end
@@ -539,7 +558,15 @@ local function develop_roll(r)
   end
   mf.mkdirs(mf.DEV_ROOT .. "/" .. mf.cam_dir(r))
   mf.mkdirs(mf.VIEW_ROOT .. "/" .. mf.cam_dir(r))
+  local function heap()
+    if not have("get_meminfo") then return "" end
+    local m = get_meminfo()
+    return m and string.format(" (heap free %s, largest block %s)", tostring(m.free_size),
+                               tostring(m.free_block_max_size)) or ""
+  end
   mf.journal(r, "DEVELOP on camera started, " .. #r.frames .. " frame(s)")
+  mf.log("develop: start" .. heap())
+  local last_err = nil
   mf.log("develop " .. r.roll_id .. ": " .. #r.frames .. " frames, film " .. r.film)
   local title = "Developing " .. (mf.film_short(r.film) or r.film)
   local done, failed, stopped, t_all = 0, 0, false, get_tick_count()
@@ -574,9 +601,11 @@ local function develop_roll(r)
       if st == "done" then
         done = done + 1
         mf.journal(r, string.format("DEVELOPED frame %d on camera in %d ms", i, ms))
+        mf.log(string.format("develop frame %d: %d ms%s", i, ms, heap()))
       else
         if rc ~= -25 then failed = failed + 1 end
-        mf.log(string.format("develop frame %d: rc %d (%s)", i, rc, DEV_ERR[rc] or "error"))
+        mf.log(string.format("develop frame %d: rc %d (%s)%s", i, rc, DEV_ERR[rc] or "error", heap()))
+        if rc ~= -25 then last_err = DEV_ERR[rc] or ("error " .. rc) end
         if rc == -23 then say("Film " .. r.film .. " is not in MFDEV.BIN", 8000) break end
       end
     end
@@ -591,7 +620,8 @@ local function develop_roll(r)
   end
   mf.journal(r, string.format("DEVELOP on camera incomplete: %d of %d, %d failed%s", done, #r.frames, failed,
                               stopped and ", stopped" or ""))
-  say(stopped and "Developing stopped" or string.format("Developed %d of %d (see APP.LOG)", done, #r.frames), 8000)
+  say(stopped and "Developing stopped" or string.format("Developed %d of %d: %s", done, #r.frames,
+                                                         last_err or "see APP.LOG"), 10000)
   return nil
 end
 

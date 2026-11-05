@@ -196,6 +196,16 @@ function mf_dev_status()
   return j.state, pm, j.rc, clock - j.t0
 end
 function mf_dev_cancel() if dev_job then dev_job.cancel = true end end
+function mf_overlay_mirror()
+  local c = {}
+  for r, row in pairs(fbuf[fb_active]) do
+    local t = {}
+    for x, v in pairs(row) do t[x] = v end
+    c[r] = t
+  end
+  fbuf[1 - fb_active] = c
+  return true
+end
 function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; dlog("C"); return true end
 function get_prop(id) return props[id] end
 function set_prop(id, v) props[id] = v end
@@ -343,7 +353,8 @@ while true do
                 tostring(want_rec), tostring(want_osd))) os.exit(1)
           end
         elseif k == "flip" then fb_active = 1 - fb_active
-        elseif k == "stock_chdk" then mf_show, mf_overlay_clear, mf_viewport, mf_dev_start = nil, nil, nil, nil
+        elseif k == "stock_chdk" then
+          mf_show, mf_overlay_clear, mf_viewport, mf_dev_start, mf_overlay_mirror = nil, nil, nil, nil, nil
         elseif k == "canon_playback" then rec_mode = false     -- the owner opens Canon's gallery
         elseif k == "expect_shown" then
           local last = shown_frames[#shown_frames]
@@ -352,6 +363,7 @@ while true do
           end
         elseif k == "expect_rec" then
           if rec_mode ~= s[2] then log("FAIL: rec_mode " .. tostring(rec_mode)) os.exit(1) end
+        elseif k == "no_mirror" then mf_overlay_mirror = nil       -- 0.4.1 module (or stock CHDK)
         elseif k == "flip_every" then flip_every = (s[2] ~= 0) and s[2] or nil
         elseif k == "canon_erase" then fbuf[fb_active] = {}
         elseif k == "expect_screen_full" then

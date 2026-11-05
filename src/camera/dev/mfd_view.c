@@ -6,7 +6,7 @@
  * Landscape (orientation 1, 3): the 4:3 frame fills the buffer; rows are
  *   resampled as they arrive (bilinear), written in order (3: bottom up).
  * Portrait (6, 8): the frame is turned, so each developed row becomes a
- *   column; the 404x480 pillarbox is kept in memory (580 KB RGB) and
+ *   column; the 404x480 pillarbox is kept in memory (390 KB, RGB565) and
  *   written at the end. Each target pixel averages a 2x2 block. */
 #include <string.h>
 #include "mfd.h"
@@ -25,7 +25,7 @@ struct mfd_view {
     int have_prev;
     int next_y;                /* landscape: next MFV row to emit */
     uint8_t *line;             /* one MFV row */
-    uint8_t *port;             /* portrait: PW x VH RGB */
+    uint16_t *port;            /* portrait: PW x VH, RGB565 (390 KB instead of 580) */
 };
 
 size_t mfd_view_size(void) { return sizeof(struct mfd_view); }
@@ -64,8 +64,8 @@ int mfd_view_begin(mfd_view *V, const mfd_env *env, const char *path, int w, int
     if (!V->prev || !V->line) return MFD_E_MEM;
     if (V->orient == 6 || V->orient == 8)
     {
-        if (!(V->port = env->alloc((size_t) PW * VH * 3))) return MFD_E_MEM;
-        memset(V->port, 0, (size_t) PW * VH * 3);
+        if (!(V->port = env->alloc((size_t) PW * VH * 2))) return MFD_E_MEM;
+        memset(V->port, 0, (size_t) PW * VH * 2);
     }
     if (env->write(V->f, mfv_header, 12) != 12) return MFD_E_IO;
     if (V->orient == 3)                                   /* rows go bottom up: size the file first */
@@ -141,9 +141,9 @@ static void portrait(mfd_view *V, const uint8_t *rgb, int y0, int n)
             int ur = ((2 * ty + 1) * V->w) / (2 * VH);
             int c = V->orient == 8 ? V->w - 1 - ur : ur;
             int c2 = c + 1 < V->w ? c + 1 : c;
-            uint8_t *t = V->port + ((size_t) ty * PW + (size_t) tx) * 3;
-            for (int k = 0; k < 3; k++)
-                t[k] = (uint8_t) ((a[3 * c + k] + a[3 * c2 + k] + b[3 * c + k] + b[3 * c2 + k] + 2) >> 2);
+            int v[3];
+            for (int k = 0; k < 3; k++) v[k] = (a[3 * c + k] + a[3 * c2 + k] + b[3 * c + k] + b[3 * c2 + k] + 2) >> 2;
+            V->port[(size_t) ty * PW + (size_t) tx] = (uint16_t) ((v[0] >> 3) << 11 | (v[1] >> 2) << 5 | (v[2] >> 3));
         }
     }
 }
@@ -161,13 +161,22 @@ int mfd_view_rows(mfd_view *V, const uint8_t *rgb, int y0, int n)
 int mfd_view_end(mfd_view *V)
 {
     int rc = MFD_OK;
+    if (!V->env) return MFD_OK;                           /* never begun */
     if (V->port && V->f)
     {
         uint8_t *px = V->line, *out = V->line + VW * 3;
         for (int y = 0; y < VH && !rc; y++)
         {
             memset(px, 0, VW * 3);
-            memcpy(px + PX0 * 3, V->port + (size_t) y * PW * 3, PW * 3);
+            const uint16_t *src = V->port + (size_t) y * PW;
+            for (int x = 0; x < PW; x++)
+            {
+                uint16_t q = src[x];
+                uint8_t *d = px + (size_t) (PX0 + x) * 3;
+                d[0] = (uint8_t) ((q >> 11) << 3 | (q >> 13));
+                d[1] = (uint8_t) (((q >> 5) & 63) << 2 | ((q >> 9) & 3));
+                d[2] = (uint8_t) ((q & 31) << 3 | ((q >> 2) & 7));
+            }
             pack_row(px, out, VW);
             if (V->env->write(V->f, out, VBW) != VBW) rc = MFD_E_IO;
         }

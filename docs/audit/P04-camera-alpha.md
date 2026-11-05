@@ -291,3 +291,22 @@ Fix: can_unload stays 0 (tools/build_chdk16.sh refuses otherwise). The
 developer task needs no such guard: the app waits for every frame or stops
 it before the script can end. The official core (0.4.1) and the crash-loop
 guard stay.
+
+## 0.4.3: develop "stop" killed the camera; flicker
+
+ROMLOG 13:14: data abort (vector 0x10) in task MFDevelop; return addresses at
+the same module base 0x4162D0 map to dev_task -> mfd_develop ->
+mfd_view_end. Stopping (or any error) before the render pass ended a viewer
+whose heap block had been allocated but never begun; the camera heap is not
+zeroed, so mfd_view_end closed and freed garbage. Fixed: the view and JPEG
+state are zeroed when allocated, and ending a never-begun view is a no-op.
+The host driver now fills every allocation with 0xA5 and can stop at a given
+progress (MFDEV_CANCEL_AT); tests stop in each pass. The portrait viewer
+buffer is RGB565 (390 KB instead of 580; host peak 740 KB + 216 KB film
+table). APP.LOG records heap before and after each frame, and the screen
+says why a frame failed.
+
+Flicker: repainting the flipped-to overlay buffer within 60 ms was still
+visible now and then. mf_overlay_mirror() (M-Film CHDK build) copies the
+buffer just painted into the other one after every pass that changed
+something, so a flip shows the same menu.
