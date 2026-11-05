@@ -26,7 +26,7 @@ local COLS = 40            -- text columns that fit the screen (set in main)
 local roll = nil          -- active roll (state table) or nil
 local watcher = nil
 local shots_seen = 0
-local notice, notice_until = nil, 0
+local notice, notice_until, notice_good = nil, 0, false
 local selftest = {}
 local quit = false
 local boot_alive = function() end                -- crash-loop guard heartbeat (set in main's section)
@@ -47,8 +47,8 @@ local function shot_count()
 end
 
 local overlay_until_ref = nil
-local function say(msg, ms)
-  notice, notice_until = msg, get_tick_count() + (ms or 4000)
+local function say(msg, ms, good)
+  notice, notice_until, notice_good = msg, get_tick_count() + (ms or 4000), good
   if overlay_until_ref then overlay_until_ref(ms or 4000) end
   mf.log("notice: " .. msg)
 end
@@ -307,7 +307,23 @@ paint = function(refresh, title, lines, items, sel, footer, icons)
   row = row + 1
   for _, l in ipairs(lines or {}) do
     if row >= rows_total - 1 then break end
-    if type(l) == "table" and l.hero then
+    if type(l) == "table" and l.gfx then
+      -- graphics over l.rows text rows: drawn only when l.sig changes (or on
+      -- the safety refresh, same pixels); the rows are blanked once when the
+      -- screen first shows them. l.gfx(y) must paint everything it changes.
+      local n, k = l.rows or 1, "gfx:" .. (l.sig or "")
+      local changed = refresh
+      for j = 0, n - 1 do if drawn[row + j] ~= k then changed = true end end
+      if changed then
+        for j = 0, n - 1 do
+          if string.sub(drawn[row + j] or "", 1, 4) ~= "gfx:" then text(0, row + j, pad(""), C.fg, C.bg) end
+          drawn[row + j] = k
+        end
+        l.gfx(row * FH)
+        painted = true
+      end
+      row = row + n
+    elseif type(l) == "table" and l.hero then
       -- the loaded film: canister, big counter, strip (two text rows)
       local r = l.hero
       local sig = "hero:" .. r.film .. ":" .. #r.frames .. "/" .. r.length
@@ -569,6 +585,103 @@ local function bar(permille, width)
   return "[" .. string.rep("#", n) .. string.rep(".", width - n) .. "]"
 end
 
+-- the developing screen ---------------------------------------------------
+-- Layout (16 px text rows): 0 title; 1-3 tank + film; 5-6 contact strip;
+-- 8-9 progress bars sharing one x range; 11 time; 14 footer.
+local BAR_X, BAR_W, PCT_X = 120, 176, 304
+
+-- a developing tank: lid, body, a window with the reel turning (4 phases)
+-- and bubbles rising; 30 x 40 px at x, y
+local function tank(x, y, phase)
+  box(x + 12, y, x + 17, y + 3, CC.grey_lt)        -- agitation knob
+  box(x, y + 4, x + 29, y + 8, CC.grey_lt)          -- lid
+  box(x + 2, y + 9, x + 27, y + 39, CC.grey_dk)     -- body
+  box(x + 5, y + 12, x + 24, y + 36, CC.black)      -- window
+  local cx, cy = x + 14, y + 24
+  box(cx - 1, cy - 1, cx + 1, cy + 1, CC.grey_lt)   -- hub
+  local arm = {{0, -9}, {6, -6}, {9, 0}, {6, 6}}     -- one spoke per phase, and its opposite
+  for k = 0, 1 do
+    local a = arm[(phase + 2 * k) % 4 + 1]
+    for t = 3, 9, 2 do
+      local px, py = cx + a[1] * t / 9, cy + a[2] * t / 9
+      box(px - 1, py - 1, px, py, CC.yellow)
+      box(2 * cx - px - 1, 2 * cy - py - 1, 2 * cx - px, 2 * cy - py, CC.yellow)
+    end
+  end
+  for b = 0, 2 do                                     -- bubbles
+    local by = y + 34 - ((phase * 3 + b * 7) % 20)
+    box(x + 7 + b * 6, by, x + 8 + b * 6, by + 1, CC.blue_lt)
+  end
+end
+
+-- the roll as a contact strip: one cell per frame, done in the film's colour,
+-- the current one pulsing, the rest dark; sprocket holes above and below
+local function contact_strip(y, film, n, shot, done, current, phase)
+  local x0, x1 = 8, W - 9
+  box(x0, y, x1, y + 27, CC.black)
+  for hx = x0 + 3, x1 - 4, 8 do
+    box(hx, y + 2, hx + 3, y + 4, CC.grey_dk)
+    box(hx, y + 23, hx + 3, y + 25, CC.grey_dk)
+  end
+  local cw = (x1 - x0 - 4) / n
+  if cw > 26 then cw = 26 end
+  local colour = brand_colour(film)
+  for i = 1, n do
+    local cx = x0 + 3 + (i - 1) * cw
+    local c = CC.grey_dk                              -- shot, waiting
+    if i <= done then c = colour
+    elseif i == current then c = (phase % 2 == 0) and CC.yellow or CC.grey end
+    if i > shot then                                  -- never exposed: an outline only
+      box(cx, y + 7, cx + cw - 3, y + 7, CC.grey_dk)
+      box(cx, y + 20, cx + cw - 3, y + 20, CC.grey_dk)
+      box(cx, y + 8, cx, y + 19, CC.grey_dk)
+      box(cx + cw - 3, y + 8, cx + cw - 3, y + 19, CC.grey_dk)
+    else
+      box(cx, y + 7, cx + cw - 3, y + 20, c)
+    end
+    if i <= done and cw >= 8 then box(cx + 2, y + 9, cx + cw - 5, y + 13, CC.white) end   -- a frame's sky
+  end
+end
+
+local function bar_row(y, label, permille)
+  if permille < 0 then permille = 0 end
+  if permille > 1000 then permille = 1000 end
+  draw_string(FW, y, string.format("%-13s", label), C.fg, C.bg)
+  local fill = BAR_W * permille / 1000
+  if fill > 0 then box(BAR_X, y + 4, BAR_X + fill - 1, y + 11, CC.yellow) end
+  if fill < BAR_W then box(BAR_X + fill, y + 4, BAR_X + BAR_W - 1, y + 11, CC.grey_dk) end
+  draw_string(PCT_X, y, string.format("%4d%%", permille / 10), C.hi, C.bg)
+end
+
+local STAGES = {{600, "scanning the negative"}, {700, "halation"}, {1001, "printing"}}
+
+local function develop_lines(r, i, n, pm, done, failed, eta)
+  local phase = get_tick_count() / 250 % 4
+  local stage = ""
+  for _, st in ipairs(STAGES) do if pm < st[1] then stage = st[2] break end end
+  local roll_pm = ((i - 1) * 1000 + pm) / n
+  return {
+    {rows = 3, sig = string.format("tank%d|%s|%s", phase, r.film, stage), gfx = function(y)
+      tank(12, y + 4, phase)
+      draw_string(56, y + 4, string.sub(mf.film_name(r.film), 1, 36), C.hi, C.bg)
+      draw_string(56, y + 20, string.format("%d frames, shot %s", n, string.sub(r.created_at or "", 1, 10)), C.dim, C.bg)
+      draw_string(56, y + 36, string.format("%-30s", stage), C.fg, C.bg)
+    end},
+    "",
+    {rows = 2, sig = string.format("strip%d|%d|%d", done, i, phase % 2), gfx = function(y)
+      contact_strip(y + 2, r.film, r.length or n, n, done, i, phase)
+    end},
+    "",
+    {rows = 1, sig = "bf" .. i .. "|" .. pm / 5, gfx = function(y)
+      bar_row(y, string.format("Frame %d/%d", i, n), pm)
+    end},
+    {rows = 1, sig = "br" .. roll_pm / 5, gfx = function(y) bar_row(y, "Roll", roll_pm) end},
+    "",
+    eta,
+    failed > 0 and {string.format("%d frame(s) failed", failed), C.warn} or "",
+  }
+end
+
 -- develop every frame of roll r; returns the number developed, or nil if stopped
 local function develop_roll(r)
   if not have("mf_dev_start") or not have("mf_dev_status") or not have("mf_dev_cancel") then
@@ -616,16 +729,16 @@ local function develop_roll(r)
       while true do
         st, pm, rc, ms = mf_dev_status()
         if st ~= "running" then break end
-        local eta = ""
+        local elapsed = (get_tick_count() - t_all) / 1000
+        local eta = string.format("elapsed %d:%02d", elapsed / 60, elapsed % 60)
         if done > 0 then
-          local per = (get_tick_count() - t_all) / done
-          eta = string.format("about %d min left", (per * (#r.frames - i + 1) - per * pm / 1000) / 60000 + 1)
+          local per = (get_tick_count() - t_all) / (done + pm / 1000)
+          local left = (per * (#r.frames - done) - per * pm / 1000) / 1000
+          if left < 0 then left = 0 end
+          eta = eta .. string.format("      about %d:%02d left", left / 60, left % 60)
         end
-        screen(title, {{mf.film_name(r.film), C.hi},
-                       string.format("frame %d of %d", i, #r.frames), bar(pm, 30) .. string.format(" %d%%", pm / 10),
-                       string.format("roll   %s", bar(((i - 1) * 1000 + pm) / #r.frames, 30)),
-                       eta, failed > 0 and string.format("%d frame(s) failed", failed) or ""},
-               nil, 1, " MENU: stop (developed frames are kept)")
+        screen("Developing", develop_lines(r, i, #r.frames, pm, done, failed, eta), nil, 1,
+               " MENU: stop     developed frames are kept")
         local k = key(200)
         if k == "menu" and not stopped then
           stopped = true
@@ -649,7 +762,7 @@ local function develop_roll(r)
     mf.cam_index_put(r, done)
     mf.journal(r, string.format("DEVELOP on camera finished: %d frames in %d s", done,
                                 (get_tick_count() - t_all) / 1000))
-    say(string.format("Developed %d frames", done), 6000)
+    say(string.format("Developed %d frames", done), 6000, true)
     return done
   end
   mf.journal(r, string.format("DEVELOP on camera incomplete: %d of %d, %d failed%s", done, #r.frames, failed,
@@ -677,7 +790,9 @@ local function roll_card(r, v)
   while true do
     local shown_lines = {}
     for _, l in ipairs(lines) do shown_lines[#shown_lines + 1] = l end
-    if notice and get_tick_count() < notice_until then shown_lines[#shown_lines + 1] = {notice, C.warn} end
+    if notice and get_tick_count() < notice_until then
+      shown_lines[#shown_lines + 1] = {notice, notice_good and C.ok or C.warn}
+    end
     local i = choose("Roll " .. string.sub((r and r.roll_id) or v.roll_id, 1, 8), shown_lines, items, 1)
     if i == "shoot" then return "shoot" end
     if i == nil or acts[i] == "back" then return end

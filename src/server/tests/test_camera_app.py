@@ -286,7 +286,7 @@ DEVELOP_LOADED = ROLLS + [("key", "set"), ("expect", "not developed yet"), ("key
 def test_develop_on_camera_then_view(card):
     _dev_files(card)
     run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
-        + [("expect", "frame 1 of 2"), ("wait", 4000), ("expect", "frame 2 of 2"), ("wait", 4000),
+        + [("expect", "Frame 1/2"), ("wait", 4000), ("expect", "Frame 2/2"), ("wait", 4000),
            ("expect", "DEVELOPED: 2 frames %(camera%)"), ("key", "set"), ("wait", 600),
            ("expect_shown", "MFVIEW/C%w+/F01.MFV"), ("key", "right"), ("wait", 200), ("expect_shown", "F02.MFV"),
            ("key", "menu"), ("wait", 900), ("expect_rec", True)])
@@ -303,7 +303,7 @@ def test_develop_on_camera_then_view(card):
 def test_develop_can_be_stopped_and_keeps_the_roll_undeveloped(card):
     _dev_files(card)
     run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
-        + [("expect", "frame 1 of 2"), ("key", "menu"), ("wait", 1000), ("expect", "Developing stopped")])
+        + [("expect", "Frame 1/2"), ("key", "menu"), ("wait", 1000), ("expect", "Developing stopped")])
     assert not (card / "A" / "CHDK" / "MFVIEW" / "CAMINDEX.CFG").exists()
 
 
