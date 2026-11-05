@@ -427,6 +427,7 @@ end
 -- CHDK config ids (release-1_6 r6355): CONF_OSD 2000 + osd_conf_info id. Ids
 -- below 1000 are OLD ids remapped by conf_migrate: never use those.
 local CONF = {show_osd = 2001, batt_perc_show = 2102, batt_icon_show = 2104, show_clock = 2080, show_temp = 2220,
+              splash_show = 2120,
               show_remaining_raw = 2200, show_raw_state = 2201, space_mb_show = 2182, space_bar_show = 2183}
 local CONF_SHOW_OSD = CONF.show_osd
 local osd_saved = nil
@@ -563,6 +564,16 @@ local function develop_roll(r)
     local m = get_meminfo()
     return m and string.format(" (heap free %s, largest block %s)", tostring(m.free_size),
                                tostring(m.free_block_max_size)) or ""
+  end
+  -- the developer needs ~420 KB in blocks of <= 92 KB plus one 216 KB block
+  -- (the film table) and the 0.7 KB camera constants
+  if have("get_meminfo") then
+    local m = get_meminfo()
+    if m and m.free_block_max_size and (m.free_block_max_size < 240000 or (m.free_size or 0) < 700000) then
+      mf.log("develop: not enough memory" .. heap())
+      say("Not enough free memory: restart the camera, then Develop", 10000)
+      return nil
+    end
   end
   mf.journal(r, "DEVELOP on camera started, " .. #r.frames .. " frame(s)")
   mf.log("develop: start" .. heap())
@@ -907,10 +918,12 @@ local function main()
   -- stays (Canon's is hidden now); clock, temperature, RAW counter and state
   -- and card space are switched off as the owner asked (CHDK saves them)
   if have("get_config_value") then
+    -- the CHDK splash (logo for the first seconds after power-on) is erased
+    -- when it ends, taking the menu with it: the two flashes after boot (0.4.3)
     local want = {batt_icon_show = 1, batt_perc_show = 0, show_clock = 0, show_temp = 0, show_remaining_raw = 0,
-                  show_raw_state = 0, space_mb_show = 0, space_bar_show = 0}
+                  show_raw_state = 0, space_mb_show = 0, space_bar_show = 0, splash_show = 0}
     for _, name in ipairs({"batt_icon_show", "batt_perc_show", "show_clock", "show_temp", "show_remaining_raw",
-                           "show_raw_state", "space_mb_show", "space_bar_show"}) do
+                           "show_raw_state", "space_mb_show", "space_bar_show", "splash_show"}) do
       local v = get_config_value(CONF[name])
       if v ~= nil and v ~= want[name] then
         set_config_value(CONF[name], want[name])

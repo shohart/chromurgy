@@ -10,3 +10,4 @@ show_remaining_raw 2200
 show_raw_state 2201
 space_mb_show 2182
 space_bar_show 2183
+splash_show 2120

@@ -22,7 +22,8 @@ static void *h_alloc(size_t n)
     size_t *p = malloc(n + sizeof(size_t));
     if (!p) return 0;
     *p = n, cur += (long) n;
-    memset(p + 1, 0xA5, n);                       /* like the camera: fresh heap is not zeroed */
+    memset(p + 1, 0xA5, n);
+    if (getenv("MFDEV_ALLOC_LOG")) fprintf(stderr, "alloc %zu (now %ld)\n", n, cur);                       /* like the camera: fresh heap is not zeroed */
     if (cur > peak) peak = cur;
     return p + 1;
 }

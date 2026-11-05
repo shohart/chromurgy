@@ -340,7 +340,7 @@ def test_chdk_osd_clutter_switched_off(card):
                                   if ln and not ln.startswith("#"))}
     run(card, [("wait", 1200), ("expect_conf", ids["batt_icon_show"], 1)] + [("expect_conf", ids[n], 0) for n in
                                   ("batt_perc_show", "show_clock", "show_temp", "show_remaining_raw",
-                                   "show_raw_state", "space_mb_show", "space_bar_show")])
+                                   "show_raw_state", "space_mb_show", "space_bar_show", "splash_show")])
 
 
 def test_app_conf_ids_match_chdk_161():

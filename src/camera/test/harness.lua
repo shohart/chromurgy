@@ -215,7 +215,7 @@ function click(k)
 end
 -- CHDK config (new ids, CONF_OSD 2000 + osd id); an id below 1000 is an OLD id
 -- the camera would remap to some other setting: the stub refuses those
-local conf = {[2001] = 1, [2102] = 1, [2104] = 1, [2080] = 2, [2220] = 1, [2200] = 1, [2201] = 1, [2182] = 1, [2183] = 1}
+local conf = {[2001] = 1, [2102] = 1, [2104] = 1, [2080] = 2, [2220] = 1, [2200] = 1, [2201] = 1, [2182] = 1, [2183] = 1, [2120] = 1}
 function get_mode() return rec_mode, false, rec_mode and 1 or 0 end
 function set_record(v) rec_mode = (v == 1 or v == true) end
 function get_config_value(id)
