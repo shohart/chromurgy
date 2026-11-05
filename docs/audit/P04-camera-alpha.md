@@ -390,3 +390,27 @@ purpose (two "viewer storms" earlier were this harness bug). 150 fuzz runs
 with battery dips and playback power-ons: 0 failures, longest visible
 glitch 200 ms.
 Known: ~55 s per frame on the camera; a speed-up is the next step.
+
+## 0.6.0: developing speed
+
+Camera 0.5.x: ~55 s per frame (APP.LOG), against ~20 s expected from the
+MFBENCH measurements. Changes (host times per frame, before -> after:
+~320 ms -> ~230 ms; the camera is ~125x slower than the host for this code):
+- output 800x600 instead of 1024x768 (39% fewer pixels for binning, lens,
+  film passes, temp file): the camera's frames serve its 720x480 viewer;
+  MFDEV.BIN re-baked at 800x600;
+- 4x4 binning reads four packed pixels at a time with the row's two colours
+  fixed (no per-pixel CFA lookup or branch);
+- the lens map is evaluated every 16 output columns and interpolated linearly
+  (the distortion is smooth); previously two 64-bit polynomials per pixel;
+- yields by time (every ~100 ms) instead of after every 8-row strip: msleep
+  sleeps a whole 10 ms tick, ~290 of them cost ~3 s a frame;
+- 8-bit conversion without a division per value (checked for every 16-bit x);
+- no camera JPEG by default (camera_jpeg=1 in MFILM.CFG): the viewer needs
+  only the MFV, the server makes the full-size JPEGs;
+- the developing screen's content changes at 2 Hz (it shares the CPU), the
+  screen is still checked every 100 ms.
+Output vs before: mean colour within 0.5/255, MAE 1-4 (grain).
+Estimate for the camera: ~15 s a frame. HARDWARE-TEST REQUIRED: APP.LOG now
+has a per-frame split ("develop frame N timing ms: dng .. bin .. lens ..
+scan .. glow .. render .. tmp .. jpeg .. view .. yield").

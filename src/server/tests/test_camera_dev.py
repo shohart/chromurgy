@@ -114,7 +114,7 @@ def develop(files, dng, film="portra400", cancel_at=None, heap=None):
 def test_every_film_is_baked(files):
     head = (files / "MFDEV.BIN").read_bytes()[:24]
     magic, n, w, h, block = head[:8], *struct.unpack("<4I", head[8:24])
-    assert magic == b"MFDEV001" and (w, h) == (1024, 768) and n == 72 and block > 200_000
+    assert magic == b"MFDEV001" and (w, h) == (800, 600) and n == 72 and block > 200_000
     assert len((files / "MFDEV.BIN").read_bytes()) == 24 + 32 * n + n * block
 
 
@@ -126,7 +126,7 @@ def test_landscape_frame(files, tmp_path):
     assert kv["sha256"] == __import__("hashlib").sha256(dng.read_bytes()).hexdigest()
     assert int(kv["focal_q8"]) == round(4.3 * 256)
     im = np.asarray(Image.open(jpg).convert("RGB")).astype(float)
-    assert im.shape == (768, 1024, 3)
+    assert im.shape == (600, 800, 3)
     mid = im[300:460, 200:820]
     assert abs(mid[..., 0].mean() - mid[..., 2].mean()) < 25         # daylight WB: a grey card stays near grey
     cols = mid.mean(axis=(0, 2))

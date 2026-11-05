@@ -106,8 +106,29 @@ typedef struct dev {
     int ring_n, q_next;         /* q rows produced: 0 .. q_next-1 */
     int16_t *rmin, *rmax;       /* per output row: quarter rows needed */
     int32_t *jx;                /* per output column: JPEG-frame x (Q8) */
+    int32_t *acc;               /* qw x 3 sums while binning */
+    int32_t *gq;                /* lens grid for one output row: (qx, qy) Q8 every GRID columns */
     uint32_t mem;
+    mfd_result *res;
+    long last_yield;
 } dev;
+
+#define GRID 16                 /* the lens map is evaluated every GRID output columns, linear between */
+
+/* let the camera's other tasks run about every 100 ms of work (msleep sleeps a
+ * whole 10 ms tick: yielding after every 8-row strip cost ~3 s a frame) */
+static void maybe_yield(dev *D)
+{
+    const mfd_env *env = D->env;
+    if (!env->yield) return;
+    long now = env->tick();
+    if (now - D->last_yield < 100) return;
+    env->yield();
+    D->res->yields++;
+    long after = env->tick();
+    D->res->ms_yield += after - now;
+    D->last_yield = after;
+}
 
 static void *xalloc(dev *D, size_t n)
 {
@@ -118,7 +139,10 @@ static void *xalloc(dev *D, size_t n)
 
 static int read_hash(dev *D, void *buf, long n)
 {
-    if (D->env->read(D->f, buf, n) != n) return MFD_E_IO;
+    long t = D->env->tick();
+    long got = D->env->read(D->f, buf, n);
+    D->res->ms_dng_io += D->env->tick() - t;
+    if (got != n) return MFD_E_IO;
     if (D->job->hash) mfd_sha_update(&D->sha, buf, (size_t) n);
     return MFD_OK;
 }
@@ -130,7 +154,10 @@ static void progress(const mfd_job *job, int permille)
 
 static int cancelled(const mfd_job *job) { return job->cancel && *job->cancel; }
 
-/* quarter row qi from raw visible rows 4qi..4qi+3 */
+/* quarter row qi from raw visible rows 4qi..4qi+3. Four pixels are 6 packed
+ * bytes; ActiveArea left is even, so in each raw row the 4-pixel group of a
+ * quarter pixel starts on a byte boundary and its colours are fixed: even
+ * columns cfa[2 * (row & 1)], odd ones cfa[2 * (row & 1) + 1]. */
 static int produce_q(dev *D)
 {
     const mfd_dng *d = &D->d;
@@ -142,37 +169,39 @@ static int produce_q(dev *D)
         if ((rc = read_hash(D, rows, (long) d->row_bytes))) return rc;
         D->raw_row++;
     }
-    for (int k = 0; k < 4; k++)
-    {
-        if ((rc = read_hash(D, rows + (size_t) k * d->row_bytes, (long) d->row_bytes))) return rc;
-        D->raw_row++;
-    }
+    if ((rc = read_hash(D, rows, (long) (4 * d->row_bytes)))) return rc;
+    D->raw_row += 4;
+    long t = D->env->tick();
     const mfd_camera *cam = D->job->cam;
     uint16_t *out = D->ring + (size_t) ((uint32_t) D->q_next % (uint32_t) D->ring_n) * D->qw * 3;
-    int32_t black = (int32_t) d->black;
-    for (int qx = 0; qx < D->qw; qx++)
+    int32_t *acc = D->acc;
+    int qw = D->qw;
+    memset(acc, 0, sizeof(int32_t) * 3 * (size_t) qw);
+    for (int k = 0; k < 4; k++)
     {
-        int32_t sum[3] = {0, 0, 0}, cnt[3] = {0, 0, 0};
-        for (int k = 0; k < 4; k++)
+        uint32_t ry = d->act_top + 4u * (uint32_t) D->q_next + (uint32_t) k;
+        int ce = d->cfa[(ry & 1) * 2], co = d->cfa[(ry & 1) * 2 + 1];
+        const uint8_t *p = rows + (size_t) k * d->row_bytes + (d->act_left >> 1) * 3;
+        int32_t *a = acc;
+        for (int qx = 0; qx < qw; qx++, p += 6, a += 3)
         {
-            const uint8_t *r = rows + (size_t) k * d->row_bytes;
-            uint32_t ry = d->act_top + 4u * (uint32_t) D->q_next + (uint32_t) k;
-            for (int i = 0; i < 4; i++)
-            {
-                uint32_t c = d->act_left + 4u * (uint32_t) qx + (uint32_t) i;
-                const uint8_t *p = r + (c >> 1) * 3;
-                int32_t v = (c & 1) ? ((p[1] & 15) << 8 | p[2]) : (p[0] << 4 | p[1] >> 4);
-                int col = d->cfa[(ry & 1) * 2 + (c & 1)];
-                sum[col] += v - black;
-                cnt[col]++;
-            }
+            int32_t v0 = p[0] << 4 | p[1] >> 4, v1 = (p[1] & 15) << 8 | p[2];
+            int32_t v2 = p[3] << 4 | p[4] >> 4, v3 = (p[4] & 15) << 8 | p[5];
+            a[ce] += v0 + v2;
+            a[co] += v1 + v3;
         }
+    }
+    /* samples per colour in a 4x4 block: 4 x (its count in the 2x2 pattern) */
+    int cnt[3] = {0, 0, 0}, sh[3];
+    for (int i = 0; i < 4; i++) cnt[d->cfa[i]] += 4;
+    for (int c = 0; c < 3; c++) sh[c] = cnt[c] == 8 ? 3 : cnt[c] == 4 ? 2 : cnt[c] == 16 ? 4 : 0;
+    int32_t black = (int32_t) d->black;
+    for (int qx = 0; qx < qw; qx++)
+    {
         int32_t lin[3];
         for (int ch = 0; ch < 3; ch++)
         {
-            /* mean (sum / cnt) times wb: cnt is 4 or 8 for a Bayer 4x4 block */
-            int sh = cnt[ch] == 8 ? 3 : cnt[ch] == 4 ? 2 : 0;
-            int64_t v = ((int64_t) sum[ch] * cam->wb_q16[ch]) >> (16 + sh);
+            int64_t v = ((int64_t) (acc[3 * qx + ch] - cnt[ch] * black) * cam->wb_q16[ch]) >> (16 + sh[ch]);
             lin[ch] = clampi((int32_t) v, 0, 32768);
         }
         for (int ch = 0; ch < 3; ch++)
@@ -183,6 +212,7 @@ static int produce_q(dev *D)
         }
     }
     D->q_next++;
+    D->res->ms_bin += D->env->tick() - t;
     return MFD_OK;
 }
 
@@ -221,7 +251,7 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
     long t0 = env->tick(), t1;
     memset(&D, 0, sizeof D);
     memset(res, 0, sizeof *res);
-    D.env = env, D.job = job;
+    D.env = env, D.job = job, D.res = res, D.last_yield = t0;
     int W = job->out_w, H = job->out_h;
     size_t row_px = 3 * (size_t) W;
     uint16_t *lin = 0, *disp = 0;
@@ -293,6 +323,9 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
     res->ring_bytes = (uint32_t) D.ring_n * (uint32_t) D.qw * 6u;
     D.ring = xalloc(&D, res->ring_bytes);
     D.rawbuf = xalloc(&D, 4 * (size_t) D.d.row_bytes);
+    D.acc = xalloc(&D, sizeof(int32_t) * 3 * (size_t) D.qw);
+    D.gq = xalloc(&D, sizeof(int32_t) * 2 * (size_t) (W / GRID + 2));
+    if (!D.acc || !D.gq) { rc = MFD_E_MEM; goto out; }
     lin = xalloc(&D, row_px * STRIP * 2);
     disp = xalloc(&D, row_px * STRIP * 2);
     rgb8 = xalloc(&D, row_px * STRIP);
@@ -325,20 +358,39 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
             /* ring holds q_next - ring_n .. q_next - 1 */
             if (D.rmin[v] < D.q_next - D.ring_n) { rc = MFD_E_MEM; goto out; }
             uint16_t *row = lin + (size_t) (v - v0) * row_px;
-            for (int u = 0; u < W; u++)
+            long tl = env->tick();
+            /* the lens map at every GRID-th column (and the last), linear in
+             * between: the distortion is smooth, the error stays far below a
+             * quarter pixel, and it saves ~15 of 16 polynomial evaluations */
+            int ng = 0;
+            for (int u = 0;; u += GRID)
             {
-                int32_t qx, qy;
-                quarter_of(&D, u, v, &qx, &qy);
-                sample(&D, qx, qy, row + 3 * u);
+                if (u > W - 1) u = W - 1;
+                quarter_of(&D, u, v, &D.gq[2 * ng], &D.gq[2 * ng + 1]);
+                ng++;
+                if (u == W - 1) break;
             }
+            for (int g = 0; g < ng - 1; g++)
+            {
+                int u0 = g * GRID, u1 = g + 1 == ng - 1 ? W - 1 : u0 + GRID, span = u1 - u0;
+                int32_t x0 = D.gq[2 * g], y0 = D.gq[2 * g + 1], x1 = D.gq[2 * g + 2], y1 = D.gq[2 * g + 3];
+                for (int u = u0; u < u1 || (u == u1 && u1 == W - 1); u++)
+                {
+                    int32_t f = u - u0;
+                    sample(&D, x0 + (x1 - x0) * f / span, y0 + (y1 - y0) * f / span, row + 3 * u);
+                }
+            }
+            res->ms_lens += env->tick() - tl;
         }
+        long tw = env->tick();
         if (env->write(tmp, lin, (long) (row_px * 2 * (size_t) n)) != (long) (row_px * 2 * (size_t) n)) { rc = MFD_E_IO; goto out; }
+        res->ms_tmp_io += env->tick() - tw;
         t1 = env->tick();
         if ((rc = mf_fx_scan_rows(fx, lin, row_px, v0, n)) != MF_OK) goto out;
         ms_scan += env->tick() - t1;
         progress(job, (int) (600L * (v0 + n) / H));
         if (cancelled(job)) { rc = MFD_E_CANCEL; goto out; }
-        if (env->yield) env->yield();
+        maybe_yield(&D);
     }
     /* rest of the DNG: hash only */
     if (job->hash)
@@ -359,11 +411,13 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
     for (int v0 = 0; v0 < H; v0 += STRIP)
     {
         int n = v0 + STRIP > H ? H - v0 : STRIP;
+        long tr = env->tick();
         if (env->read(tmp, lin, (long) (row_px * 2 * (size_t) n)) != (long) (row_px * 2 * (size_t) n)) { rc = MFD_E_IO; goto out; }
+        res->ms_tmp_io += env->tick() - tr;
         if ((rc = mf_fx_glow_rows(fx, lin, row_px, v0, n)) != MF_OK) goto out;
         progress(job, 600 + (int) (100L * (v0 + n) / H));
         if (cancelled(job)) { rc = MFD_E_CANCEL; goto out; }
-        if (env->yield) env->yield();
+        maybe_yield(&D);
     }
     res->ms_glow = env->tick() - t1;
 
@@ -379,19 +433,33 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
     for (int v0 = 0; v0 < H; v0 += STRIP)
     {
         int n = v0 + STRIP > H ? H - v0 : STRIP;
+        long tr = env->tick();
         if (env->read(tmp, lin, (long) (row_px * 2 * (size_t) n)) != (long) (row_px * 2 * (size_t) n)) { rc = MFD_E_IO; goto out; }
+        res->ms_tmp_io += env->tick() - tr;
         if ((rc = mf_fx_render_rows(fx, lin, row_px, v0, n, disp, row_px)) != MF_OK) goto out;
-        for (size_t i = 0; i < row_px * (size_t) n; i++) rgb8[i] = (uint8_t) (((uint32_t) disp[i] * 255u + 32767u) / 65535u);
+        /* 16-bit display -> 8-bit, round(x * 255 / 65535) without a division: n / 65535 ==
+         * (n + (n >> 16)) >> 16 for these n (checked for every 16-bit x) */
+        for (size_t i = 0; i < row_px * (size_t) n; i++)
+        {
+            uint32_t x = disp[i];
+            rgb8[i] = (uint8_t) ((x * 255u + 32767u + ((x * 255u + 32767u) >> 16)) >> 16);
+        }
+        long tj = env->tick();
         if (jp && (rc = mfd_jpeg_rows(jp, rgb8, n))) goto out;
+        long tv = env->tick();
+        res->ms_jpeg += tv - tj;
         if (vw && (rc = mfd_view_rows(vw, rgb8, v0, n))) goto out;
+        res->ms_view += env->tick() - tv;
         progress(job, 700 + (int) (300L * (v0 + n) / H));
         if (cancelled(job)) { rc = MFD_E_CANCEL; goto out; }
-        if (env->yield) env->yield();
+        maybe_yield(&D);
     }
     if (jp) rc = mfd_jpeg_end(jp, &res->jpeg_bytes);
     if (vw)
     {
+        long tv = env->tick();
         int rv = mfd_view_end(vw);
+        res->ms_view += env->tick() - tv;
         env->release(vw), vw = 0;
         if (!rc) rc = rv;
     }
@@ -409,6 +477,8 @@ out:
     if (D.jx) env->release(D.jx);
     if (D.rmin) env->release(D.rmin);
     if (D.rmax) env->release(D.rmax);
+    if (D.acc) env->release(D.acc);
+    if (D.gq) env->release(D.gq);
     if (D.ring) env->release(D.ring);
     if (D.rawbuf) env->release(D.rawbuf);
     if (lin) env->release(lin);

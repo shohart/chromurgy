@@ -140,7 +140,7 @@ static int luaCB_mf_overlay_clear(lua_State *L)
 /* ------------------------------------------------------------ the camera's developer
  * src/camera/dev (mfdev_cam.c): one frame at a time in its own task.
  *   mf_dev_start(camfile, devfile, film, dng, jpg|nil, mfv|nil, tmp, seed_hi, seed_lo) -> true | nil, error
- *   mf_dev_status() -> "idle"|"running"|"done"|"error", permille, rc, ms
+ *   mf_dev_status() -> "idle"|"running"|"done"|"error", permille, rc, ms, timing (text, after a frame)
  *   mf_dev_cancel()
  * The developer task runs code of this module: the app develops
  * synchronously (it waits for every frame or stops it), so the script, and
@@ -151,6 +151,7 @@ int mfdc_start(const char *camf, const char *devf, const char *film, const char 
                const char *mfv, const char *tmp, unsigned seed_hi, unsigned seed_lo);
 void mfdc_status(int *state, int *permille, int *rc, int *ms);
 void mfdc_cancel(void);
+const char *mfdc_timing(void);
 int mfdc_busy(void);
 
 static int luaCB_mf_dev_start(lua_State *L)
@@ -175,7 +176,8 @@ static int luaCB_mf_dev_status(lua_State *L)
     lua_pushnumber(L, pm);
     lua_pushnumber(L, rc);
     lua_pushnumber(L, ms);
-    return 4;
+    lua_pushstring(L, mfdc_timing());
+    return 5;
 }
 
 static int luaCB_mf_dev_cancel(lua_State *L)

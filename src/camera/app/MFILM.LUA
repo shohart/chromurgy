@@ -765,7 +765,7 @@ local STAGES = {{600, "scanning the negative"}, {700, "halation"}, {1001, "print
 local devui = {}                                   -- what the developing screen shows now
 
 local function develop_lines(r, i, n, pm, done, failed, eta)
-  local phase = get_tick_count() / 250 % 4
+  local phase = get_tick_count() / 500 % 4
   local stage = ""
   for _, st in ipairs(STAGES) do if pm < st[1] then stage = st[2] break end end
   local roll_pm = ((i - 1) * 1000 + pm) / n
@@ -857,26 +857,36 @@ local function develop_roll(r)
       repeat
         tries = tries + 1
         collectgarbage("collect")                 -- Lua garbage holds heap the developer needs
-        local st, pm, rc, ms = "error", 0, 0, 0
-        local ok, err = mf_dev_start(camf, devf, r.film, fr.path, jpg, mfv, mf.DEV_ROOT .. "/WORK.TMP", hi, lo)
+        local st, pm, rc, ms, timing = "error", 0, 0, 0, nil
+        -- the viewer needs only the MFV; a JPEG (800x600) costs ~2.5 s a frame and
+        -- nothing uses it yet (the server develops full size): camera_jpeg=1 in MFILM.CFG
+        local want_jpg = mf.cfg.camera_jpeg == "1" and jpg or nil
+        local ok, err = mf_dev_start(camf, devf, r.film, fr.path, want_jpg, mfv, mf.DEV_ROOT .. "/WORK.TMP", hi, lo)
         if not ok then
           mf.log("develop frame " .. i .. ": " .. tostring(err))
           rc = -20
         else
+          local lines, lines_t = nil, -1000
           while true do
-            st, pm, rc, ms = mf_dev_status()
+            st, pm, rc, ms, timing = mf_dev_status()
             if st ~= "running" then break end
-            local elapsed = (get_tick_count() - t_all) / 1000
-            local eta = string.format("elapsed %d:%02d", elapsed / 60, elapsed % 60)
-            if done > 0 then
-              local per = (get_tick_count() - t_all) / (done + pm / 1000)
-              local left = (per * (#r.frames - done) - per * pm / 1000) / 1000
-              if left < 0 then left = 0 end
-              eta = eta .. string.format("      about %d:%02d left", left / 60, left % 60)
+            -- the content (progress, animation) changes at 2 Hz: building and
+            -- drawing it takes CPU from the developer; the screen itself is
+            -- checked every 100 ms, so an erase by Canon is repaired at once
+            if get_tick_count() - lines_t >= 500 then
+              lines_t = get_tick_count()
+              local elapsed = (lines_t - t_all) / 1000
+              local eta = string.format("elapsed %d:%02d", elapsed / 60, elapsed % 60)
+              if done > 0 then
+                local per = (lines_t - t_all) / (done + pm / 1000)
+                local left = (per * (#r.frames - done) - per * pm / 1000) / 1000
+                if left < 0 then left = 0 end
+                eta = eta .. string.format("      about %d:%02d left", left / 60, left % 60)
+              end
+              lines = develop_lines(r, i, #r.frames, pm, done, failed, eta)
             end
-            screen("Developing", develop_lines(r, i, #r.frames, pm, done, failed, eta), nil, 1,
-                   " MENU: stop     developed frames are kept")
-            local k = key(200)
+            screen("Developing", lines, nil, 1, " MENU: stop     developed frames are kept")
+            local k = key(100)
             if k == "menu" and not stopped then
               stopped = true
               mf_dev_cancel()
@@ -888,6 +898,7 @@ local function develop_roll(r)
           done = done + 1
           mf.journal(r, string.format("DEVELOPED frame %d on camera in %d ms", i, ms))
           mf.log(string.format("develop frame %d: %d ms%s", i, ms, heap()))
+          if timing and timing ~= "" then mf.log("develop frame " .. i .. " timing ms: " .. timing) end
         else
           mf.log(string.format("develop frame %d: rc %d (%s)%s", i, rc, DEV_ERR[rc] or "error", heap()))
           if rc == -22 and tries == 1 and not stopped then

@@ -76,9 +76,10 @@ typedef struct mfd_camera {
 } mfd_camera;
 
 /* the camera develops at this size (4:3, the JPEG frame scaled); mf_fx needs no
- * spatial kernel there for any film */
-#define MFD_OUT_W 1024
-#define MFD_OUT_H 768
+ * spatial kernel there for any film. 800x600 (was 1024x768 in 0.4-0.5.3): the
+ * camera's frames are for its 720x480 viewer; 39% fewer pixels to develop. */
+#define MFD_OUT_W 800
+#define MFD_OUT_H 600
 
 /* MFDEV.BIN: every film baked for MFD_OUT_W x MFD_OUT_H (host: mfdev_gen) */
 #define MFD_DEVFILE_MAGIC "MFDEV001"
@@ -115,6 +116,9 @@ typedef struct mfd_result {
     uint8_t dng_sha256[32];
     int32_t scanner_ev_q16;
     long ms_read, ms_scan, ms_glow, ms_render, ms_total;
+    /* finer split (camera profiling, DEV timings in APP.LOG) */
+    long ms_dng_io, ms_bin, ms_lens, ms_tmp_io, ms_jpeg, ms_view, ms_yield;
+    uint32_t yields;
     uint32_t ring_rows, ring_bytes, mem_peak;
     uint32_t jpeg_bytes;
     int32_t focal_q8;

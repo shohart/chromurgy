@@ -61,8 +61,10 @@ int main(int argc, char **argv)
     if (cancel_at) { cancel_limit = atoi(cancel_at); cancel_flag = &cancel; progress_seen = &prog; }
     rc = mfd_develop(&env, &job, &res);
     printf("rc=%d progress=%d w=%d h=%d focal_q8=%d scanner_ev_q16=%d ms_total=%ld mem_peak=%ld ring_rows=%u "
-           "jpeg_bytes=%u sha256=", rc, prog, job.out_w, job.out_h, res.focal_q8, res.scanner_ev_q16, res.ms_total,
-           peak, res.ring_rows, res.jpeg_bytes);
+           "jpeg_bytes=%u ms_dng_io=%ld ms_bin=%ld ms_lens=%ld ms_scan=%ld ms_glow=%ld ms_render=%ld ms_tmp_io=%ld "
+           "ms_jpeg=%ld ms_view=%ld sha256=", rc, prog, job.out_w, job.out_h, res.focal_q8, res.scanner_ev_q16,
+           res.ms_total, peak, res.ring_rows, res.jpeg_bytes, res.ms_dng_io, res.ms_bin, res.ms_lens, res.ms_scan,
+           res.ms_glow, res.ms_render, res.ms_tmp_io, res.ms_jpeg, res.ms_view);
     for (int i = 0; i < 32; i++) printf("%02x", res.dng_sha256[i]);
     printf("\n");
     return rc ? 1 : 0;

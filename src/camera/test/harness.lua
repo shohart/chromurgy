@@ -362,7 +362,7 @@ function mf_dev_status()
   if j.state == "running" then
     if j.cancel then j.state, j.rc = "error", -25
     elseif clock - j.t0 >= DEV_MS then
-      for _, p in ipairs({j.jpg, j.mfv}) do
+      for _, p in ipairs({j.mfv, j.jpg}) do        -- jpg may be nil (not wanted)
         local f = assert(io.open(p, "wb"))
         f:write(p == j.mfv and ("MFV1" .. string.rep("\0", 8) .. string.rep("\128", 480 * 1080)) or "\255\216")
         f:close()
@@ -371,7 +371,7 @@ function mf_dev_status()
     end
   end
   local pm = j.state == "running" and ((clock - j.t0) * 1000 / DEV_MS) or 1000
-  return j.state, pm, j.rc, clock - j.t0
+  return j.state, pm, j.rc, clock - j.t0, j.state == "done" and "dng 1 bin 1 lens 1 scan 1 glow 1 render 1" or ""
 end
 function mf_dev_cancel() if dev_job then dev_job.cancel = true end end
 function mf_overlay_mirror()

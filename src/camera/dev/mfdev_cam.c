@@ -21,6 +21,7 @@ enum { ST_IDLE = 0, ST_RUNNING = 1, ST_DONE = 2, ST_ERROR = 3 };
 static struct {
     volatile int state, progress, cancel;
     int rc, ms, focal_q8;
+    char timing[160];
     char camf[64], devf[64], film[32], dng[64], jpg[64], mfv[64], tmp[64];
     uint32_t seed_hi, seed_lo;
 } S;
@@ -63,6 +64,12 @@ static void dev_task(void)
         job.progress = &S.progress, job.cancel = &S.cancel;
         rc = mfd_develop(&ENV, &job, &res);
         S.focal_q8 = res.focal_q8;
+        /* where the time went (APP.LOG via the app): dng read, binning, lens,
+         * film scan/glow/render passes, temp file, jpeg, viewer, yields */
+        sprintf(S.timing, "dng %d bin %d lens %d scan %d glow %d render %d tmp %d jpeg %d view %d yield %d/%d",
+                (int) res.ms_dng_io, (int) res.ms_bin, (int) res.ms_lens, (int) res.ms_scan, (int) res.ms_glow,
+                (int) res.ms_render, (int) res.ms_tmp_io, (int) res.ms_jpeg, (int) res.ms_view, (int) res.ms_yield,
+                (int) res.yields);   /* %d only: Canon's _vsprintf behind sprintf, %ld unproven */
     }
     if (cam) free(cam);
     if (table) free(table);
@@ -90,7 +97,7 @@ int mfdc_start(const char *camf, const char *devf, const char *film, const char 
     copy(S.dng, dng, sizeof S.dng), copy(S.jpg, jpg, sizeof S.jpg), copy(S.mfv, mfv, sizeof S.mfv);
     copy(S.tmp, tmp, sizeof S.tmp);
     S.seed_hi = seed_hi, S.seed_lo = seed_lo;
-    S.progress = 0, S.cancel = 0, S.rc = 0, S.ms = 0, S.focal_q8 = 0;
+    S.progress = 0, S.cancel = 0, S.rc = 0, S.ms = 0, S.focal_q8 = 0, S.timing[0] = 0;
     S.state = ST_RUNNING;
     CreateTask("MFDevelop", 0x1A, 0x4000, (void *) dev_task);   /* below spytask, as CHDK's DNG reverser */
     return 0;
@@ -100,6 +107,8 @@ void mfdc_status(int *state, int *permille, int *rc, int *ms)
 {
     *state = S.state, *permille = S.progress, *rc = S.rc, *ms = S.ms;
 }
+
+const char *mfdc_timing(void) { return S.timing; }
 
 void mfdc_cancel(void) { if (S.state == ST_RUNNING) S.cancel = 1; }
 

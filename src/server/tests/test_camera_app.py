@@ -297,8 +297,7 @@ def test_develop_on_camera_then_view(card):
     assert idx.startswith("roll=" + r["roll_id"] + "|portra400|") and "|2|C" in idx
     journal = next((card / "A" / "CHDK" / "MFILM" / "ROLLS").glob("*/JOURNAL.LOG")).read_text()
     assert "DEVELOPED frame 2 on camera" in journal and "DEVELOP on camera finished: 2 frames" in journal
-    jpgs = sorted((card / "A" / "CHDK" / "MFDEV").glob("C*/F*.JPG"))
-    assert [j.name for j in jpgs] == ["F01.JPG", "F02.JPG"]
+    assert not list((card / "A" / "CHDK" / "MFDEV").glob("C*/F*.JPG"))      # no camera JPEG by default
 
 
 def test_develop_can_be_stopped_and_keeps_the_roll_undeveloped(card):
