@@ -1,0 +1,202 @@
+openapi: 3.1.0
+info:
+  title: M-Film Web Darkroom API Extension
+  version: 0.5.0-draft
+  description: >-
+    Proposed backend-for-frontend contract. Merge with existing camera receiver
+    and creative APIs without changing their routes. No endpoint is implemented by this spec.
+servers:
+  - url: /api/v1
+security:
+  - WebSession: []
+paths:
+  /darkroom/sources/uploads:
+    post:
+      summary: Initialize authenticated resumable RAW browser upload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, size_bytes]
+              properties:
+                filename: {type: string}
+                size_bytes: {type: integer, format: int64, minimum: 1}
+                sha256: {type: string}
+      responses:
+        '201':
+          description: Upload session ID and resumable offset
+        '413': {description: Limit exceeded}
+  /darkroom/sources/uploads/{upload_id}/chunk:
+    put:
+      summary: Stream a bounded binary chunk to existing upload
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: X-Upload-Offset
+          in: header
+          required: true
+          schema: {type: integer, format: int64, minimum: 0}
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '200': {description: Offset committed}
+        '409': {description: Offset conflict}
+  /darkroom/sources/uploads/{upload_id}/complete:
+    post:
+      summary: Verify hash and commit an immutable uploaded RAW asset
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Returns eligible canonical asset ID and RAW metadata}
+        '422': {description: Invalid or unsupported RAW file}
+  /darkroom/photoprism/instances:
+    get:
+      summary: List configured authorized instances and capabilities (no secrets)
+      responses:
+        '200': {description: PhotoPrism instances and independent read/write states}
+  /darkroom/photoprism/{instance_id}/albums:
+    get:
+      summary: Paginated available albums with writable/manual flags
+      parameters:
+        - $ref: '#/components/parameters/InstanceId'
+        - $ref: '#/components/parameters/Count'
+        - $ref: '#/components/parameters/Offset'
+        - in: query
+          name: q
+          schema: {type: string}
+      responses:
+        '200': {description: Album choices and pagination}
+  /darkroom/photoprism/{instance_id}/folders:
+    get:
+      summary: Browse allowlisted originals folders
+      parameters:
+        - $ref: '#/components/parameters/InstanceId'
+        - in: query
+          name: parent_id
+          schema: {type: string}
+      responses:
+        '200': {description: Folder choices with capabilities}
+  /darkroom/photoprism/{instance_id}/photos:
+    get:
+      summary: Browse selected album/folder photos with RAW eligibility
+      parameters:
+        - $ref: '#/components/parameters/InstanceId'
+        - in: query
+          name: source_kind
+          required: true
+          schema: {type: string, enum: [album, folder]}
+        - in: query
+          name: source_uid
+          required: true
+          schema: {type: string}
+        - $ref: '#/components/parameters/Count'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200': {description: Photos, RAW-backed source asset IDs, skip reasons and pagination}
+  /darkroom/previews:
+    post:
+      summary: Debounced asynchronous render preview from immutable source and full recipe v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset_id, recipe]
+              properties:
+                asset_id: {type: string}
+                recipe: {type: object, additionalProperties: true}
+                max_edge: {type: integer, default: 1280, minimum: 320, maximum: 2048}
+      responses:
+        '202': {description: Preview job ID and status URL}
+  /darkroom/jobs:
+    post:
+      summary: Create durable batch development job from snapshotted source assets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/JobRequest'}
+      responses:
+        '202': {description: Job accepted with status resource}
+        '422': {description: No eligible files or invalid recipe}
+  /darkroom/jobs/{job_id}:
+    get:
+      summary: Read job progress, per-frame failures, and publication stages
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200': {description: Durable job status and artifact references}
+  /darkroom/jobs/{job_id}/cancel:
+    post:
+      summary: Request cooperative cancellation without deleting committed artifacts
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '202': {description: Cancellation requested}
+  /darkroom/renders/{render_id}/publish:
+    post:
+      summary: Publish completed render to validated PhotoPrism folder and/or manual album
+      parameters:
+        - name: render_id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                photoprism_instance_id: {type: string}
+                photoprism_folder: {type: string}
+                photoprism_album_uid: {type: string}
+                create_album_name: {type: string}
+      responses:
+        '202': {description: Publication/index/album association queued}
+components:
+  securitySchemes:
+    WebSession:
+      type: http
+      scheme: bearer
+  parameters:
+    InstanceId:
+      in: path
+      name: instance_id
+      required: true
+      schema: {type: string}
+    JobId:
+      in: path
+      name: job_id
+      required: true
+      schema: {type: string}
+    Count:
+      in: query
+      name: count
+      schema: {type: integer, default: 100, minimum: 1, maximum: 500}
+    Offset:
+      in: query
+      name: offset
+      schema: {type: integer, default: 0, minimum: 0}
+  schemas:
+    JobRequest:
+      type: object
+      description: More detailed validation in web-darkroom-job.schema.json
+      required: [source, recipe, output]
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        source: {type: object, additionalProperties: true}
+        recipe: {type: object, additionalProperties: true}
+        output: {type: object, additionalProperties: true}
+        idempotency_key: {type: string}

@@ -1,0 +1,47 @@
+version: 0.1-provisional
+units:
+  threshold: scene-linear Luma after normalized exposure, reference middle gray 0.18
+  knee: scene-linear threshold blend width
+  radius_fraction: fraction of output image diagonal
+  strength: '[0,1] mix factor'
+effects:
+- id: soft_sun_glow
+  default:
+    threshold: 1.0
+    knee: 0.28
+    radius_fraction: 0.012
+    warm_shift: 0.1
+    veil: 0.08
+- id: ricoh_hdf_diffusion
+  default:
+    threshold: 0.75
+    knee: 0.35
+    radius_fraction: 0.006
+    broad_radius_fraction: 0.02
+    veil: 0.045
+- id: black_pro_mist_like
+  default:
+    threshold: 0.85
+    knee: 0.3
+    radius_fraction: 0.015
+    veil: 0.035
+- id: vintage_veiling_flare
+  default:
+    threshold: 0.9
+    knee: 0.4
+    radius_fraction: 0.05
+    veil: 0.13
+- id: film_halation_extra
+  default:
+    threshold: 1.15
+    knee: 0.2
+    radius_fraction: 0.003
+    red_gain: 0.12
+- id: orton_glow
+  default:
+    threshold: 0.5
+    knee: 0.4
+    radius_fraction: 0.03
+    mix: 0.28
+- id: none
+  default: {}

@@ -1,0 +1,146 @@
+schema_version: 2
+status: specification_templates_not_shipped_LUTs
+camera_looks:
+- id: leica_m8_ccd
+  name: Leica M8 CCD
+  evidence_tier: inspired
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: leica_m9_ccd
+  name: Leica M9 CCD
+  evidence_tier: inspired
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: fujifilm_s5_pro
+  name: Fujifilm FinePix S5 Pro
+  evidence_tier: inspired
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: nikon_d200_ccd
+  name: Nikon D200 CCD
+  evidence_tier: inspired
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: pentax_645d_ccd
+  name: Pentax 645D CCD
+  evidence_tier: inspired
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: ricoh_gr_iii_positive
+  name: Ricoh GR III Positive Film
+  evidence_tier: inspired
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: sigma_dp2_merrill_foveon
+  name: Sigma DP2 Merrill Foveon Look
+  evidence_tier: inspired
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: fujifilm_xpro3_classic_negative
+  name: Fujifilm X-Pro3 Classic Negative
+  evidence_tier: inspired
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: neutral
+  name: Neutral rendering
+  evidence_tier: baseline
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+optical_effects:
+- id: soft_sun_glow
+  name: Warm sun and highlight glow
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: ricoh_hdf_diffusion
+  name: Ricoh HDF-inspired diffusion
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: black_pro_mist_like
+  name: Diffusion-filter-like mist
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: vintage_veiling_flare
+  name: Vintage veiling flare
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: film_halation_extra
+  name: Independent optional red halation
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: orton_glow
+  name: Soft painterly Orton-like glow
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+- id: none
+  name: No optical effect
+  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+composites:
+- id: leica-m9-portra-sun-v1
+  name: Leica M9 + Portra + Soft Sun Glow
+  camera_look_id: leica_m9_ccd
+  camera_look_strength: 0.8
+  film_profile_id: kodak-portra-400
+  optical_effect_id: soft_sun_glow
+  optical_strength: 0.45
+- id: golden_haze
+  name: Golden Haze (original artistic preset)
+  camera_look_id: fujifilm_s5_pro
+  camera_look_strength: 0.5
+  film_profile_id: kodak-gold-200
+  optical_effect_id: soft_sun_glow
+  optical_strength: 0.75
+- id: ricoh-gr-hdf-street
+  name: Ricoh GR III HDF Street
+  camera_look_id: ricoh_gr_iii_positive
+  camera_look_strength: 0.9
+  film_profile_id: none
+  optical_effect_id: ricoh_hdf_diffusion
+  optical_strength: 0.65
+- id: fuji-s5-portrait
+  name: Fuji S5 Portrait
+  camera_look_id: fujifilm_s5_pro
+  camera_look_strength: 1.0
+  film_profile_id: kodak-portra-400
+  optical_effect_id: black_pro_mist_like
+  optical_strength: 0.2
+- id: nikon-d200-gold
+  name: Nikon D200 Gold
+  camera_look_id: nikon_d200_ccd
+  camera_look_strength: 0.85
+  film_profile_id: kodak-gold-200
+  optical_effect_id: none
+  optical_strength: 0
+- id: sigma-merrill-clean
+  name: Sigma Merrill Clean
+  camera_look_id: sigma_dp2_merrill_foveon
+  camera_look_strength: 1
+  film_profile_id: none
+  optical_effect_id: none
+  optical_strength: 0
+- id: classic-negative-city
+  name: Classic Negative City
+  camera_look_id: fujifilm_xpro3_classic_negative
+  camera_look_strength: 0.9
+  film_profile_id: none
+  optical_effect_id: vintage_veiling_flare
+  optical_strength: 0.15
+- id: pentax-645d-landscape
+  name: Pentax 645D Landscape
+  camera_look_id: pentax_645d_ccd
+  camera_look_strength: 0.8
+  film_profile_id: none
+  optical_effect_id: none
+  optical_strength: 0
+- id: leica-m8-street
+  name: Leica M8 Street
+  camera_look_id: leica_m8_ccd
+  camera_look_strength: 0.95
+  film_profile_id: none
+  optical_effect_id: none
+  optical_strength: 0
+- id: vintage-sun-haze
+  name: Vintage Sun Haze
+  camera_look_id: nikon_d200_ccd
+  camera_look_strength: 0.35
+  film_profile_id: kodak-portra-400
+  optical_effect_id: vintage_veiling_flare
+  optical_strength: 0.45
+- id: cine-halo
+  name: Cine Halo
+  camera_look_id: neutral
+  camera_look_strength: 0
+  film_profile_id: cinestill-800t
+  optical_effect_id: film_halation_extra
+  optical_strength: 0.35
+- id: orton-dream
+  name: Orton Dream
+  camera_look_id: pentax_645d_ccd
+  camera_look_strength: 0.35
+  film_profile_id: none
+  optical_effect_id: orton_glow
+  optical_strength: 0.5

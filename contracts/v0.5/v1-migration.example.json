@@ -1,0 +1,29 @@
+{
+  "input_v1": {
+    "schema_version": 1,
+    "film_profile_id": "kodak-portra-400",
+    "look_controls": {
+      "grain_scale": 1.0,
+      "halation_scale": 1.0,
+      "softness_scale": 1.0
+    }
+  },
+  "expected_v2_defaults": {
+    "camera_look": {
+      "id": "neutral",
+      "version": "1.0.0",
+      "strength": 0.0
+    },
+    "optical": {
+      "preset_id": "none",
+      "strength": 0.0,
+      "stack": []
+    },
+    "film": {
+      "id": "kodak-portra-400",
+      "grain_scale": 1.0,
+      "halation_scale": 1.0,
+      "softness_scale": 1.0
+    }
+  }
+}

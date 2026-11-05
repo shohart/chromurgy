@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "source": {
+    "kind": "photoprism_album",
+    "instance_id": "home-photoprism",
+    "source_uid": "sample-album-uid",
+    "assets": [
+      {
+        "asset_id": "src_nef_d5100_001",
+        "photoprism_photo_uid": "sample-photo-uid",
+        "photoprism_file_uid": "sample-file-uid"
+      }
+    ]
+  },
+  "recipe": {
+    "schema_version": 2,
+    "preset_id": "leica-m9-portra-sun-v1",
+    "camera_look": {
+      "id": "leica_m9_ccd",
+      "version": "1.0.0",
+      "strength": 0.8
+    },
+    "film": {
+      "id": "kodak-portra-400",
+      "grain_scale": 1.0,
+      "halation_scale": 1.0,
+      "softness_scale": 1.0
+    },
+    "optical": {
+      "preset_id": "soft_sun_glow",
+      "strength": 0.45,
+      "halation_policy": "film",
+      "stack": [
+        {
+          "id": "soft_sun_glow",
+          "enabled": true,
+          "parameters": {
+            "threshold": 1.0,
+            "knee": 0.25,
+            "radius_fraction": 0.012
+          }
+        }
+      ]
+    },
+    "render": {
+      "output_format": "jpeg",
+      "output_color_space": "srgb",
+      "quality": 92,
+      "width": 4000,
+      "height": 3000
+    },
+    "seed": 12345
+  },
+  "output": {
+    "format": "jpeg",
+    "quality": 92,
+    "publish": true,
+    "photoprism_instance_id": "home-photoprism",
+    "photoprism_folder": "MFilm/Developed/2026/Sample",
+    "create_album_name": "Sample \u2014 Developed",
+    "save_to_local_library": true
+  },
+  "idempotency_key": "demo-job-001"
+}
