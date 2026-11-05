@@ -18,6 +18,7 @@
 #define MFD_E_MEM -22
 #define MFD_E_DATA -23         /* bad MFDEV.BIN */
 #define MFD_E_LENS -24
+#define MFD_E_CANCEL -25
 
 typedef struct mfd_env {
     void *(*open)(const char *path, int write);        /* 0 on failure */
@@ -49,6 +50,7 @@ typedef struct mfd_dng {
     uint32_t act_top, act_left, vis_w, vis_h;          /* ActiveArea */
     uint32_t black, white;
     uint32_t focal_num, focal_den;
+    uint32_t orientation;      /* TIFF Orientation (1 normal, 6 = 90 CW, 8 = 90 CCW, 3 = 180) */
     uint8_t cfa[4];                                    /* 0 R 1 G 2 B, row-major 2x2 */
     char datetime[20];
     char model[32];
@@ -56,7 +58,7 @@ typedef struct mfd_dng {
 /* parse the header bytes [0, len) (everything before the raw strip) */
 int mfd_dng_parse(const uint8_t *hdr, size_t len, mfd_dng *d);
 
-/* lens table entry (fixed point), see profiles/lenses/*.json */
+/* lens table entry (fixed point), see profiles/lenses/ (JSON) */
 typedef struct mfd_lens {
     int32_t focal_q8;          /* mm * 256 */
     int32_t cx_q8, cy_q8;      /* raw visible px * 256 */
@@ -73,13 +75,40 @@ typedef struct mfd_camera {
     mfd_lens lens[MFD_MAX_LENS];
 } mfd_camera;
 
+/* the camera develops at this size (4:3, the JPEG frame scaled); mf_fx needs no
+ * spatial kernel there for any film */
+#define MFD_OUT_W 1024
+#define MFD_OUT_H 768
+
+/* MFDEV.BIN: every film baked for MFD_OUT_W x MFD_OUT_H (host: mfdev_gen) */
+#define MFD_DEVFILE_MAGIC "MFDEV001"
+typedef struct mfd_devfile_header {
+    char magic[8];
+    uint32_t nfilms, width, height, block_bytes;    /* block = mf_fx_look + mf_table */
+} mfd_devfile_header;
+typedef struct mfd_devfile_entry {
+    char key[28];
+    uint32_t offset;
+} mfd_devfile_entry;
+
+/* MFCAM.BIN: "MFCAM001" + mfd_camera (host: mfilm_server.camera_dev) */
+#define MFD_CAMFILE_MAGIC "MFCAM001"
+
+/* the viewer frame (src/server/mfilm_server/camera_view.py): 720x480 UYVYYY */
+#define MFD_VIEW_W 720
+#define MFD_VIEW_H 480
+
 typedef struct mfd_job {
     const char *dng_path, *jpeg_path, *tmp_path;
+    const char *mfv_path;      /* viewer frame, or 0 */
     const mfd_camera *cam;
     const mf_fx_look *look;    /* baked for out_w x out_h */
     const uint16_t *table;     /* the film's 33^3 table */
     uint64_t seed;
     int out_w, out_h, quality;
+    int hash;                  /* 1: SHA-256 of the DNG in res (adds ~10 s on the camera) */
+    volatile int *progress;    /* 0..1000 while running, or 0 */
+    volatile int *cancel;      /* set non-zero to stop, or 0 */
 } mfd_job;
 
 typedef struct mfd_result {
@@ -92,6 +121,18 @@ typedef struct mfd_result {
 } mfd_result;
 
 int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res);
+
+/* viewer frame writer (mfd_view.c), fed with the developed 8-bit rows */
+typedef struct mfd_view mfd_view;
+size_t mfd_view_size(void);
+int mfd_view_begin(mfd_view *v, const mfd_env *env, const char *path, int w, int h, int orientation);
+int mfd_view_rows(mfd_view *v, const uint8_t *rgb, int y0, int n);
+int mfd_view_end(mfd_view *v);
+
+/* load one film's look + table from MFDEV.BIN into caller memory (table: MF_NGRID*3 uint16) */
+int mfd_film_load(const mfd_env *env, const char *path, const char *key, mf_fx_look *look, uint16_t *table);
+/* load MFCAM.BIN */
+int mfd_camera_load(const mfd_env *env, const char *path, mfd_camera *cam);
 
 /* lens: output pixel centre (Q8, JPEG-frame coordinates) -> raw visible (Q8) */
 int mfd_lens_at(const mfd_camera *cam, int32_t focal_q8, int32_t jx_q8, int32_t jy_q8, int32_t *rx_q8,

@@ -48,3 +48,14 @@ add_executable(mfbench_gen ${PROJECT_SOURCE_DIR}/src/camera/mfbench/mfbench_gen.
 target_link_libraries(mfbench_gen mf_core)
 add_test(NAME mfbench_gen_runs
          COMMAND mfbench_gen ${PROJECT_SOURCE_DIR}/profiles/mfilm-films.bin portra400 ${CMAKE_CURRENT_BINARY_DIR}/MFBENCH.BIN)
+
+# the camera's offline developer (src/camera/dev): MFDEV.BIN generator and a host driver
+set(MFD_SRC ${PROJECT_SOURCE_DIR}/src/camera/dev)
+add_library(mfd STATIC ${MFD_SRC}/mfd_develop.c ${MFD_SRC}/mfd_dng.c ${MFD_SRC}/mfd_jpeg.c ${MFD_SRC}/mfd_view.c
+            ${MFD_SRC}/mfd_files.c)
+target_include_directories(mfd PUBLIC ${MFD_SRC})
+target_link_libraries(mfd mf_core)
+add_executable(mfdev_gen ${MFD_SRC}/mfdev_gen.c)
+target_link_libraries(mfdev_gen mfd)
+add_executable(mfdev_host ${MFD_SRC}/mfdev_host.c)
+target_link_libraries(mfdev_host mfd)

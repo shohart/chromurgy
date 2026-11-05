@@ -89,6 +89,13 @@ def write_card(out: Path, *, utc_offset: str | None = None, bench: bool = False,
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
             written.append(dst)
+        # the camera's developer: camera constants + every film baked at 1024x768
+        from .camera_dev import camera_blob, films_blob
+        dev = out / "CHDK" / "MFDEV"
+        dev.mkdir(parents=True, exist_ok=True)
+        (dev / "MFCAM.BIN").write_bytes(camera_blob())
+        films_blob(bundle.path, dev / "MFDEV.BIN")
+        written += [dev / "MFCAM.BIN", dev / "MFDEV.BIN"]
     if bench:
         built = REPO / "build" / "chdk-card" / "CHDK"
         for rel in ("MODULES/mfbench.flt", "DATA/MFBENCH.BIN", "SCRIPTS/MFPROBE.LUA"):

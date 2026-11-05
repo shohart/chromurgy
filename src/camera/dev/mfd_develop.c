@@ -119,9 +119,16 @@ static void *xalloc(dev *D, size_t n)
 static int read_hash(dev *D, void *buf, long n)
 {
     if (D->env->read(D->f, buf, n) != n) return MFD_E_IO;
-    mfd_sha_update(&D->sha, buf, (size_t) n);
+    if (D->job->hash) mfd_sha_update(&D->sha, buf, (size_t) n);
     return MFD_OK;
 }
+
+static void progress(const mfd_job *job, int permille)
+{
+    if (job->progress) *job->progress = permille;
+}
+
+static int cancelled(const mfd_job *job) { return job->cancel && *job->cancel; }
 
 /* quarter row qi from raw visible rows 4qi..4qi+3 */
 static int produce_q(dev *D)
@@ -221,6 +228,7 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
     uint8_t *rgb8 = 0, *hdr = 0;
     void *ctx = 0, *tmp = 0, *jf = 0;
     mfd_jpeg *jp = 0;
+    mfd_view *vw = 0;
     mf_fx *fx = 0;
 
     if (!(D.f = env->open(job->dng_path, 0))) return MFD_E_IO;
@@ -237,7 +245,7 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
         if (got < 0) { rc = MFD_E_IO; goto out; }
         if ((rc = mfd_dng_parse(hdr, (size_t) got + 8, &D.d))) goto out;
         if (D.d.strip_off > hl || D.d.vis_w < 16 || D.d.vis_h < 16) { rc = MFD_E_DNG; goto out; }
-        mfd_sha_update(&D.sha, hdr, D.d.strip_off);
+        if (job->hash) mfd_sha_update(&D.sha, hdr, D.d.strip_off);
         if (env->seek(D.f, (long) D.d.strip_off)) { rc = MFD_E_IO; goto out; }
         env->release(hdr), hdr = 0, D.mem -= (uint32_t) hl;
     }
@@ -290,8 +298,10 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
     rgb8 = xalloc(&D, row_px * STRIP);
     size_t ctx_len = mf_fx_ctx_size(W, H);
     ctx = xalloc(&D, ctx_len);
-    jp = xalloc(&D, mfd_jpeg_size());
-    if (!D.ring || !D.rawbuf || !lin || !disp || !rgb8 || !ctx || !jp) { rc = MFD_E_MEM; goto out; }
+    jp = job->jpeg_path ? xalloc(&D, mfd_jpeg_size()) : 0;
+    vw = job->mfv_path ? xalloc(&D, mfd_view_size()) : 0;
+    if (!D.ring || !D.rawbuf || !lin || !disp || !rgb8 || !ctx || (job->jpeg_path && !jp) || (job->mfv_path && !vw))
+    { rc = MFD_E_MEM; goto out; }
     res->mem_peak = D.mem;
     if ((rc = mf_fx_begin(ctx, ctx_len, job->look, job->table, job->seed, &fx)) != MF_OK) goto out;
     if (!(tmp = env->open(job->tmp_path, 1))) { rc = MFD_E_IO; goto out; }
@@ -321,9 +331,12 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
         t1 = env->tick();
         if ((rc = mf_fx_scan_rows(fx, lin, row_px, v0, n)) != MF_OK) goto out;
         ms_scan += env->tick() - t1;
+        progress(job, (int) (600L * (v0 + n) / H));
+        if (cancelled(job)) { rc = MFD_E_CANCEL; goto out; }
         if (env->yield) env->yield();
     }
     /* rest of the DNG: hash only */
+    if (job->hash)
     {
         long got;
         while ((got = env->read(D.f, D.rawbuf, (long) (4 * D.d.row_bytes))) > 0) mfd_sha_update(&D.sha, D.rawbuf, (size_t) got);
@@ -343,6 +356,8 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
         int n = v0 + STRIP > H ? H - v0 : STRIP;
         if (env->read(tmp, lin, (long) (row_px * 2 * (size_t) n)) != (long) (row_px * 2 * (size_t) n)) { rc = MFD_E_IO; goto out; }
         if ((rc = mf_fx_glow_rows(fx, lin, row_px, v0, n)) != MF_OK) goto out;
+        progress(job, 600 + (int) (100L * (v0 + n) / H));
+        if (cancelled(job)) { rc = MFD_E_CANCEL; goto out; }
         if (env->yield) env->yield();
     }
     res->ms_glow = env->tick() - t1;
@@ -350,18 +365,31 @@ int mfd_develop(const mfd_env *env, const mfd_job *job, mfd_result *res)
     /* C: render pass -> JPEG */
     t1 = env->tick();
     if (env->seek(tmp, 0)) { rc = MFD_E_IO; goto out; }
-    if (!(jf = env->open(job->jpeg_path, 1))) { rc = MFD_E_IO; goto out; }
-    if ((rc = mfd_jpeg_begin(jp, env, jf, W, H, job->quality))) goto out;
+    if (jp)
+    {
+        if (!(jf = env->open(job->jpeg_path, 1))) { rc = MFD_E_IO; goto out; }
+        if ((rc = mfd_jpeg_begin(jp, env, jf, W, H, job->quality))) goto out;
+    }
+    if (vw && (rc = mfd_view_begin(vw, env, job->mfv_path, W, H, (int) D.d.orientation))) goto out;
     for (int v0 = 0; v0 < H; v0 += STRIP)
     {
         int n = v0 + STRIP > H ? H - v0 : STRIP;
         if (env->read(tmp, lin, (long) (row_px * 2 * (size_t) n)) != (long) (row_px * 2 * (size_t) n)) { rc = MFD_E_IO; goto out; }
         if ((rc = mf_fx_render_rows(fx, lin, row_px, v0, n, disp, row_px)) != MF_OK) goto out;
         for (size_t i = 0; i < row_px * (size_t) n; i++) rgb8[i] = (uint8_t) (((uint32_t) disp[i] * 255u + 32767u) / 65535u);
-        if ((rc = mfd_jpeg_rows(jp, rgb8, n))) goto out;
+        if (jp && (rc = mfd_jpeg_rows(jp, rgb8, n))) goto out;
+        if (vw && (rc = mfd_view_rows(vw, rgb8, v0, n))) goto out;
+        progress(job, 700 + (int) (300L * (v0 + n) / H));
+        if (cancelled(job)) { rc = MFD_E_CANCEL; goto out; }
         if (env->yield) env->yield();
     }
-    rc = mfd_jpeg_end(jp, &res->jpeg_bytes);
+    if (jp) rc = mfd_jpeg_end(jp, &res->jpeg_bytes);
+    if (vw)
+    {
+        int rv = mfd_view_end(vw);
+        env->release(vw), vw = 0;
+        if (!rc) rc = rv;
+    }
     res->ms_render = env->tick() - t1;
 
 out:
@@ -369,7 +397,9 @@ out:
     if (tmp) env->close(tmp);
     if (jf) env->close(jf);
     env->remove(job->tmp_path);
+    if (vw) { mfd_view_end(vw); env->release(vw); }
     if (rc && job->jpeg_path) env->remove(job->jpeg_path);
+    if (rc && job->mfv_path) env->remove(job->mfv_path);
     if (hdr) env->release(hdr);
     if (D.jx) env->release(D.jx);
     if (D.rmin) env->release(D.rmin);

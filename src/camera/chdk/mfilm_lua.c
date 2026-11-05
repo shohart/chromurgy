@@ -112,3 +112,50 @@ static int luaCB_mf_overlay_clear(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+
+/* ------------------------------------------------------------ the camera's developer
+ * src/camera/dev (mfdev_cam.c): one frame at a time in its own task.
+ *   mf_dev_start(camfile, devfile, film, dng, jpg|nil, mfv|nil, tmp, seed_hi, seed_lo) -> true | nil, error
+ *   mf_dev_status() -> "idle"|"running"|"done"|"error", permille, rc, ms
+ *   mf_dev_cancel()
+ * The Lua module is not unloaded while a frame is being developed
+ * (_liblua can_unload, patched in by tools/build_chdk16.sh). */
+int mfdc_start(const char *camf, const char *devf, const char *film, const char *dng, const char *jpg,
+               const char *mfv, const char *tmp, unsigned seed_hi, unsigned seed_lo);
+void mfdc_status(int *state, int *permille, int *rc, int *ms);
+void mfdc_cancel(void);
+int mfdc_busy(void);
+
+static int mf_can_unload(void) { return !mfdc_busy(); }
+
+static int luaCB_mf_dev_start(lua_State *L)
+{
+    const char *jpg = lua_isnil(L, 5) ? 0 : luaL_checkstring(L, 5);
+    const char *mfv = lua_isnil(L, 6) ? 0 : luaL_checkstring(L, 6);
+    int rc = mfdc_start(luaL_checkstring(L, 1), luaL_checkstring(L, 2), luaL_checkstring(L, 3),
+                        luaL_checkstring(L, 4), jpg, mfv, luaL_checkstring(L, 7),
+                        (unsigned) luaL_checknumber(L, 8), (unsigned) luaL_checknumber(L, 9));
+    if (rc == -1) return mf_fail(L, "busy");
+    if (rc) return mf_fail(L, "bad arguments");
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int luaCB_mf_dev_status(lua_State *L)
+{
+    static const char *names[] = {"idle", "running", "done", "error"};
+    int st, pm, rc, ms;
+    mfdc_status(&st, &pm, &rc, &ms);
+    lua_pushstring(L, (st >= 0 && st <= 3) ? names[st] : "error");
+    lua_pushnumber(L, pm);
+    lua_pushnumber(L, rc);
+    lua_pushnumber(L, ms);
+    return 4;
+}
+
+static int luaCB_mf_dev_cancel(lua_State *L)
+{
+    (void) L;
+    mfdc_cancel();
+    return 0;
+}

@@ -224,3 +224,36 @@ shooting is caught and turned back into the M-Film menu.
 
 Installing: the card needs the M-Film DISKBOOT.BIN and CHDK/MODULES from
 `mfilmctl camera-card OUT --chdk`; the app says so if it runs on stock CHDK.
+
+## 0.4.0: developing on the camera
+
+Rolls -> roll card -> Develop develops every frame on the camera (a roll still
+in the camera is finished first, after a confirmation). Per frame, in its own
+task (prio 0x1A, yields every 8-row strip): the DNG is read once and binned
+4x4, LibRaw's fitted daylight transform, the lens table (fixed point),
+mf_fx scan/glow/render at 1024x768, then a baseline JPEG
+(A/CHDK/MFDEV/C<7 hex>/Fnn.JPG) and the viewer frame
+(A/CHDK/MFVIEW/C<7 hex>/Fnn.MFV, turned upright by the DNG orientation:
+TIFF 8 = LibRaw flip 5, 6 = flip 6). A finished roll goes into
+A/CHDK/MFVIEW/CAMINDEX.CFG; the viewer prefers the server's set (INDEX.CFG)
+when both exist. MENU stops; frames already developed stay. Full-size
+development stays the server's job.
+
+Code: src/camera/dev (mfd_develop, mfd_dng, mfd_jpeg, mfd_view, mfd_files,
+mfdev_cam = CHDK env + task), linked into lua.flt by
+src/camera/chdk/makefile_usermodules.inc (developer and film core -marm); Lua
+functions mf_dev_start / mf_dev_status / mf_dev_cancel in mfilm_lua.c; the
+Lua module's can_unload keeps it loaded while a frame is developing.
+
+Data on the card (mfilmctl camera-card --chdk): CHDK/MFDEV/MFCAM.BIN
+(camera_dev.py: white balance, camera->sRGB matrix, lens table in fixed
+point) and MFDEV.BIN (mfdev_gen: all 72 films baked at 1024x768, 15.5 MB).
+
+Host evidence: mfdev_host (same code and files) on three of the owner's
+frames: landscape 4.3 mm, portrait 19 mm (orientation 8), portrait 4.3 mm
+(6): mean colour within 1/255 of the server's render, viewer frames upright;
+0.3 s per frame on the workstation; heap peak 350 KB landscape, 930 KB
+portrait (+216 KB film table). tests/test_camera_dev.py runs it on a
+synthetic CHDK-layout DNG (landscape, both portraits, unknown film), the
+harness covers the app flow (develop, stop, missing data files).
+HARDWARE-TEST REQUIRED: time per frame and heap on the SX510 HS.

@@ -186,6 +186,7 @@ int mfd_dng_parse(const uint8_t *hdr, size_t len, mfd_dng *d)
         d->cfa[i] = (uint8_t) v;
     }
     if ((d->act_top | d->act_left) & 1) return MFD_E_DNG;                  /* keep the CFA phase simple */
+    d->orientation = get(B, ifd0, 274, 0, &v) && v >= 1 && v <= 8 ? v : 1;
     if (get(B, ifd0, 34665, 0, &exif))
     {
         get_rational(B, exif, 37386, &d->focal_num, &d->focal_den);

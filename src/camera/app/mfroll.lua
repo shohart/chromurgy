@@ -22,7 +22,7 @@
 
 local M = {}
 
-M.VERSION = "0.3.0-alpha"
+M.VERSION = "0.4.0-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 
@@ -406,18 +406,56 @@ end
 -- outside A/CHDK/MFILM, which every sync downloads.
 M.VIEW_ROOT = "A/CHDK/MFVIEW"
 
--- roll uuid -> {roll_id, film, short, day, frames, dir}
-function M.view_index()
-  local out = {}
-  local s = M.read(M.VIEW_ROOT .. "/INDEX.CFG")
+local function parse_index(s, origin, out)
   if not s then return out end
   for line in string.gmatch(s, "[^\r\n]+") do
-    local id, film, short, day, n, dir = string.match(line, "^roll=([^|]+)|([^|]*)|([^|]*)|([^|]*)|(%d+)|(%x%x%x%x%x%x%x%x)")
-    if id then
-      out[id] = {roll_id = id, film = film, short = short, day = day, frames = tonumber(n), dir = dir}
+    local id, film, short, day, n, dir = string.match(line, "^roll=([^|]+)|([^|]*)|([^|]*)|([^|]*)|(%d+)|(%w%w%w%w%w%w%w%w)")
+    if id and not out[id] then
+      out[id] = {roll_id = id, film = film, short = short, day = day, frames = tonumber(n), dir = dir, origin = origin}
     end
   end
   return out
+end
+
+-- roll uuid -> {roll_id, film, short, day, frames, dir, origin}: developed on the
+-- server (INDEX.CFG, full pipeline, preferred) or on the camera (CAMINDEX.CFG)
+function M.view_index()
+  local out = parse_index(M.read(M.VIEW_ROOT .. "/INDEX.CFG"), "server", {})
+  return parse_index(M.read(M.VIEW_ROOT .. "/CAMINDEX.CFG"), "camera", out)
+end
+
+-- ------------------------------------------------------------------ developing on the camera
+-- The developer (src/camera/dev, in the M-Film CHDK build) reads
+-- A/CHDK/MFDEV/MFCAM.BIN (camera constants) and MFDEV.BIN (every film), and
+-- writes per frame a 1024x768 JPEG (A/CHDK/MFDEV/<C+7 hex>/Fnn.JPG) and a
+-- viewer frame (A/CHDK/MFVIEW/<C+7 hex>/Fnn.MFV).
+M.DEV_ROOT = "A/CHDK/MFDEV"
+
+function M.cam_dir(r) return "C" .. string.sub(r.dir, 2, 8) end
+
+function M.cam_paths(r, i)
+  local d = M.cam_dir(r)
+  return string.format("%s/%s/F%02d.JPG", M.DEV_ROOT, d, i), string.format("%s/%s/F%02d.MFV", M.VIEW_ROOT, d, i)
+end
+
+-- grain seed for frame i: from the roll id (28 bits, Lua numbers are 32-bit) and the ordinal
+function M.cam_seed(r, i)
+  local hi = tonumber(string.sub(r.roll_id, 1, 7), 16) or 0
+  local lo = (tonumber(string.sub(r.roll_id, 10, 13), 16) or 0) * 4096 + i
+  return hi, lo
+end
+
+-- record a roll developed on the camera (n frames) in CAMINDEX.CFG
+function M.cam_index_put(r, n)
+  local p = M.VIEW_ROOT .. "/CAMINDEX.CFG"
+  local keep = {}
+  for line in string.gmatch(M.read(p) or "", "[^\r\n]+") do
+    if not string.find(line, "roll=" .. r.roll_id, 1, true) then keep[#keep + 1] = line end
+  end
+  keep[#keep + 1] = string.format("roll=%s|%s|%s|%s|%d|%s|camera", r.roll_id, r.film, M.film_short(r.film) or r.film,
+                                  string.sub(r.created_at or "", 1, 10), n, M.cam_dir(r))
+  M.mkdirs(M.VIEW_ROOT)
+  return write_plain(p, table.concat(keep, "\n") .. "\n")
 end
 
 function M.view_frame(v, i)

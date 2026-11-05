@@ -1,0 +1,56 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * The camera developer on the host, for tests and validation against the
+ * server: the same code and data files the camera uses.
+ *
+ *     mfdev_host MFCAM.BIN MFDEV.BIN FILM SEED_HEX IN.DNG OUT.JPG [OUT.MFV]
+ * prints: rc, timings, focal, orientation-independent stats as key=value */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include "mfd.h"
+
+static void *h_open(const char *p, int w) { return fopen(p, w ? "w+b" : "rb"); }
+static long h_read(void *f, void *b, long n) { return (long) fread(b, 1, (size_t) n, f); }
+static long h_write(void *f, const void *b, long n) { return (long) fwrite(b, 1, (size_t) n, f); }
+static int h_seek(void *f, long o) { return fseek(f, o, SEEK_SET); }
+static void h_close(void *f) { fclose(f); }
+static int h_remove(const char *p) { return remove(p); }
+static long peak, cur;
+static void *h_alloc(size_t n)
+{
+    size_t *p = malloc(n + sizeof(size_t));
+    if (!p) return 0;
+    *p = n, cur += (long) n;
+    if (cur > peak) peak = cur;
+    return p + 1;
+}
+static void h_release(void *q) { size_t *p = (size_t *) q - 1; cur -= (long) *p; free(p); }
+static long h_tick(void) { return (long) (clock() * 1000.0 / CLOCKS_PER_SEC); }
+
+int main(int argc, char **argv)
+{
+    if (argc < 7) { fprintf(stderr, "usage: mfdev_host MFCAM.BIN MFDEV.BIN FILM SEED_HEX IN.DNG OUT.JPG [OUT.MFV]\n"); return 2; }
+    mfd_env env = {h_open, h_read, h_write, h_seek, h_close, h_remove, h_alloc, h_release, h_tick, 0};
+    static mfd_camera cam;
+    static mf_table table;
+    mf_fx_look look;
+    int rc = mfd_camera_load(&env, argv[1], &cam);
+    if (rc) { printf("rc=%d stage=camera\n", rc); return 1; }
+    rc = mfd_film_load(&env, argv[2], argv[3], &look, &table.v[0][0]);
+    if (rc) { printf("rc=%d stage=film\n", rc); return 1; }
+    char tmp[4096];
+    snprintf(tmp, sizeof tmp, "%s.tmp", argv[6]);
+    volatile int prog = 0;
+    mfd_job job = {.dng_path = argv[5], .jpeg_path = argv[6], .tmp_path = tmp, .mfv_path = argc > 7 ? argv[7] : 0,
+                   .cam = &cam, .look = &look, .table = &table.v[0][0], .seed = strtoull(argv[4], 0, 16),
+                   .out_w = look.width, .out_h = look.height, .quality = 90, .hash = 1, .progress = &prog};
+    mfd_result res;
+    rc = mfd_develop(&env, &job, &res);
+    printf("rc=%d progress=%d w=%d h=%d focal_q8=%d scanner_ev_q16=%d ms_total=%ld mem_peak=%ld ring_rows=%u "
+           "jpeg_bytes=%u sha256=", rc, prog, job.out_w, job.out_h, res.focal_q8, res.scanner_ev_q16, res.ms_total,
+           peak, res.ring_rows, res.jpeg_bytes);
+    for (int i = 0; i < 32; i++) printf("%02x", res.dng_sha256[i]);
+    printf("\n");
+    return rc ? 1 : 0;
+}

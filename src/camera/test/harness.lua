@@ -165,6 +165,37 @@ function mf_show(path)
   dlog("SHOW " .. path)
   return true, 40
 end
+-- the developer task: a frame takes DEV_MS of camera time; on success it writes
+-- the JPEG and MFV paths it was given (tiny stand-ins)
+DEV_MS = 3000
+dev_job, dev_log = nil, {}
+function mf_dev_start(camf, devf, film, dng, jpg, mfv, tmp, hi, lo)
+  if dev_job and dev_job.state == "running" then return nil, "busy" end
+  for _, p in ipairs({camf, devf}) do
+    local f = io.open(p, "rb"); if not f then return nil, "bad arguments" end; f:close()
+  end
+  dev_job = {state = "running", t0 = clock, dng = dng, jpg = jpg, mfv = mfv, film = film, rc = 0}
+  dev_log[#dev_log + 1] = dng .. " " .. film .. " " .. tostring(hi) .. "/" .. tostring(lo)
+  local f = io.open(dng, "rb")
+  if not f then dev_job.state, dev_job.rc = "error", -20 else f:close() end
+  return true
+end
+function mf_dev_status()
+  local j = dev_job
+  if not j then return "idle", 0, 0, 0 end
+  if j.state == "running" then
+    if j.cancel then j.state, j.rc = "error", -25
+    elseif clock - j.t0 >= DEV_MS then
+      for _, p in ipairs({j.jpg, j.mfv}) do
+        local f = assert(io.open(p, "wb")); f:write(p == j.mfv and "MFV1" .. string.rep("\0", 8) or "\255\216"); f:close()
+      end
+      j.state = "done"
+    end
+  end
+  local pm = j.state == "running" and ((clock - j.t0) * 1000 / DEV_MS) or 1000
+  return j.state, pm, j.rc, clock - j.t0
+end
+function mf_dev_cancel() if dev_job then dev_job.cancel = true end end
 function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; dlog("C"); return true end
 function get_prop(id) return props[id] end
 function set_prop(id, v) props[id] = v end
@@ -312,7 +343,7 @@ while true do
                 tostring(want_rec), tostring(want_osd))) os.exit(1)
           end
         elseif k == "flip" then fb_active = 1 - fb_active
-        elseif k == "stock_chdk" then mf_show, mf_overlay_clear, mf_viewport = nil, nil, nil
+        elseif k == "stock_chdk" then mf_show, mf_overlay_clear, mf_viewport, mf_dev_start = nil, nil, nil, nil
         elseif k == "canon_playback" then rec_mode = false     -- the owner opens Canon's gallery
         elseif k == "expect_shown" then
           local last = shown_frames[#shown_frames]

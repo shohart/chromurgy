@@ -272,6 +272,46 @@ def test_canon_gallery_is_blocked_while_shooting(card):
     assert "Canon playback blocked" in applog(card)
 
 
+def _dev_files(card):
+    d = card / "A" / "CHDK" / "MFDEV"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "MFCAM.BIN").write_bytes(b"MFCAM001")
+    (d / "MFDEV.BIN").write_bytes(b"MFDEV001")
+
+
+DEVELOP_LOADED = ROLLS + [("key", "set"), ("expect", "not developed yet"), ("key", "set"),
+                          ("expect", "Finish it and develop it now"), ("key", "up"), ("key", "set")]
+
+
+def test_develop_on_camera_then_view(card):
+    _dev_files(card)
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+        + [("expect", "frame 1 of 2"), ("wait", 4000), ("expect", "frame 2 of 2"), ("wait", 4000),
+           ("expect", "DEVELOPED: 2 frames %(camera%)"), ("key", "set"), ("wait", 600),
+           ("expect_shown", "MFVIEW/C%w+/F01.MFV"), ("key", "right"), ("wait", 200), ("expect_shown", "F02.MFV"),
+           ("key", "menu"), ("wait", 900), ("expect_rec", True)])
+    (r,) = rolls(card)
+    assert r["roll_state"] == "SEALED"
+    idx = (card / "A" / "CHDK" / "MFVIEW" / "CAMINDEX.CFG").read_text()
+    assert idx.startswith("roll=" + r["roll_id"] + "|portra400|") and "|2|C" in idx
+    journal = next((card / "A" / "CHDK" / "MFILM" / "ROLLS").glob("*/JOURNAL.LOG")).read_text()
+    assert "DEVELOPED frame 2 on camera" in journal and "DEVELOP on camera finished: 2 frames" in journal
+    jpgs = sorted((card / "A" / "CHDK" / "MFDEV").glob("C*/F*.JPG"))
+    assert [j.name for j in jpgs] == ["F01.JPG", "F02.JPG"]
+
+
+def test_develop_can_be_stopped_and_keeps_the_roll_undeveloped(card):
+    _dev_files(card)
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+        + [("expect", "frame 1 of 2"), ("key", "menu"), ("wait", 1000), ("expect", "Developing stopped")])
+    assert not (card / "A" / "CHDK" / "MFVIEW" / "CAMINDEX.CFG").exists()
+
+
+def test_develop_without_data_files_says_so(card):
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+        + [("expect", "MFDEV/MFCAM.BIN or MFDEV.BIN")])
+
+
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
 
 

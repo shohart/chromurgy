@@ -513,6 +513,86 @@ local function viewer(title, frames, start)
   return quit_to
 end
 
+-- ------------------------------------------------------------ developing on the camera
+local DEV_ERR = {[-20] = "card read/write error", [-21] = "not a CHDK DNG", [-22] = "out of memory",
+                 [-23] = "film data missing (MFDEV.BIN)", [-24] = "no lens data", [-25] = "stopped"}
+
+local function bar(permille, width)
+  local n = permille * width / 1000              -- CHDK Lua numbers are integers: no math.floor
+  if n > width then n = width end
+  if n < 0 then n = 0 end
+  return "[" .. string.rep("#", n) .. string.rep(".", width - n) .. "]"
+end
+
+-- develop every frame of roll r; returns the number developed, or nil if stopped
+local function develop_roll(r)
+  if not have("mf_dev_start") or not have("mf_dev_status") or not have("mf_dev_cancel") then
+    say("Developing needs the M-Film CHDK build (DISKBOOT.BIN)", 8000)
+    return nil
+  end
+  local camf, devf = mf.DEV_ROOT .. "/MFCAM.BIN", mf.DEV_ROOT .. "/MFDEV.BIN"
+  if not mf.exists(camf) or not mf.exists(devf) then
+    say("Missing CHDK/MFDEV/MFCAM.BIN or MFDEV.BIN on the card", 8000)
+    return nil
+  end
+  mf.mkdirs(mf.DEV_ROOT .. "/" .. mf.cam_dir(r))
+  mf.mkdirs(mf.VIEW_ROOT .. "/" .. mf.cam_dir(r))
+  mf.journal(r, "DEVELOP on camera started, " .. #r.frames .. " frame(s)")
+  mf.log("develop " .. r.roll_id .. ": " .. #r.frames .. " frames, film " .. r.film)
+  local title = "Developing " .. (mf.film_short(r.film) or r.film)
+  local done, failed, stopped, t_all = 0, 0, false, get_tick_count()
+  for i, fr in ipairs(r.frames) do
+    local jpg, mfv = mf.cam_paths(r, i)
+    local hi, lo = mf.cam_seed(r, i)
+    local ok, err = mf_dev_start(camf, devf, r.film, fr.path, jpg, mfv, mf.DEV_ROOT .. "/WORK.TMP", hi, lo)
+    if not ok then
+      mf.log("develop frame " .. i .. ": " .. tostring(err))
+      failed = failed + 1
+    else
+      local st, pm, rc, ms = "running", 0, 0, 0
+      while true do
+        st, pm, rc, ms = mf_dev_status()
+        if st ~= "running" then break end
+        local eta = ""
+        if done > 0 then
+          local per = (get_tick_count() - t_all) / done
+          eta = string.format("about %d min left", (per * (#r.frames - i + 1) - per * pm / 1000) / 60000 + 1)
+        end
+        screen(title, {{mf.film_name(r.film), C.hi},
+                       string.format("frame %d of %d", i, #r.frames), bar(pm, 30) .. string.format(" %d%%", pm / 10),
+                       string.format("roll   %s", bar(((i - 1) * 1000 + pm) / #r.frames, 30)),
+                       eta, failed > 0 and string.format("%d frame(s) failed", failed) or ""},
+               nil, 1, " MENU: stop (developed frames are kept)")
+        local k = key(200)
+        if k == "menu" and not stopped then
+          stopped = true
+          mf_dev_cancel()
+        end
+      end
+      if st == "done" then
+        done = done + 1
+        mf.journal(r, string.format("DEVELOPED frame %d on camera in %d ms", i, ms))
+      else
+        if rc ~= -25 then failed = failed + 1 end
+        mf.log(string.format("develop frame %d: rc %d (%s)", i, rc, DEV_ERR[rc] or "error"))
+        if rc == -23 then say("Film " .. r.film .. " is not in MFDEV.BIN", 8000) break end
+      end
+    end
+    if stopped then break end
+  end
+  if done == #r.frames then
+    mf.cam_index_put(r, done)
+    mf.journal(r, string.format("DEVELOP on camera finished: %d frames in %d s", done,
+                                (get_tick_count() - t_all) / 1000))
+    say(string.format("Developed %d frames", done), 6000)
+    return done
+  end
+  mf.journal(r, string.format("DEVELOP on camera incomplete: %d of %d, %d failed%s", done, #r.frames, failed,
+                              stopped and ", stopped" or ""))
+  say(stopped and "Developing stopped" or string.format("Developed %d of %d (see APP.LOG)", done, #r.frames), 8000)
+  return nil
+end
+
 local function roll_card(r, v)
   -- r: roll on this card (or nil), v: its developed set from the server (or nil)
   local film = r and r.film or v.film
@@ -522,7 +602,8 @@ local function roll_card(r, v)
     lines[#lines + 1] = string.format("%d of %d frames, %s", #r.frames, r.length,
                                       r.state == "SEALED" and "finished" or "in the camera")
   end
-  lines[#lines + 1] = v and string.format("DEVELOPED: %d frames", v.frames) or "not developed yet"
+  lines[#lines + 1] = v and string.format("DEVELOPED: %d frames (%s)", v.frames, v.origin or "server")
+                      or "not developed yet"
   local items, acts = {}, {}
   if v then items[#items + 1] = "View developed frames"; acts[#acts + 1] = "view" end
   if not v then items[#items + 1] = "Develop"; acts[#acts + 1] = "develop" end
@@ -539,10 +620,22 @@ local function roll_card(r, v)
       for k = 1, v.frames do frames[k] = mf.view_frame(v, k) end
       if viewer(mf.film_short(film) .. " " .. (v.day or ""), frames) == "shoot" then return "shoot" end
     elseif acts[i] == "develop" then
-      if r and r.state ~= "SEALED" then
-        say("Finish the roll first (menu: Finish roll now)", 6000)
+      if not r then
+        say("The roll is not on this card", 6000)
+      elseif #r.frames == 0 then
+        say("The roll has no frames", 6000)
+      elseif r.state ~= "SEALED" and not confirm("Develop", {"This roll is still in the camera.",
+                                                               "Finish it and develop it now?"}) then
+        -- back to the card
       else
-        say("Camera developing: next version. Now: Wi-Fi sync", 8000)
+        if r.state ~= "SEALED" then
+          mf.seal(r, "finished to develop on camera")
+          if roll and roll.roll_id == r.roll_id then roll = nil end
+        end
+        if develop_roll(r) then
+          v = mf.view_index()[r.roll_id]
+          return roll_card(r, v)
+        end
       end
     end
   end

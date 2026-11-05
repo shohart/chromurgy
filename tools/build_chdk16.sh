@@ -16,9 +16,14 @@ rm -rf "$b" && cp -a "$src" "$b" && mkdir -p "$b/bin"
 lua=$b/modules/luascript.c
 grep -q "^static const luaL_Reg chdk_funcs\[\] = {" "$lua" || { echo "luascript.c layout changed" >&2; exit 1; }
 sed -i "s|^static const luaL_Reg chdk_funcs\[\] = {|#include \"$root/src/camera/chdk/mfilm_lua.c\"\n\n&|" "$lua"
-sed -i "s|^    FUNC(peek)$|    FUNC(peek)\n    FUNC(mf_viewport)\n    FUNC(mf_show)\n    FUNC(mf_overlay_clear)|" "$lua"
+sed -i "s|^    FUNC(peek)$|    FUNC(peek)\n    FUNC(mf_viewport)\n    FUNC(mf_show)\n    FUNC(mf_overlay_clear)\n    FUNC(mf_dev_start)\n    FUNC(mf_dev_status)\n    FUNC(mf_dev_cancel)|" "$lua"
 grep -q "FUNC(mf_show)" "$lua" || { echo "patch failed" >&2; exit 1; }
-make -C "$b" -s PLATFORM=sx510hs PLATFORMSUB=101a BUILD_SVNREV=6355 fir >"$root/build/chdk16-build.log" 2>&1 \
+# keep the Lua module loaded while the developer task runs
+n=$(grep -c "^         0, 0, 0, 0, 0$" "$lua")
+[ "$n" = 1 ] || { echo "luascript.c: _liblua base not found" >&2; exit 1; }
+sed -i "s|^         0, 0, 0, 0, 0$|         0, 0, mf_can_unload, 0, 0|" "$lua"
+ln -sf "$root/src/camera/chdk/makefile_usermodules.inc" "$b/modules/makefile_usermodules.inc"
+make -C "$b" -s PLATFORM=sx510hs PLATFORMSUB=101a BUILD_SVNREV=6355 MF_ROOT="$root" fir >"$root/build/chdk16-build.log" 2>&1 \
   || { grep -i -B2 -A6 "error" "$root/build/chdk16-build.log" | head -40; exit 1; }
 rm -rf "$card" && mkdir -p "$card"
 cp "$b/bin/DISKBOOT.BIN" "$card/"
