@@ -153,7 +153,8 @@ def srgb_icc() -> bytes:
     return bytes(icc)
 
 
-def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str, captured_at: str | None = None) -> None:
+def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str, captured_at: str | None = None,
+               exif_extra: dict | None = None) -> None:
     from PIL import Image
     px = (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
     icc = srgb_icc()
@@ -174,6 +175,12 @@ def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str, captured_
                 sub[0x9011] = f"{off[:3]}:{off[3:]}"          # OffsetTimeOriginal
         except ValueError:
             pass
+    if exif_extra:                  # the real capture facts of the source (never the emulated look)
+        for tag, v in exif_extra.get("ifd0", {}).items():
+            exif[tag] = v
+        sub = exif.get_ifd(0x8769)
+        for tag, v in exif_extra.get("exif", {}).items():
+            sub[tag] = v
     tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
     im.save(tmp, "JPEG", quality=quality, icc_profile=icc, exif=exif, optimize=True)
     with Image.open(tmp) as chk:                             # decode back before promoting
@@ -186,7 +193,8 @@ def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str, captured_
 
 def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict | None,
             device_id: str | None = None, roll_id: str | None = None, frame_id: str | None = None,
-            bundle: core.Bundle | None = None, captured_at: str | None = None) -> dict:
+            bundle: core.Bundle | None = None, captured_at: str | None = None,
+            exif_extra: dict | None = None) -> dict:
     bundle = bundle or core.Bundle()
     if recipe is None:
         if not profile:
@@ -227,7 +235,8 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
     commit = core_commit()
     rid = recipe_render_id(src_sha, recipe, bundle.sha256, seed)
     output.parent.mkdir(parents=True, exist_ok=True)
-    write_jpeg(img, output, int(spec.get("jpeg_quality", 92)), f"M-Film {profile} render {rid[:16]}", captured_at)
+    write_jpeg(img, output, int(spec.get("jpeg_quality", 92)), f"M-Film {profile} render {rid[:16]}", captured_at,
+               exif_extra)
     t1 = dt.datetime.now(dt.timezone.utc)
     prov = {
         "render_id": rid, "film_profile_id": profile, "profile_bundle_hash": bundle.sha256,

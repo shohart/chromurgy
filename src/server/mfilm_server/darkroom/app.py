@@ -20,7 +20,7 @@ from .. import config as config_mod
 from .. import core, db
 from ..bundles import Bundles
 from ..store import Store, UnsafePath, safe_id
-from . import auth, catalog, engine, preview, recipe2, sources
+from . import auth, catalog, engine, jobs, preview, recipe2, sources
 
 API = "/api/v1/darkroom"
 COOKIE = "mfilm_session"
@@ -357,6 +357,115 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         if not f.is_file():
             raise ApiError(404, "PREVIEW_NOT_READY", key)
         return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+    # ---- jobs and renders (docs/web/31) --------------------------------------------------------
+    def job_id_ok(jid: str) -> str:
+        if len(jid) != 32 or any(ch not in "0123456789abcdef" for ch in jid):
+            raise ApiError(404, "UNKNOWN_JOB", "")
+        return jid
+
+    @app.post(f"{API}/jobs", status_code=202)
+    async def create_job(request: Request, response: Response, _t: str = Depends(session), c=Depends(conn)):
+        try:
+            body = json.loads(await request.body())
+        except ValueError:
+            raise ApiError(400, "BAD_REQUEST", "JSON body required") from None
+        try:
+            jid, created = jobs.create_job(c, bundle(), body)
+        except recipe2.RecipeError as e:
+            raise ApiError(422, e.code, e.detail) from None
+        except jobs.JobError as e:
+            raise ApiError(e.status, e.code, e.detail) from None
+        if not created:
+            response.status_code = 200
+        return {**jobs.job_view(c, jid, items=False), "status_url": f"{API}/jobs/{jid}", "created": created}
+
+    @app.get(f"{API}/jobs")
+    def list_jobs(count: int = 50, offset: int = 0, _t: str = Depends(session), c=Depends(conn)):
+        ids = [r[0] for r in c.execute("SELECT id FROM darkroom_jobs ORDER BY created_at DESC, id LIMIT ? OFFSET ?",
+                                       (max(1, min(count, 200)), max(0, offset)))]
+        return {"total": c.execute("SELECT count(*) FROM darkroom_jobs").fetchone()[0],
+                "items": [jobs.job_view(c, i, items=False) for i in ids]}
+
+    @app.get(f"{API}/jobs/{{job_id}}")
+    def get_job(job_id: str, _t: str = Depends(session), c=Depends(conn)):
+        v = jobs.job_view(c, job_id_ok(job_id))
+        if not v:
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        return v
+
+    @app.post(f"{API}/jobs/{{job_id}}/cancel", status_code=202)
+    def cancel_job(job_id: str, _t: str = Depends(session), c=Depends(conn)):
+        if not jobs.job_view(c, job_id_ok(job_id), items=False):
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        return {"cancelled_queued_items": jobs.cancel(c, job_id)}
+
+    @app.post(f"{API}/jobs/{{job_id}}/retry", status_code=202)
+    def retry_job(job_id: str, _t: str = Depends(session), c=Depends(conn)):
+        if not jobs.job_view(c, job_id_ok(job_id), items=False):
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        return {"requeued_items": jobs.retry(c, job_id)}
+
+    def render_row(c, render_id: str) -> sqlite3.Row:
+        if len(render_id) != 64 or any(ch not in "0123456789abcdef" for ch in render_id):
+            raise ApiError(404, "UNKNOWN_RENDER", "")
+        r = c.execute("SELECT w.*, s.filename FROM web_renders w JOIN sources s ON s.id=w.source_id WHERE w.id=?",
+                      (render_id,)).fetchone()
+        if not r:
+            raise ApiError(404, "UNKNOWN_RENDER", render_id)
+        return r
+
+    def download_name(filename: str, rid: str, film: str) -> str:
+        stem = Path(filename).stem
+        return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in f"{stem}_{film}_{rid[:8]}") + ".jpg"
+
+    @app.get(f"{API}/renders/{{render_id}}/file")
+    def render_file(render_id: str, _t: str = Depends(session), c=Depends(conn)):
+        r = render_row(c, render_id)
+        film = json.loads(r["recipe"])["film"]["id"]
+        return FileResponse(store.root / r["path"], media_type="image/jpeg",
+                            filename=download_name(r["filename"], r["id"], film),
+                            headers={"X-Asset-SHA256": r["sha256"], "Cache-Control": "private"})
+
+    @app.get(f"{API}/jobs/{{job_id}}/zip")
+    def job_zip(job_id: str, _t: str = Depends(session), c=Depends(conn)):
+        import tempfile
+        import zipfile
+
+        from starlette.background import BackgroundTask
+        job_id_ok(job_id)
+        rows = c.execute("SELECT w.*, s.filename FROM darkroom_items i JOIN web_renders w ON w.id=i.render_id "
+                         "JOIN sources s ON s.id=i.source_id WHERE i.job_id=? AND i.state='COMPLETE' "
+                         "ORDER BY i.ordinal", (job_id,)).fetchall()
+        if not rows:
+            raise ApiError(404, "NOTHING_TO_DOWNLOAD", "no finished frames in this job")
+        fd, tmp = tempfile.mkstemp(prefix="web-zip-", dir=store.root / "incoming")
+        used: set[str] = set()
+        with os.fdopen(fd, "wb") as fh, zipfile.ZipFile(fh, "w", zipfile.ZIP_STORED) as z:   # JPEGs do not compress
+            for r in rows:
+                name = download_name(r["filename"], r["id"], json.loads(r["recipe"])["film"]["id"])
+                while name in used:
+                    name = "dup_" + name
+                used.add(name)
+                z.write(store.root / r["path"], name)
+        return FileResponse(tmp, media_type="application/zip", filename=f"mfilm-{job_id[:8]}.zip",
+                            background=BackgroundTask(lambda: Path(tmp).unlink(missing_ok=True)))
+
+    @app.get(f"{API}/history")
+    def history(asset_id: str | None = None, count: int = 100, offset: int = 0,
+                _t: str = Depends(session), c=Depends(conn)):
+        rows = c.execute(
+            "SELECT w.id, w.source_id, w.recipe_hash, w.recipe, w.width, w.height, w.bytes, w.sha256, w.created_at, s.filename "
+            "FROM web_renders w JOIN sources s ON s.id=w.source_id WHERE (?1 IS NULL OR w.source_id=?1) "
+            "ORDER BY w.created_at DESC, w.id LIMIT ?2 OFFSET ?3", (asset_id, max(1, min(count, 500)), max(0, offset)))
+        out = []
+        for r in rows:
+            rc = json.loads(r["recipe"])
+            out.append({"render_id": r["id"], "asset_id": r["source_id"], "filename": r["filename"],
+                        "film": rc["film"]["id"], "camera_look": rc["camera_look"]["id"],
+                        "optical": rc["optical"]["preset_id"], "recipe_hash": r["recipe_hash"], "width": r["width"],
+                        "height": r["height"], "bytes": r["bytes"], "sha256": r["sha256"], "created_at": r["created_at"]})
+        return {"items": out}
 
     return app
 

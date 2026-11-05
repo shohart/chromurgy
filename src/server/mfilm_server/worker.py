@@ -262,6 +262,16 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles,
         return JobResult(job["id"], r["id"], "FAILED_RETRYABLE", "IO_ERROR", str(e))
 
 
+def _drain_web(conn: sqlite3.Connection, store: Store, bundles: Bundles, tried: set[int]) -> JobResult | None:
+    """Web Darkroom items share the camera queue's lock, memory budget and process model."""
+    from .darkroom import jobs as web_jobs
+    res = web_jobs.run_one(conn, store, bundles, {-i for i in tried if i < 0})
+    if res is None:
+        return None
+    iid, rid, state, code, detail = res
+    return JobResult(-iid, rid or "", "COMMITTED" if state == "COMPLETE" else state, code, detail)
+
+
 def _drain(conn: sqlite3.Connection, store: Store, bundles: Bundles, budget) -> list[JobResult]:
     """Develop queued jobs until none is left or the shared budget is spent."""
     done: list[JobResult] = []
@@ -272,7 +282,7 @@ def _drain(conn: sqlite3.Connection, store: Store, bundles: Bundles, budget) -> 
                 if budget.value <= 0:
                     break
                 budget.value -= 1
-        res = run_one(conn, store, bundles, tried)
+        res = run_one(conn, store, bundles, tried) or _drain_web(conn, store, bundles, tried)
         if res is None:
             if budget is not None:
                 with budget.get_lock():
@@ -323,6 +333,8 @@ def run(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None = None, 
 
 def _run_locked(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None, jobs: int) -> list[JobResult]:
     recover_stale(conn)
+    from .darkroom import jobs as web_jobs
+    web_jobs.recover_stale(conn)
     bundles = Bundles(store)
     bundles.ensure_default()
     parked, _ = park_and_unpark(conn, bundles)

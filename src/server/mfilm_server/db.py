@@ -176,6 +176,48 @@ MIGRATIONS: list[str] = [
         revoked_at   TEXT
     )
     """,
+    # 6: Web Darkroom jobs. Job state is derived from its items; only cancellation is stored on the job.
+    """
+    CREATE TABLE darkroom_jobs (
+        id               TEXT PRIMARY KEY,
+        idempotency_key  TEXT UNIQUE,
+        request          TEXT NOT NULL,
+        recipe           TEXT NOT NULL,
+        recipe_hash      TEXT NOT NULL,
+        cancel_requested INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE TABLE web_renders (
+        id          TEXT PRIMARY KEY,
+        source_id   TEXT NOT NULL REFERENCES sources(id),
+        recipe_hash TEXT NOT NULL,
+        recipe      TEXT NOT NULL,
+        path        TEXT NOT NULL UNIQUE,
+        sha256      TEXT NOT NULL,
+        bytes       INTEGER NOT NULL,
+        width       INTEGER NOT NULL,
+        height      INTEGER NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE INDEX web_renders_source ON web_renders(source_id, created_at);
+    CREATE TABLE darkroom_items (
+        id           INTEGER PRIMARY KEY,
+        job_id       TEXT NOT NULL REFERENCES darkroom_jobs(id),
+        source_id    TEXT NOT NULL REFERENCES sources(id),
+        source_sha256 TEXT NOT NULL,
+        ordinal      INTEGER NOT NULL,
+        state        TEXT NOT NULL CHECK (state IN ('QUEUED','DECODING','RENDERING','VALIDATING','STAGED',
+                         'PUBLISHING','INDEXING','ALBUM_LINKING','COMPLETE','FAILED','CANCELLED')),
+        attempt      INTEGER NOT NULL DEFAULT 0,
+        render_id    TEXT REFERENCES web_renders(id),
+        error_code   TEXT,
+        error_detail TEXT,
+        started_at   TEXT,
+        finished_at  TEXT,
+        UNIQUE (job_id, source_id)
+    );
+    CREATE INDEX darkroom_items_state ON darkroom_items(state, id)
+    """,
 ]
 
 
