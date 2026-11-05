@@ -236,7 +236,7 @@ def _developed_on_card(card, n=3, rid="aaaaaaaa-1111-4222-8333-444444444444"):
     vroot = card / "A" / "CHDK" / "MFVIEW"
     (vroot / "AAAAAAAA").mkdir(parents=True)
     for i in range(1, n + 1):
-        (vroot / "AAAAAAAA" / f"F{i:02d}.MFV").write_bytes(b"MFV1" + bytes(8))
+        (vroot / "AAAAAAAA" / f"F{i:02d}.MFV").write_bytes(b"MFV1" + bytes(8 + 480 * 1080))
     (vroot / "INDEX.CFG").write_text(f"roll={rid}|portra400|Portra400|2026-11-04|{n}|AAAAAAAA|12345678\n")
 
 
@@ -250,7 +250,7 @@ def test_viewer_shows_developed_frames_in_playback_and_returns(card):
                        ("expect", "Portra400 2026%-11%-04  1/3"),
                        ("key", "right"), ("wait", 200), ("expect_shown", "F02.MFV"),
                        ("key", "left"), ("key", "left"), ("wait", 200), ("expect_shown", "F03.MFV"),
-                       ("key", "menu"), ("wait", 900), ("expect_rec", True), ("expect", "View developed frames")])
+                       ("key", "menu"), ("wait", 900), ("expect_rec", False), ("expect", "View developed frames")])
 
 
 def test_viewer_without_the_mfilm_chdk_build_says_so(card):
@@ -263,12 +263,13 @@ def test_screen_test_from_diagnostics(card):
     assert (card / "A" / "CHDK" / "MFVIEW" / "TEST.MFV").read_bytes()[:4] == b"MFV1"   # from write_card
     run(card, [("wait", 1200)] + [("key", "down")] * 5 + [("key", "set"), ("expect", "SET: screen test"),
                ("key", "set"), ("wait", 600), ("expect_shown", "TEST.MFV"), ("expect", "Screen test  1/1"),
-               ("key", "menu"), ("wait", 900), ("expect_rec", True)])
+               ("key", "menu"), ("wait", 900), ("expect_rec", False)])
 
 
 def test_canon_gallery_is_blocked_while_shooting(card):
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("canon_playback",), ("wait", 900), ("expect_rec", True),
-                                     ("expect", "M%-Film 0%.")])
+    # the menu covers Canon's gallery in playback; the lens stays in until Shoot
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("canon_playback",), ("wait", 900), ("expect_rec", False),
+                                     ("expect", "M%-Film 0%."), ("key", "set"), ("wait", 900), ("expect_rec", True)])
     assert "Canon playback blocked" in applog(card)
 
 
@@ -289,7 +290,7 @@ def test_develop_on_camera_then_view(card):
         + [("expect", "Frame 1/2"), ("wait", 4000), ("expect", "Frame 2/2"), ("wait", 4000),
            ("expect", "DEVELOPED: 2 frames %(camera%)"), ("key", "set"), ("wait", 600),
            ("expect_shown", "MFVIEW/C%w+/F01.MFV"), ("key", "right"), ("wait", 200), ("expect_shown", "F02.MFV"),
-           ("key", "menu"), ("wait", 900), ("expect_rec", True)])
+           ("key", "menu"), ("wait", 900), ("expect_rec", False)])
     (r,) = rolls(card)
     assert r["roll_state"] == "SEALED"
     idx = (card / "A" / "CHDK" / "MFVIEW" / "CAMINDEX.CFG").read_text()
@@ -353,6 +354,39 @@ def test_developing_screen_redraws_only_what_changes(card):
     _dev_files(card)
     run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(3) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
         + [("expect", "Frame 1/3"), ("wait", 8000), ("expect_no_ghosts", 40)])
+
+
+def test_power_on_in_playback_on_a_low_battery_keeps_the_lens_in(card):
+    # 2026-11-05: after a long develop (3.35 V) every power-on had the app
+    # extend the lens, the battery collapse and the camera switch off
+    run(card, [("wait", 6000), ("expect_autostart", 1)] + LOAD_PORTRA + LEN12 + [("wait", 600)]
+        + [("vbatt", 3340), ("powercut",), ("boot_playback",), ("wait", 3000), ("expect_rec", False),
+           ("expect", "Battery low"), ("key", "set"), ("wait", 900), ("expect_rec", False),
+           ("expect", "the lens stays in")])
+    assert "not extending the lens" in applog(card)
+
+
+def test_power_on_in_playback_with_a_good_battery_shows_the_menu_until_shoot(card):
+    run(card, [("wait", 6000)] + LOAD_PORTRA + LEN12 + [("wait", 600), ("powercut",), ("boot_playback",),
+                                                         ("wait", 3000), ("expect_rec", False)]
+        + [("key", "shoot_half"), ("wait", 1500), ("expect_rec", True)])
+
+
+def test_develop_stops_on_a_low_battery_and_resumes_later(card):
+    _dev_files(card)
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(3) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+        + [("expect", "Frame 1/3"), ("vbatt", 3440), ("wait", 4000), ("expect", "Battery low: developing stopped"),
+           ("expect", "DEVELOPED: 1 of 3"), ("vbatt", 3900), ("key", "down"), ("key", "set"),
+           ("expect", "Frame 2/3"), ("wait", 8000), ("expect", "DEVELOPED: 3 frames")])
+    journal = next((card / "A" / "CHDK" / "MFILM" / "ROLLS").glob("*/JOURNAL.LOG")).read_text()
+    assert journal.count("DEVELOPED frame 1 on camera") == 1                     # not developed twice
+
+
+def test_four_autostarts_in_a_minute_switch_autostart_off(card):
+    steps = [("wait", 6000)]
+    for _ in range(4):
+        steps += [("powercut",), ("boot",), ("wait", 6000)]
+    run(card, steps + [("expect_autostart", 0)])
 
 
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"

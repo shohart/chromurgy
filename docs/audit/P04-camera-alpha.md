@@ -361,3 +361,32 @@ otherwise just the changed parts (the strip redraws the one cell that
 changed; the tank moves only the dots of the reel and bubbles); canister and
 strips are tiled so every pixel is set once; nothing graphic is redrawn by
 the safety refresh. 100 fuzz runs: 0 ghosts above 40 px.
+
+## 0.5.3: power-on loop on a drained battery (2026-11-05 evening)
+
+Owner: "a cyclic reboot again". No new ROMLOG (still 13:16): no crash. APP.LOG:
+developing 9 frames took ~55 s per frame (60 s for the first; heap largest
+block ~290-315 KB; one frame out of memory) and the battery went from
+3754 mV to 3351 mV. After that every power-on came up in playback, the app
+"blocked Canon's gallery" by switching to shooting -- extending the lens --
+the mode switch timed out and the camera switched off; again and again.
+
+Fixed:
+- the menu no longer switches modes: it covers the whole screen, so it lives
+  in playback as well; the lens moves only to shoot (Shoot, half-press);
+  powered on with the Playback button and film loaded, the app shows the menu
+  instead of going straight to shooting;
+- below 3500 mV the lens is not extended (the menu says "Battery low");
+  developing needs 3600 mV to start and stops between frames below 3450 mV;
+- developing resumes: frames whose viewer file is complete are kept and
+  skipped, the index is written after a partial run, the roll card says
+  "DEVELOPED: x of n" and offers "Develop the rest"; the viewer shows the
+  frames that exist; an out-of-memory frame is retried once after a Lua GC,
+  two in a row stop developing ("restart the camera");
+- the crash-loop guard also counts 4 autostarts within 60 s.
+Harness: battery voltage (extending the lens below 3450 mV fails the run),
+power-on in playback; a glitch now ends when the app redraws or clears on
+purpose (two "viewer storms" earlier were this harness bug). 150 fuzz runs
+with battery dips and playback power-ons: 0 failures, longest visible
+glitch 200 ms.
+Known: ~55 s per frame on the camera; a speed-up is the next step.

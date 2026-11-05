@@ -32,6 +32,8 @@
 --                          at random moments from now on (0, 0: off)
 --   {"heap", free, largest} the camera's free heap (the developer needs a big block)
 --   {"open_menu"}          press Playback if the M-Film menu is not up
+--   {"vbatt", mv}          battery voltage (below 3450 mV extending the lens switches the camera off)
+--   {"boot_playback"}      power-on with the Playback button (after powercut/quit), lens retracted
 --   {"expect_no_ghosts", px} no pass so far redrew more than px pixels back to their old colour
 --   {"fuzz"}               random walks: keys while shooting go to Canon, a quit app is started again
 --   {"expect_glitches", max_flip, max_erase_ms}  display model, see below
@@ -171,9 +173,13 @@ local function mem_sample()
   if kb > lua_kb.max then lua_kb.max = kb end
   lua_kb.samples[#lua_kb.samples + 1] = kb
 end
+app_drew = false                            -- the app drew or cleared something in its last pass
 local function glitch_close()
-  -- after the app's pass: the glitch lasts until the app has changed what is shown
-  if glitch.since and fb_sig(fb_active) ~= glitch.sig then
+  -- after the app's pass: the glitch lasts until the app has changed what is
+  -- shown (redrawn, or cleared on purpose: hiding the viewer's caption)
+  local touched = app_drew
+  app_drew = false
+  if glitch.since and (touched or fb_sig(fb_active) ~= glitch.sig) then
     local d = clock - glitch.since
     if d > glitch.longest then glitch.longest = d end
     if (d > 150 or glitch.cause == "flip") and os.getenv("MFILM_GLITCH_LOG") then
@@ -271,6 +277,7 @@ function draw_string(x, y, s, fg, bg, scale)
     canvas_rect(cx, y, cx + 8 * sc - 1, y + 16 * sc - 1, string.sub(s, ci, ci) .. "/" .. tostring(fg) .. "/" .. tostring(bg))
   end
   drawn[#drawn + 1] = s
+  app_drew = true
   if #drawn > 400 then                      -- keep the harness's own memory flat (expect looks at recent text)
     local keep = {}
     for j = #drawn - 199, #drawn do keep[#keep + 1] = drawn[j] end
@@ -293,6 +300,7 @@ function draw_rect_filled(x1, y1, x2, y2, c1, c2)
   if alt and rec_mode and props[105] == 0 then error("menu graphics drawn over Canon's information display", 2) end
   -- rows hold rects keyed by their origin, next to the text drawn there
   canvas_rect(x1, y1, x2, y2, c2 or c1)
+  app_drew = true
   local k = string.format("r%d.%d", x1, y1)
   for r = y1 / 16, y2 / 16 do
     local row = fbuf[fb_active][r]
@@ -308,7 +316,8 @@ function get_gui_screen_width() return 360 end
 function get_gui_screen_height() return 240 end
 function get_image_dir() return image_dir end
 function get_raw() return true end
-function get_vbatt() return 3950 end
+vbatt_mv = 3950
+function get_vbatt() return vbatt_mv end
 function get_exp_count() return shots end
 function get_buildinfo() return {platform = "sx510hs", platsub = "101a", build_number = "host", build_revision = "0"} end
 hook_raw = {count = function() return shots end}
@@ -354,7 +363,9 @@ function mf_dev_status()
     if j.cancel then j.state, j.rc = "error", -25
     elseif clock - j.t0 >= DEV_MS then
       for _, p in ipairs({j.jpg, j.mfv}) do
-        local f = assert(io.open(p, "wb")); f:write(p == j.mfv and "MFV1" .. string.rep("\0", 8) or "\255\216"); f:close()
+        local f = assert(io.open(p, "wb"))
+        f:write(p == j.mfv and ("MFV1" .. string.rep("\0", 8) .. string.rep("\128", 480 * 1080)) or "\255\216")
+        f:close()
       end
       j.state = "done"
     end
@@ -373,7 +384,7 @@ function mf_overlay_mirror()
   fbuf[1 - fb_active] = c
   return true
 end
-function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; canvas_reset(); dlog("C"); return true end
+function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; canvas_reset(); app_drew = true; dlog("C"); return true end
 function get_prop(id) return props[id] end
 function set_prop(id, v) props[id] = v end
 function click(k)
@@ -385,6 +396,10 @@ end
 local conf = {[2001] = 1, [2102] = 1, [2104] = 1, [2080] = 2, [2220] = 1, [2200] = 1, [2201] = 1, [2182] = 1, [2183] = 1, [2120] = 1}
 function get_mode() return rec_mode, false, rec_mode and 1 or 0 end
 function set_record(v)
+  -- 2026-11-05: extending the lens on a nearly empty battery switched the camera off, at every power-on
+  if (v == 1 or v == true) and not rec_mode and vbatt_mv < 3450 then
+    error(string.format("lens extended on a low battery (%d mV): the camera would switch off", vbatt_mv), 2)
+  end
   rec_mode = (v == 1 or v == true); transition_until = clock + 1500
   dlog(rec_mode and "MODE rec" or "MODE play")
 end
@@ -474,7 +489,10 @@ while true do
     exited = true
     local s = steps[i]
     if not s then break end
-    if fuzz and s[1] ~= "restart" and s[1] ~= "boot" then
+    if s[1] == "boot_playback" then                -- powered on with the Playback button: lens in
+      rec_mode = false; booted = autostart_conf == 1
+      i = i + 1; co = new_app(); exited = false; app_co = co
+    elseif fuzz and s[1] ~= "restart" and s[1] ~= "boot" then
       co = new_app(); exited = false; app_co = co  -- the owner starts M-Film again
     elseif s[1] == "restart" or s[1] == "boot" then
       booted = s[1] == "boot" and autostart_conf == 1   -- power-on with CHDK autostart
@@ -540,6 +558,7 @@ while true do
         elseif k == "chaos" then rng, chaos.flips, chaos.erases = s[2] % 65537, s[3], s[4]
         elseif k == "fuzz" then fuzz = true
         elseif k == "heap" then heap.free, heap.largest = s[2], s[3]
+        elseif k == "vbatt" then vbatt_mv = s[2]
         elseif k == "expect_no_ghosts" then
           if ghost.max > s[2] then
             log(string.format("FAIL: step %d: a pass redrew %d px back to what they were (flicker), %d such passes",

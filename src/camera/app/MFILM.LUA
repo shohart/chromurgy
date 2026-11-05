@@ -503,8 +503,19 @@ local osd_saved = nil
 
 local function is_rec() return not have("get_mode") or get_mode() end
 
+-- Battery. The lens must not be driven on a nearly empty battery: on
+-- 2026-11-05, after 9 min of developing (3.75 -> 3.35 V), every power-on
+-- ended with the app extending the lens, the voltage collapsing and the
+-- camera switching off -- a power-on loop with no ROMLOG.
+local BATT_LOW_MV, BATT_DEV_STOP_MV, BATT_DEV_START_MV = 3500, 3450, 3600
+local function vbatt() return have("get_vbatt") and get_vbatt() or 4000 end
+
 local function set_rec(on)
   if not have("set_record") or is_rec() == on then return true end
+  if on and vbatt() < BATT_LOW_MV then
+    mf.log("not extending the lens: battery " .. vbatt() .. " mV")
+    return false
+  end
   set_record(on and 1 or 0)
   local t = get_tick_count()
   while is_rec() ~= on and get_tick_count() - t < 5000 do sleep(100) end
@@ -611,9 +622,7 @@ local function viewer(title, frames, start)
     end
   end
   mf_overlay_clear()
-  set_rec(true)
-  canon_info(false)
-  invalidate()
+  invalidate()                                   -- back to the menu, still in playback (lens in)
   return quit_to
 end
 
@@ -820,6 +829,10 @@ local function develop_roll(r)
       return nil
     end
   end
+  if vbatt() < BATT_DEV_START_MV then
+    say("Battery " .. vbatt() .. " mV: charge it before developing", 10000)
+    return nil
+  end
   devui = {}
   mf.journal(r, "DEVELOP on camera started, " .. #r.frames .. " frame(s)")
   mf.log("develop: start" .. heap())
@@ -827,49 +840,82 @@ local function develop_roll(r)
   mf.log("develop " .. r.roll_id .. ": " .. #r.frames .. " frames, film " .. r.film)
   local title = "Developing " .. (mf.film_short(r.film) or r.film)
   local done, failed, stopped, t_all = 0, 0, false, get_tick_count()
+  local oom_run = 0
   for i, fr in ipairs(r.frames) do
     local jpg, mfv = mf.cam_paths(r, i)
     local hi, lo = mf.cam_seed(r, i)
-    local ok, err = mf_dev_start(camf, devf, r.film, fr.path, jpg, mfv, mf.DEV_ROOT .. "/WORK.TMP", hi, lo)
-    if not ok then
-      mf.log("develop frame " .. i .. ": " .. tostring(err))
-      failed = failed + 1
+    if mf.view_complete(mfv) then                 -- developed before (resumed): keep it
+      done = done + 1
     else
-      local st, pm, rc, ms = "running", 0, 0, 0
-      while true do
-        st, pm, rc, ms = mf_dev_status()
-        if st ~= "running" then break end
-        local elapsed = (get_tick_count() - t_all) / 1000
-        local eta = string.format("elapsed %d:%02d", elapsed / 60, elapsed % 60)
-        if done > 0 then
-          local per = (get_tick_count() - t_all) / (done + pm / 1000)
-          local left = (per * (#r.frames - done) - per * pm / 1000) / 1000
-          if left < 0 then left = 0 end
-          eta = eta .. string.format("      about %d:%02d left", left / 60, left % 60)
-        end
-        screen("Developing", develop_lines(r, i, #r.frames, pm, done, failed, eta), nil, 1,
-               " MENU: stop     developed frames are kept")
-        local k = key(200)
-        if k == "menu" and not stopped then
-          stopped = true
-          mf_dev_cancel()
-        end
+      if vbatt() < BATT_DEV_STOP_MV then
+        mf.log("develop: battery " .. vbatt() .. " mV, stopping before frame " .. i)
+        say("Battery low: developing stopped, frames so far kept", 10000)
+        stopped = true
+        break
       end
-      if st == "done" then
-        done = done + 1
-        mf.journal(r, string.format("DEVELOPED frame %d on camera in %d ms", i, ms))
-        mf.log(string.format("develop frame %d: %d ms%s", i, ms, heap()))
-      else
-        if rc ~= -25 then failed = failed + 1 end
-        mf.log(string.format("develop frame %d: rc %d (%s)%s", i, rc, DEV_ERR[rc] or "error", heap()))
-        if rc ~= -25 then last_err = DEV_ERR[rc] or ("error " .. rc) end
-        if rc == -23 then say("Film " .. r.film .. " is not in MFDEV.BIN", 8000) break end
+      local tries = 0
+      repeat
+        tries = tries + 1
+        collectgarbage("collect")                 -- Lua garbage holds heap the developer needs
+        local st, pm, rc, ms = "error", 0, 0, 0
+        local ok, err = mf_dev_start(camf, devf, r.film, fr.path, jpg, mfv, mf.DEV_ROOT .. "/WORK.TMP", hi, lo)
+        if not ok then
+          mf.log("develop frame " .. i .. ": " .. tostring(err))
+          rc = -20
+        else
+          while true do
+            st, pm, rc, ms = mf_dev_status()
+            if st ~= "running" then break end
+            local elapsed = (get_tick_count() - t_all) / 1000
+            local eta = string.format("elapsed %d:%02d", elapsed / 60, elapsed % 60)
+            if done > 0 then
+              local per = (get_tick_count() - t_all) / (done + pm / 1000)
+              local left = (per * (#r.frames - done) - per * pm / 1000) / 1000
+              if left < 0 then left = 0 end
+              eta = eta .. string.format("      about %d:%02d left", left / 60, left % 60)
+            end
+            screen("Developing", develop_lines(r, i, #r.frames, pm, done, failed, eta), nil, 1,
+                   " MENU: stop     developed frames are kept")
+            local k = key(200)
+            if k == "menu" and not stopped then
+              stopped = true
+              mf_dev_cancel()
+            end
+          end
+        end
+        local again = false
+        if st == "done" then
+          done = done + 1
+          mf.journal(r, string.format("DEVELOPED frame %d on camera in %d ms", i, ms))
+          mf.log(string.format("develop frame %d: %d ms%s", i, ms, heap()))
+        else
+          mf.log(string.format("develop frame %d: rc %d (%s)%s", i, rc, DEV_ERR[rc] or "error", heap()))
+          if rc == -22 and tries == 1 and not stopped then
+            again = true                          -- out of memory: free Lua's garbage, wait, once more
+            local t = get_tick_count()
+            while get_tick_count() - t < 1000 do
+              screen("Developing", develop_lines(r, i, #r.frames, 0, done, failed, "waiting for memory"), nil, 1,
+                     " MENU: stop     developed frames are kept")
+              if key(200) == "menu" then stopped = true end
+            end
+            if stopped then again = false end
+          elseif rc ~= -25 then
+            failed = failed + 1
+            last_err = DEV_ERR[rc] or ("error " .. rc)
+            oom_run = rc == -22 and oom_run + 1 or 0
+          end
+        end
+      until not again
+      if last_err == DEV_ERR[-23] then say("Film " .. r.film .. " is not in MFDEV.BIN", 8000) break end
+      if oom_run >= 2 then                        -- memory stays short: no point going through the roll
+        say("Not enough memory: restart the camera, then Develop again", 12000)
+        stopped = true
       end
     end
     if stopped then break end
   end
+  if done > 0 then mf.cam_index_put(r, #r.frames) end   -- the viewer shows the frames that are there
   if done == #r.frames then
-    mf.cam_index_put(r, done)
     mf.journal(r, string.format("DEVELOP on camera finished: %d frames in %d s", done,
                                 (get_tick_count() - t_all) / 1000))
     say(string.format("Developed %d frames", done), 6000, true)
@@ -877,9 +923,12 @@ local function develop_roll(r)
   end
   mf.journal(r, string.format("DEVELOP on camera incomplete: %d of %d, %d failed%s", done, #r.frames, failed,
                               stopped and ", stopped" or ""))
-  say(stopped and "Developing stopped" or string.format("Developed %d of %d: %s", done, #r.frames,
-                                                         last_err or "see APP.LOG"), 10000)
-  return nil
+  if not (notice and (string.find(notice, "Battery", 1, true) or string.find(notice, "memory", 1, true))
+          and get_tick_count() < notice_until) then
+    say(stopped and "Developing stopped: Develop again to go on" or string.format("Developed %d of %d: %s", done,
+        #r.frames, last_err or "see APP.LOG"), 10000)
+  end
+  return done > 0 and done or nil
 end
 
 local function roll_card(r, v)
@@ -891,11 +940,28 @@ local function roll_card(r, v)
     lines[#lines + 1] = string.format("%d of %d frames, %s", #r.frames, r.length,
                                       r.state == "SEALED" and "finished" or "in the camera")
   end
-  lines[#lines + 1] = v and string.format("DEVELOPED: %d frames (%s)", v.frames, v.origin or "server")
-                      or "not developed yet"
+  -- frames actually there (a develop may have been stopped, or a frame failed)
+  local have_frames = {}
+  if v then
+    for k = 1, v.frames do
+      local p = mf.view_frame(v, k)
+      if mf.view_complete(p) then have_frames[#have_frames + 1] = p end
+    end
+  end
+  local partial = v and #have_frames < v.frames
+  if v and not partial then
+    lines[#lines + 1] = string.format("DEVELOPED: %d frames (%s)", v.frames, v.origin or "server")
+  elseif v then
+    lines[#lines + 1] = {string.format("DEVELOPED: %d of %d frames (%s)", #have_frames, v.frames,
+                                       v.origin or "server"), C.warn}
+  else
+    lines[#lines + 1] = "not developed yet"
+  end
   local items, acts = {}, {}
-  if v then items[#items + 1] = "View developed frames"; acts[#acts + 1] = "view" end
-  if not v then items[#items + 1] = "Develop"; acts[#acts + 1] = "develop" end
+  if #have_frames > 0 then items[#items + 1] = "View developed frames"; acts[#acts + 1] = "view" end
+  if r and (not v or (partial and v.origin == "camera")) then
+    items[#items + 1] = v and "Develop the rest" or "Develop"; acts[#acts + 1] = "develop"
+  end
   items[#items + 1] = "Back"; acts[#acts + 1] = "back"
   while true do
     local shown_lines = {}
@@ -907,9 +973,7 @@ local function roll_card(r, v)
     if i == "shoot" then return "shoot" end
     if i == nil or acts[i] == "back" then return end
     if acts[i] == "view" then
-      local frames = {}
-      for k = 1, v.frames do frames[k] = mf.view_frame(v, k) end
-      if viewer(mf.film_short(film) .. " " .. (v.day or ""), frames) == "shoot" then return "shoot" end
+      if viewer(mf.film_short(film) .. " " .. (v.day or ""), have_frames) == "shoot" then return "shoot" end
     elseif acts[i] == "develop" then
       if not r then
         say("The roll is not on this card", 6000)
@@ -923,10 +987,8 @@ local function roll_card(r, v)
           mf.seal(r, "finished to develop on camera")
           if roll and roll.roll_id == r.roll_id then roll = nil end
         end
-        if develop_roll(r) then
-          v = mf.view_index()[r.roll_id]
-          return roll_card(r, v)
-        end
+        develop_roll(r)
+        return roll_card(r, mf.view_index()[r.roll_id])
       end
     end
   end
@@ -987,7 +1049,8 @@ end
 
 local function menu()
   chdk_osd(false)
-  set_rec(true)                                  -- the menu lives in shooting mode
+  -- the menu stays in whatever mode the camera is in: it covers the whole
+  -- screen, so playback works as well, and the lens moves only to shoot
   canon_info(false)
   draw_clear()
   title_line(false)
@@ -997,17 +1060,26 @@ local function menu()
     local status = {{"Film: " .. (roll and mf.film_name(roll.film) or "NO FILM"), roll and C.fg or C.warn}}
     if roll then status[#status + 1] = {hero = roll} end
     if have("get_raw") and not get_raw() then status[#status + 1] = {"RAW/DNG is OFF: enable it in CHDK RAW menu", C.warn} end
+    if vbatt() < BATT_LOW_MV then status[#status + 1] = {"Battery low (" .. vbatt() .. " mV): charge it", C.warn} end
     if notice and get_tick_count() < notice_until then status[#status + 1] = {notice, C.hi} end
     local auto_on = have("get_autostart") and get_autostart() == 1
     local items = {"Shoot", roll and roll.state ~= "SEALED" and "Load new film (finish this one)" or "Load film",
                    "Finish roll now", "Rolls on card", "Start with camera: " .. (auto_on and "ON" or "OFF"),
                    "Diagnostics", "Quit M-Film"}
     local i = choose("M-Film " .. mf.VERSION, status, items, sel)
-    if i == "shoot" or i == 1 or i == nil then break end
-    sel = i
-    mf.log("menu: " .. items[i])
+    if i == "shoot" or i == 1 or i == nil then
+      -- to shoot the lens must be out; on a low battery stay in the menu
+      if set_rec(true) then break end
+      say(vbatt() < BATT_LOW_MV and "Battery low: the lens stays in" or "Could not switch to shooting", 6000)
+      i = nil
+    end
     local r
-    if i == 2 then r = load_film()
+    if i then
+      sel = i
+      mf.log("menu: " .. items[i])
+    end
+    if not i then
+    elseif i == 2 then r = load_film()
     elseif i == 3 then seal_now()
     elseif i == 4 then r = show_rolls()
     elseif i == 5 then
@@ -1059,6 +1131,11 @@ local function on_new_dng(f)
 end
 
 local function shooting()
+  if not set_rec(true) then                      -- powered on in playback / low battery: back to the menu
+    say(vbatt() < BATT_LOW_MV and "Battery low: the lens stays in" or "Could not switch to shooting", 6000)
+    if have("enter_alt") then enter_alt() end
+    return
+  end
   canon_info(false)                              -- straight to shooting after autostart
   if have("exit_alt") then exit_alt() end
   local function canon_gallery()
@@ -1125,18 +1202,28 @@ end
 -- off so the next power-on is a plain CHDK camera.
 local BOOT = "A/CHDK/MFILM/BOOT.TXT"
 local boot_t0, boot_ok = 0, false
-local function boot_write(s)
+-- BOOT.TXT: "starting"/"ok", then the times (os.time) of recent autostarts.
+-- Four autostarts within 60 s also count as a loop: on 2026-11-05 each start
+-- got past the first seconds and then the battery cut the camera off.
+local boot_times = {}
+local function boot_save(state)
   local f = io.open(BOOT, "wb")
-  if f then f:write(s .. "\n"); f:close() end
+  if f then f:write(state .. "\n" .. table.concat(boot_times, " ") .. "\n"); f:close() end
 end
 local function boot_guard()
   boot_t0 = get_tick_count()
   local f = io.open(BOOT, "rb")
-  local last = f and f:read("*l")
-  if f then f:close() end
+  local last, times = nil, nil
+  if f then last = f:read("*l"); times = f:read("*l"); f:close() end
+  local now = os.time() or 0
   local auto = have("autostarted") and autostarted()
-  boot_write("starting")
-  if last == "starting" and auto and have("set_autostart") then
+  for t in string.gmatch(times or "", "%d+") do
+    local n = tonumber(t)
+    if n and now - n >= 0 and now - n < 60 then boot_times[#boot_times + 1] = n end
+  end
+  if auto then boot_times[#boot_times + 1] = now end   -- autostarts only: a hand start is not a loop
+  boot_save("starting")
+  if auto and have("set_autostart") and (last == "starting" or #boot_times >= 4) then
     set_autostart(0)
     return true
   end
@@ -1145,7 +1232,7 @@ end
 boot_alive = function()                          -- called from the wait loops
   if not boot_ok and get_tick_count() - boot_t0 > 5000 then
     boot_ok = true
-    boot_write("ok")
+    boot_save("ok")
   end
 end
 
@@ -1157,7 +1244,7 @@ local function main()
   local problems = mf.init()
   mf.log("---- start " .. mf.VERSION)
   if looped then
-    mf.log("the previous start did not finish: CHDK autostart switched OFF")
+    mf.log("the previous start did not finish, or 4 autostarts in 60 s: CHDK autostart switched OFF")
     say("Last start failed: autostart is OFF (Diagnostics)", 15000)
   end
   selftest = run_selftest()
@@ -1208,7 +1295,9 @@ local function main()
     mf.log("autostart enabled")
     say("M-Film now starts with the camera", 5000)
   end
-  local skip_menu = auto and roll ~= nil            -- powered on with film loaded: straight to shooting
+  -- powered on with film loaded: straight to shooting -- unless it was switched
+  -- on with the Playback button (lens in): then the menu, the lens stays in
+  local skip_menu = auto and roll ~= nil and is_rec()
   while not quit do
     if not skip_menu then menu() end
     skip_menu = false

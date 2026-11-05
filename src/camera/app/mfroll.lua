@@ -22,7 +22,7 @@
 
 local M = {}
 
-M.VERSION = "0.5.2-alpha"
+M.VERSION = "0.5.3-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 
@@ -456,6 +456,14 @@ function M.cam_index_put(r, n)
                                   string.sub(r.created_at or "", 1, 10), n, M.cam_dir(r))
   M.mkdirs(M.VIEW_ROOT)
   return write_plain(p, table.concat(keep, "\n") .. "\n")
+end
+
+-- a viewer frame written to the end (720x480 UYVYYY + 12-byte header); a
+-- power cut while developing leaves a shorter one
+M.MFV_BYTES = 12 + 480 * 1080
+function M.view_complete(p)
+  local st = stat(p)
+  return st ~= nil and not st.is_dir and st.size == M.MFV_BYTES
 end
 
 function M.view_frame(v, i)

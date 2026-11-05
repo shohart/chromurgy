@@ -30,8 +30,7 @@ APP = REPO / "src" / "camera" / "app"
 
 KEYS = ["up", "down", "up", "down", "set", "set", "menu", "left", "right", "shoot_half", "display", "zoom_in"]
 MAX_GHOST_PX = 40           # pixels a pass may set and set back (a redraw over itself that flashes)
-MAX_ERASE_MS = 400          # erase visible until the next poll (60 ms menus, 200 ms developing); the viewer caption under
-                            # flip+erase storms (unrealistic in playback) reached 360 ms once in 100 runs
+MAX_ERASE_MS = 260          # an erase is visible until the next poll: 60 ms in menus, 200 ms while developing
 
 
 def lua_val(v):
@@ -99,10 +98,12 @@ def scenario(rng: random.Random, n: int) -> list:
         elif r < 0.95:
             st.append(("canon_playback",))
             st.append(("wait", 900))
-        elif r < 0.97:
+        elif r < 0.965:
             st.append(("setdir", f"A/DCIM/{rng.randrange(102, 130)}___11"))
+        elif r < 0.98:
+            st.append(("vbatt", rng.choice([3950, 3950, 3700, 3550, 3480, 3420, 3340])))
         else:
-            st += [("powercut",), ("boot",), ("wait", 1500)]
+            st += [("powercut",), (rng.choice(["boot", "boot", "boot_playback"]),), ("wait", 1500)]
     return st
 
 
