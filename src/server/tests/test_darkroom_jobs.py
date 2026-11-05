@@ -132,3 +132,15 @@ def test_nef_full_render_carries_nikon_exif(logged, store):
     ex = im.getexif()
     assert im.size == (1500, 1000) and ex.get(271) == "NIKON CORPORATION" and ex.get(272) == "NIKON D5100"
     assert ex.get_ifd(0x8769).get(34855) == 400
+
+
+def test_restart_mid_render_recovers_without_a_duplicate(logged, store):
+    src = upload(logged, DNG, "a.dng").json()["source"]["asset_id"]
+    jid = logged.post(f"{dapp.API}/jobs", headers=H, json=job_body([src], recipe(width=800, height=600))).json()["job_id"]
+    c = db.connect(store.db_path)
+    c.execute("UPDATE darkroom_items SET state='RENDERING', attempt=1 WHERE job_id=?", (jid,))   # worker died here
+    assert logged.get(f"{dapp.API}/jobs/{jid}").json()["state"] == "RUNNING"
+    assert drain(store)[0].state == "COMMITTED"                    # the next pass recovers and finishes it
+    v = logged.get(f"{dapp.API}/jobs/{jid}").json()
+    assert v["state"] == "COMPLETE" and len(renders_on_disk(store)) == 1
+    assert not list((store.root / "incoming").glob("web-render-*"))

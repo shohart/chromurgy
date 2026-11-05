@@ -83,3 +83,13 @@ def test_v1_bridge_and_seed_identity(bundle):
     c["film"]["id"] = "cinestill800t"
     assert recipe2.to_v1(c)["recipe_id"] != v1a["recipe_id"]
     assert v1a["film_profile_id"] == "portra400" and v1a["profile_bundle_hash"] == bundle.sha256
+
+
+def test_golden_haze_is_a_known_but_unsupported_preset(bundle):
+    c = catalog.build(bundle)
+    assert {p["id"]: p["supported"] for p in c["optical_presets"]} == {"none": True, "golden_haze": False}
+    r = neutral()
+    r["optical"] = {"preset_id": "golden_haze", "strength": 0.5, "stack": []}
+    with pytest.raises(recipe2.RecipeError) as e:
+        recipe2.normalize(r, bundle)
+    assert e.value.code == "UNSUPPORTED_OPTICAL_EFFECT"

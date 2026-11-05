@@ -190,6 +190,10 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         label = sources.display_name(name)
         if Path(label).suffix.lower() not in sources.SUPPORTED_EXT:
             raise ApiError(422, "UNSUPPORTED_EXTENSION", f"{label}: expected .dng or .nef")
+        for stale in c.execute("SELECT id FROM web_uploads WHERE state='OPEN' AND updated_at < "
+                               "strftime('%Y-%m-%dT%H:%M:%fZ','now','-24 hours')").fetchall():
+            part(stale[0]).unlink(missing_ok=True)          # abandoned uploads expire (docs/web/30)
+            c.execute("UPDATE web_uploads SET state='ABORTED', error_code='EXPIRED' WHERE id=?", (stale[0],))
         if sha:                                   # already archived: nothing to send
             have = c.execute("SELECT * FROM sources WHERE id=?", (sources.source_id(sha),)).fetchone()
             if have and have["bytes"] == size:
@@ -309,6 +313,14 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             raise ApiError(404, "UNKNOWN_ASSET", asset_id)
         return sources.row_public(row)
 
+    @app.get(f"{API}/sources/{{asset_id}}/thumbnail")
+    def source_thumbnail(asset_id: str, _t: str = Depends(session), c=Depends(conn)):
+        row = source_row(c, asset_id)
+        f = sources.thumb_path(store, row["sha256"])
+        if not f.is_file():
+            raise ApiError(404, "NO_THUMBNAIL", "this RAW has no embedded preview")
+        return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
     @app.post(f"{API}/previews", status_code=202)
     async def create_preview(request: Request, _t: str = Depends(session), c=Depends(conn)):
         try:
@@ -316,8 +328,11 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             asset_id, kind = str(body["asset_id"]), body.get("kind", "treated")
             max_edge = int(body.get("max_edge", 1280))
             stream = str(body.get("stream") or "default")[:64]
+            wb_req = body.get("white_balance", "daylight")
         except (ValueError, KeyError, TypeError):
             raise ApiError(400, "BAD_REQUEST", "asset_id and recipe required") from None
+        if wb_req not in ("daylight", "as-shot"):
+            raise ApiError(422, "INVALID_REQUEST", "white_balance: daylight|as-shot")
         if kind not in ("treated", "before") or not 320 <= max_edge <= 2048:
             raise ApiError(422, "INVALID_REQUEST", "kind: treated|before, max_edge: 320..2048")
         row = source_row(c, asset_id)
@@ -330,12 +345,13 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
                 raise ApiError(422, e.code, e.detail) from None
             v1 = recipe2.to_v1(v2)
         rhash = recipe2.recipe_hash(v2) if v2 else "before"
+        wb = preview.wb_mode(v2) if v2 else wb_req       # the wipe's two sides share one baseline white balance
         key = preview.preview_key(sha=row["sha256"], kind=kind, recipe_hash=rhash, max_edge=max_edge,
-                                  bundle_hash=b.sha256)
+                                  bundle_hash=b.sha256, wb=wb)
         meta = json.loads(row["meta"])
         job = {"root": str(store.root), "src_path": str(store.root / row["path"]), "sha": row["sha256"], "kind": kind,
                "v1": v1, "max_edge": max_edge, "key": key, "recipe_hash": rhash,
-               "wb": preview.wb_mode(v2) if v2 else "daylight", "captured_at": meta.get("captured_at"),
+               "wb": wb, "captured_at": meta.get("captured_at"),
                "seed_ids": ("web", "web", row["sha256"])}
         get_lane().submit(job, f"{stream}:{kind}")
         return {"preview_id": key, "recipe_hash": rhash, "status_url": f"{API}/previews/{key}",

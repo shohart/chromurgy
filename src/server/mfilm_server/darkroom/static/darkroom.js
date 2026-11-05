@@ -142,7 +142,8 @@ function renderAssets() {
   box.replaceChildren(...S.assets.map(a => {
     const m = a.meta || {}, sel = S.selected.has(a.asset_id);
     const th = h("div", { class: "th" }, thumbs[a.asset_id] ? null : "…");
-    if (thumbs[a.asset_id]) th.style.backgroundImage = `url(${thumbs[a.asset_id]})`; else loadThumb(a.asset_id);
+    if (thumbs[a.asset_id]) th.style.backgroundImage = `url(${thumbs[a.asset_id]})`;
+    else if (!(a.asset_id in thumbs)) loadThumb(a.asset_id);
     const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), role: "button", tabindex: "0", "aria-pressed": String(sel),
       title: "Click: select · double-click: use for preview" },
       th, h("span", { class: "tick" }, sel ? "✓" : ""),
@@ -159,10 +160,9 @@ function renderAssets() {
 }
 async function loadThumb(id) {
   thumbs[id] = thumbs[id] || "";   // mark in flight
-  try {
-    const p = await api("/previews", { method: "POST", json: { asset_id: id, kind: "before", max_edge: 320, stream: "thumb:" + id } });
-    const st = await pollPreview(p.preview_id, 240);
-    if (st.status === "DONE") { thumbs[id] = await imgUrl(p.preview_id); renderAssets(); }
+  try {                            // the RAW's own embedded preview: instant, and never competes with real previews
+    const r = await fetch(`${API}/sources/${id}/thumbnail`, { credentials: "same-origin" });
+    if (r.ok) { thumbs[id] = URL.createObjectURL(await r.blob()); renderAssets(); }
   } catch (e) { /* thumbnails are best effort */ }
 }
 async function imgUrl(pid) {
@@ -212,7 +212,7 @@ function renderFilms() {
 /* ---------------- step 4: optics ---------------- */
 function opticsPanel() {
   return h("div", {}, h("p", { class: "dim" }, "These effects are part of the spec but not implemented in the film engine yet, so they are shown disabled. A recipe that asks for one is rejected rather than rendered without it."),
-    h("div", { class: "cards" }, S.catalog.optical_effects.map(o => h("div", { class: "card", "aria-disabled": "true" }, h("strong", {}, o.name), h("span", { class: "tag" }, "not yet implemented")))));
+    h("div", { class: "cards" }, [...S.catalog.optical_effects, ...S.catalog.optical_presets.filter(p => p.id !== "none")].map(o => h("div", { class: "card", "aria-disabled": "true" }, h("strong", {}, o.name), h("span", { class: "tag" }, "not yet implemented")))));
 }
 
 /* ---------------- step 5: preview ---------------- */
@@ -249,7 +249,7 @@ async function runPreview() {
   try {
     const [pt, pb] = await Promise.all([
       api("/previews", { method: "POST", json: { asset_id: S.current, recipe: recipe(), max_edge: edge, stream: "main" } }),
-      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main" } })]);
+      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main", white_balance: S.wb } })]);
     const [st, sb] = await Promise.all([pollPreview(pt.preview_id), pollPreview(pb.preview_id)]);
     if (seq !== pvSeq) return;                         // a newer edit superseded this one: never show it as current
     if (st.status !== "DONE") { busy.textContent = ""; $("#pvinfo").textContent = `Preview failed: ${st.error_code || st.status} ${st.detail || ""}`; return; }

@@ -13,7 +13,7 @@ TAG_DNGVERSION = 50706
 EXIF = 0x8769
 
 
-def probe(path: str) -> dict:
+def probe(path: str, thumb_out: str | None = None) -> dict:
     import rawpy
     from PIL import Image, UnidentifiedImageError
     with open(path, "rb") as f:
@@ -44,8 +44,35 @@ def probe(path: str) -> dict:
         return {"ok": False, "code": "UNSUPPORTED_RAW", "detail": str(e)}
     except rawpy.LibRawError as e:
         return {"ok": False, "code": "BAD_RAW", "detail": f"{type(e).__name__}: {e}"}
+    if thumb_out:
+        meta["has_thumb"] = _thumb(path, thumb_out, meta.get("flip", 0))
     meta["format"] = "dng" if meta.get("is_dng") else ("nef" if (meta.get("make") or "").upper().startswith("NIKON") else "raw")
     return {"ok": True, "meta": meta}
+
+
+def _thumb(path: str, out: str, flip: int) -> bool:
+    """Grid thumbnail from the RAW's own embedded preview (spec 28 allows it for the grid; real
+    previews and the before/after compare are always renders). Best effort."""
+    import io
+
+    import numpy as np
+    import rawpy
+    from PIL import Image, ImageOps
+    try:
+        with rawpy.imread(path) as raw:
+            t = raw.extract_thumb()
+        if t.format == rawpy.ThumbFormat.JPEG:
+            im = ImageOps.exif_transpose(Image.open(io.BytesIO(t.data))).convert("RGB")
+        elif t.format == rawpy.ThumbFormat.BITMAP:
+            k = {0: 0, 3: 2, 5: 1, 6: 3}.get(flip, 0)
+            im = Image.fromarray(np.ascontiguousarray(np.rot90(np.asarray(t.data), k)))
+        else:
+            return False
+        im.thumbnail((320, 320))
+        im.save(out, "JPEG", quality=80)
+        return True
+    except (rawpy.LibRawError, OSError, ValueError, SyntaxError):
+        return False
 
 
 def _f(v):
@@ -58,7 +85,7 @@ def _f(v):
 def main() -> int:
     resource.setrlimit(resource.RLIMIT_AS, (6 << 30, 6 << 30))
     try:
-        out = probe(sys.argv[1])
+        out = probe(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
     except MemoryError:
         out = {"ok": False, "code": "RESOURCE_LIMIT", "detail": "decoder exceeded memory limit"}
     print(json.dumps(out))

@@ -195,3 +195,24 @@ def test_ui_is_served_with_strict_csp(client):
     assert "script-src" not in r.headers["content-security-policy"] or "unsafe-inline" not in r.headers["content-security-policy"].split("script-src")[1].split(";")[0]
     assert client.get("/darkroom/static/darkroom.js").status_code == 200
     assert client.get("/darkroom/static/..%2f..%2fapp.py").status_code == 404
+
+
+@needs_dng
+def test_grid_thumbnail_comes_from_the_raw_and_expired_uploads_are_dropped(logged, store):
+    src = upload(logged, DNG, "a.dng").json()["source"]
+    t = logged.get(f"{dapp.API}/sources/{src['asset_id']}/thumbnail")
+    assert t.status_code == 200 and t.headers["content-type"] == "image/jpeg"
+    from io import BytesIO
+
+    from PIL import Image
+    assert max(Image.open(BytesIO(t.content)).size) <= 320
+    assert logged.get(f"{dapp.API}/sources/nope/thumbnail").status_code == 404
+    # an abandoned upload expires after 24 h and stops counting against the open-upload limit
+    from mfilm_server import db
+    j = logged.post(f"{dapp.API}/sources/uploads", headers=H, json={"filename": "x.dng", "size_bytes": 5000}).json()
+    c = db.connect(store.db_path)
+    c.execute("UPDATE web_uploads SET updated_at='2020-01-01T00:00:00.000Z' WHERE id=?", (j["upload_id"],))
+    logged.post(f"{dapp.API}/sources/uploads", headers=H, json={"filename": "y.dng", "size_bytes": 5000})
+    st = logged.get(f"{dapp.API}/sources/uploads/{j['upload_id']}").json()
+    assert st["state"] == "ABORTED" and st["error_code"] == "EXPIRED"
+    assert not (store.root / "incoming" / f"web-{j['upload_id']}.part").exists()

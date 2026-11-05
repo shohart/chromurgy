@@ -78,9 +78,10 @@ def normalize(recipe: dict, bundle: core.Bundle) -> dict:
             raise RecipeError("UNKNOWN_OPTICAL_EFFECT", fx)
         if fx not in catalog.SUPPORTED_EFFECTS:
             raise RecipeError("UNSUPPORTED_OPTICAL_EFFECT", f"{fx}: not implemented in this engine yet")
-    if opt["preset_id"] != "none" and opt["preset_id"] not in {"none", *known_fx}:
+    presets = known_fx | {"golden_haze"}
+    if opt["preset_id"] != "none" and opt["preset_id"] not in presets:
         raise RecipeError("UNKNOWN_OPTICAL_PRESET", opt["preset_id"])
-    if opt["preset_id"] in known_fx and opt["preset_id"] not in catalog.SUPPORTED_EFFECTS and opt["strength"] > 0:
+    if opt["preset_id"] in presets and opt["preset_id"] not in catalog.SUPPORTED_EFFECTS and opt["strength"] > 0:
         raise RecipeError("UNSUPPORTED_OPTICAL_EFFECT", f"{opt['preset_id']}: not implemented in this engine yet")
     rd = r["render"]
     if rd["output_format"] != "jpeg" or rd["output_color_space"] != "srgb":

@@ -67,3 +67,19 @@ def test_unsupported_look_is_refused_not_ignored(logged):
     assert logged.post(f"{dapp.API}/previews", headers=H, json={"asset_id": src, "recipe": recipe(), "max_edge": 10}).status_code == 422
     assert logged.get(f"{dapp.API}/previews/{'0' * 64}").status_code == 404
     assert logged.get(f"{dapp.API}/previews/..%2f..%2fetc").status_code in (404, 422)
+
+
+def test_before_side_follows_the_recipe_white_balance(logged):
+    src = upload(logged, DNG, "a.dng").json()["source"]["asset_id"]
+    day = logged.post(f"{dapp.API}/previews", headers=H, json={"asset_id": src, "kind": "before", "max_edge": 640}).json()
+    shot = logged.post(f"{dapp.API}/previews", headers=H, json={"asset_id": src, "kind": "before", "max_edge": 640,
+                                                                "white_balance": "as-shot"}).json()
+    assert day["preview_id"] != shot["preview_id"]          # a different baseline is a different picture
+    assert logged.post(f"{dapp.API}/previews", headers=H, json={"asset_id": src, "kind": "before",
+                                                                "white_balance": "x"}).status_code == 422
+    r = recipe()
+    r["extensions"] = {"white_balance": "as-shot"}
+    t = logged.post(f"{dapp.API}/previews", headers=H, json={"asset_id": src, "recipe": r, "max_edge": 640}).json()
+    assert wait(logged, t["preview_id"])["status"] == "DONE"
+    assert wait(logged, shot["preview_id"])["status"] == "DONE" and wait(logged, day["preview_id"])["status"] == "DONE"
+    assert np.abs(px(logged, day["preview_id"]) - px(logged, shot["preview_id"])).mean() > 1

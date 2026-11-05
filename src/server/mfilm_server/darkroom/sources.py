@@ -8,6 +8,7 @@ point at the file where it already lives."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -36,10 +37,10 @@ def display_name(name: str) -> str:
     return name[:200] or "unnamed"
 
 
-def probe(path: Path) -> dict:
+def probe(path: Path, thumb_out: Path | None = None) -> dict:
     """Run the decoder probe in an isolated child; returns {ok, meta} or {ok False, code, detail}."""
     try:
-        p = subprocess.run([sys.executable, "-I", str(INSPECT), str(path)], capture_output=True, text=True,
+        p = subprocess.run([sys.executable, "-I", str(INSPECT), str(path), *([str(thumb_out)] if thumb_out else [])], capture_output=True, text=True,
                            timeout=PROBE_TIMEOUT_S, check=False)
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": "DECODER_TIMEOUT", "detail": f"no result in {PROBE_TIMEOUT_S} s"}
@@ -47,6 +48,10 @@ def probe(path: Path) -> dict:
         return json.loads(p.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
         return {"ok": False, "code": "DECODER_CRASH", "detail": f"exit {p.returncode}: {p.stderr[-300:]}"}
+
+
+def thumb_path(store: Store, sha: str) -> Path:
+    return store.root / "web-previews" / "thumb" / f"{sha}.jpg"
 
 
 def source_id(sha: str) -> str:
@@ -69,21 +74,30 @@ def commit_upload(conn: sqlite3.Connection, store: Store, part: Path, filename: 
     if have:
         part.unlink(missing_ok=True)
         return have, True
-    res = probe(part)
+    tpart = part.with_suffix(".thumb")
+    res = probe(part, tpart)
     if not res["ok"]:
+        tpart.unlink(missing_ok=True)
         raise SourceError(res["code"], res.get("detail", ""))
     meta = res["meta"]
     fmt = meta["format"]
     if fmt not in ("dng", "nef"):
+        tpart.unlink(missing_ok=True)
         raise SourceError("UNSUPPORTED_RAW", f"{meta.get('make')} {meta.get('model')}: only DNG and Nikon NEF are verified")
     warnings = []
     if ext not in SUPPORTED_EXT:
+        tpart.unlink(missing_ok=True)
         raise SourceError("UNSUPPORTED_EXTENSION", f"{ext or '(none)'}: expected .dng or .nef")
     if ext != f".{fmt}":
         warnings.append(f"extension {ext} but the content is {fmt.upper()}")
     meta["warnings"] = warnings
     meta.pop("is_dng", None)
     dest = store.root / "web-originals" / sha[:2] / f"{sha}.{fmt}"
+    if meta.pop("has_thumb", False) and tpart.is_file():
+        tdest = thumb_path(store, sha)
+        tdest.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(tpart, tdest)
+    tpart.unlink(missing_ok=True)
     if not dest.exists():
         Store.promote(part, dest)
     else:

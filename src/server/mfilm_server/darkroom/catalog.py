@@ -59,6 +59,7 @@ def build(bundle: core.Bundle) -> dict:
                          for i, n, t in CAMERA_LOOKS],
         "films": films(bundle),
         "optical_effects": [{"id": i, "name": n, "supported": i in SUPPORTED_EFFECTS} for i, n in OPTICAL_EFFECTS],
-        "optical_presets": [{"id": "none", "name": "No optical effect", "supported": True}],
+        "optical_presets": [{"id": "none", "name": "No optical effect", "supported": True},
+                            {"id": "golden_haze", "name": "Golden Haze (composite)", "supported": "golden_haze" in SUPPORTED_EFFECTS}],
         "output": {"formats": ["jpeg"], "color_spaces": ["srgb"], "quality": [1, 100]},
     }
