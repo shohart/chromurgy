@@ -310,3 +310,33 @@ Flicker: repainting the flipped-to overlay buffer within 60 ms was still
 visible now and then. mf_overlay_mirror() (M-Film CHDK build) copies the
 buffer just painted into the other one after every pass that changed
 something, so a flip shows the same menu.
+
+## 0.5.x: the simulator, and what it found (2026-11-05)
+
+No emulator runs the SX510 HS firmware (QEMU for Canon needs a ROM dump and
+covers mostly EOS), so the host harness became a model of the camera:
+two overlay buffers that Canon flips and erases at random moments (seeded),
+CHDK's splash, mode-switch transitions, the camera's heap for the developer,
+CHDK's integer Lua and print, DryOS file rules, a deterministic clock. A
+display model compares, at every tick, what the screen shows with what the
+app last painted and counts visible glitches by cause, with the app's stack.
+tools/fuzz_camera_app.py walks every screen (guided macros + random keys,
+power cuts, Canon playback, low heap) and checks the roll manifests;
+tools/screens_tour.py renders every screen with CHDK's own font.
+
+Found and fixed with it (none needed the camera):
+- load animation and viewer caption drawn into one buffer only (flicker on
+  flips); erased viewer caption never noticed (gone for a second);
+- the watcher stat'ed every DNG of every folder on every pass: ~2000 card
+  accesses a second with a 400-file folder; now ~20 a second (new and
+  unconfirmed files, a full check every 30 s or after a shot with no new DNG);
+- string.format width flags (%-12s, %4d) replaced by Lua padding: on the
+  camera Lua's format goes to Canon's _vsprintf, only %02d is proven there;
+- harness bugs fixed on the way (a 32-bit-overflowing RNG, truncated print).
+
+Results: 200 runs x 200 steps, 0 failures, 0 flicker from buffer flips,
+erase glitches closed within one poll (60 ms in menus, 200 ms while
+developing); Lua memory flat over an hour of camera time (151 shots).
+Known: under flip+erase storms the viewer caption was once missing for
+360 ms. CHDK's default alt_prevent_shutdown keeps the camera on while the
+app is in ALT mode (menus, developing).

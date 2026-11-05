@@ -252,6 +252,11 @@ local function pad(s)
   return s .. string.rep(" ", COLS - string.len(s))
 end
 
+-- fixed-width fields done in Lua: string.format on the camera is Canon's
+-- _vsprintf, whose support for "%-12s" / "%4d" is not proven (only %02d is)
+local function lpad(s, n) s = string.sub(tostring(s), 1, n) return s .. string.rep(" ", n - string.len(s)) end
+local function rpad(s, n) s = string.sub(tostring(s), 1, n) return string.rep(" ", n - string.len(s)) .. s end
+
 -- draw one text row unless it is already on screen; returns true if drawn
 local painted = false                            -- this pass changed the active buffer
 local function row_text(row, s, fg, bg, sig, force)
@@ -646,11 +651,11 @@ end
 local function bar_row(y, label, permille)
   if permille < 0 then permille = 0 end
   if permille > 1000 then permille = 1000 end
-  draw_string(FW, y, string.format("%-13s", label), C.fg, C.bg)
+  draw_string(FW, y, lpad(label, 13), C.fg, C.bg)
   local fill = BAR_W * permille / 1000
   if fill > 0 then box(BAR_X, y + 4, BAR_X + fill - 1, y + 11, CC.yellow) end
   if fill < BAR_W then box(BAR_X + fill, y + 4, BAR_X + BAR_W - 1, y + 11, CC.grey_dk) end
-  draw_string(PCT_X, y, string.format("%4d%%", permille / 10), C.hi, C.bg)
+  draw_string(PCT_X, y, rpad(permille / 10, 4) .. "%", C.hi, C.bg)
 end
 
 local STAGES = {{600, "scanning the negative"}, {700, "halation"}, {1001, "printing"}}
@@ -665,7 +670,7 @@ local function develop_lines(r, i, n, pm, done, failed, eta)
       tank(12, y + 4, phase)
       draw_string(56, y + 4, string.sub(mf.film_name(r.film), 1, 36), C.hi, C.bg)
       draw_string(56, y + 20, string.format("%d frames, shot %s", n, string.sub(r.created_at or "", 1, 10)), C.dim, C.bg)
-      draw_string(56, y + 36, string.format("%-30s", stage), C.fg, C.bg)
+      draw_string(56, y + 36, lpad(stage, 30), C.fg, C.bg)
     end},
     "",
     {rows = 2, sig = string.format("strip%d|%d|%d", done, i, phase % 2), gfx = function(y)
@@ -838,7 +843,7 @@ local function show_rolls()
     local day = e.r and string.sub(e.r.created_at or "", 6, 10) or string.sub(e.v.day or "", 6, 10)
     local n = e.r and string.format("%d/%d", #e.r.frames, e.r.length) or tostring(e.v.frames)
     local st = e.v and "DEV" or (e.r.state == "SEALED" and "done" or "in cam")
-    items[#items + 1] = string.format("%s %-12s %5s %s", day, string.sub(mf.film_short(film) or film, 1, 12), n, st)
+    items[#items + 1] = day .. " " .. lpad(mf.film_short(film) or film, 12) .. " " .. rpad(n, 5) .. " " .. st
     icons[#icons + 1] = film
   end
   if #items == 0 then return choose("Rolls on this card", {"No rolls yet."}, {"Back"}, 1) end
@@ -961,6 +966,7 @@ local function shooting()
   end
   show_overlay(3000)
   local last_draw, pending_since, shown = 0, nil, false
+  local last_poll, last_full_poll, last_dir = 0, get_tick_count(), nil
   while not quit do
     boot_alive()
     if canon_gallery() then return end
@@ -971,7 +977,18 @@ local function shooting()
       shots_seen = n
       pending_since = pending_since or get_tick_count()
     end
-    local found = watcher.poll(dir)
+    -- the card is read when a shot was taken (until its DNG is in), on a new
+    -- folder, and every 5 s anyway; every 30 s known DNGs are re-checked
+    local now = get_tick_count()
+    local found = {}
+    if pending_since or dir ~= last_dir or now - last_poll >= 5000 then
+      -- a shot with no new DNG after 1.5 s: maybe it overwrote one, check sizes now
+      local full = now - last_full_poll >= 30000
+                   or (pending_since and now - pending_since > 1500 and last_full_poll < pending_since)
+      found = watcher.poll(dir, full)
+      last_poll, last_dir = now, dir
+      if full then last_full_poll = now end
+    end
     for _, f in ipairs(found) do on_new_dng(f) end
     if #found > 0 then pending_since = nil; show_overlay(3000) end
     if pending_since and get_tick_count() - pending_since > 10000 then

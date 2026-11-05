@@ -12,7 +12,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src" / "server"))
 sys.path.insert(0, str(REPO / "tools"))
-import fuzz_camera_app as fz  # noqa: E402
+import fuzz_camera_app as fz
 
 
 def K(*keys, w=200):

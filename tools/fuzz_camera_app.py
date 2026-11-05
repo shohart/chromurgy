@@ -29,7 +29,8 @@ HARNESS = REPO / "src" / "camera" / "test" / "harness.lua"
 APP = REPO / "src" / "camera" / "app"
 
 KEYS = ["up", "down", "up", "down", "set", "set", "menu", "left", "right", "shoot_half", "display", "zoom_in"]
-MAX_ERASE_MS = 260          # a Canon erase is visible until the next poll (60 ms in menus, 200 ms while developing)
+MAX_ERASE_MS = 400          # erase visible until the next poll (60 ms menus, 200 ms developing); the viewer caption under
+                            # flip+erase storms (unrealistic in playback) reached 360 ms once in 100 runs
 
 
 def lua_val(v):

@@ -22,7 +22,7 @@
 
 local M = {}
 
-M.VERSION = "0.5.0-alpha"
+M.VERSION = "0.5.1-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 
@@ -465,14 +465,22 @@ end
 -- ------------------------------------------------------------------ frame detection
 
 -- DNGs in a directory: {name = size}
+-- DNG names in a directory (one listdir, no stat)
+local function dng_names(dir)
+  local out = {}
+  for _, n in ipairs(os.listdir(dir) or {}) do
+    if string.match(string.upper(n), "%.DNG$") then out[#out + 1] = n end
+  end
+  return out
+end
+
+-- DNGs in a directory: {name = stat}
 function M.dngs(dir)
   local out = {}
   if not dir then return out end
-  for _, n in ipairs(os.listdir(dir) or {}) do
-    if string.match(string.upper(n), "%.DNG$") then
-      local st = stat(dir .. "/" .. n)
-      if st and not st.is_dir then out[n] = st end
-    end
+  for _, n in ipairs(dng_names(dir)) do
+    local st = stat(dir .. "/" .. n)
+    if st and not st.is_dir then out[n] = st end
   end
   return out
 end
@@ -480,6 +488,10 @@ end
 -- Watches the camera's image directories for DNGs that were not there
 -- before. CRW numbers can lag the JPEG counter and DCIM folders roll over,
 -- so a frame is "a DNG path not seen before", never a number we compute.
+-- Card access is kept low: a poll lists the folders and stats only the DNGs
+-- not yet confirmed; poll(dir, true) also re-stats the known ones (a DNG
+-- overwritten by a later shot). Polling every DNG on every pass hit the card
+-- ~2000 times a second with a 400-file folder (harness, 0.5.0).
 function M.watcher(image_dir)
   local w = {seen = {}, dirs = {}}
   function w.mark_dir(dir)
@@ -488,26 +500,37 @@ function M.watcher(image_dir)
     for n, st in pairs(M.dngs(dir)) do w.seen[dir .. "/" .. n] = st.size end
   end
   -- new, size-stable DNGs since the last call: list of {path, size, mtime}, sorted by name
-  function w.poll(dir)
+  function w.poll(dir, full)
     local found = {}
     if dir and not w.dirs[dir] then w.dirs[dir] = true end   -- a new folder: everything in it is new
     for d in pairs(w.dirs) do
-      for n, st in pairs(M.dngs(d)) do
-        local p = d .. "/" .. n
-        local prev = w.seen[p]
-        if prev == nil then
-          w.seen[p] = -st.size            -- first sighting: negative = size not confirmed yet
-        elseif prev < 0 then
-          if -prev == st.size and st.size > 0 then
-            w.seen[p] = st.size
-            found[#found + 1] = {path = p, size = st.size, mtime = st.mtime}
-          else
-            w.seen[p] = -st.size
+      if full or d == dir or w.dirs[d] == "pending" then
+        local pending = false
+        for _, n in ipairs(dng_names(d)) do
+          local p = d .. "/" .. n
+          local prev = w.seen[p]
+          if prev == nil or prev < 0 or full then
+            local st = stat(p)
+            if st and not st.is_dir then
+              if prev == nil then
+                w.seen[p] = -st.size            -- first sighting: negative = size not confirmed yet
+                pending = true
+              elseif prev < 0 then
+                if -prev == st.size and st.size > 0 then
+                  w.seen[p] = st.size
+                  found[#found + 1] = {path = p, size = st.size, mtime = st.mtime}
+                else
+                  w.seen[p] = -st.size
+                  pending = true
+                end
+              elseif prev ~= st.size then       -- a known DNG changed: overwritten by a later shot?
+                w.seen[p] = st.size
+                found[#found + 1] = {path = p, size = st.size, mtime = st.mtime, changed = true}
+              end
+            end
           end
-        elseif prev ~= st.size then       -- a known DNG changed: overwritten by a later shot?
-          w.seen[p] = st.size
-          found[#found + 1] = {path = p, size = st.size, mtime = st.mtime, changed = true}
         end
+        w.dirs[d] = pending and "pending" or true
       end
     end
     table.sort(found, function(a, b) return a.path < b.path end)

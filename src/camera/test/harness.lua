@@ -162,6 +162,13 @@ local function display_tick(dt)
     glitch.where = app_co and string.gsub(debug.traceback(app_co, "", 1), "\n%s*", " | ") or nil
   end
 end
+lua_kb = {min = nil, max = 0, samples = {}}
+local function mem_sample()
+  collectgarbage("collect")
+  local kb = collectgarbage("count")
+  if kb > lua_kb.max then lua_kb.max = kb end
+  lua_kb.samples[#lua_kb.samples + 1] = kb
+end
 local function glitch_close()
   -- after the app's pass: the glitch lasts until the app has changed what is shown
   if glitch.since and fb_sig(fb_active) ~= glitch.sig then
@@ -200,6 +207,11 @@ function draw_string(x, y, s, fg, bg, scale)
   -- Canon's icons collided with it and it flickered (alpha 0.1.0-0.1.7)
   if alt and rec_mode and props[105] == 0 then error("menu text drawn over Canon's information display: " .. s, 2) end
   drawn[#drawn + 1] = s
+  if #drawn > 400 then                      -- keep the harness's own memory flat (expect looks at recent text)
+    local keep = {}
+    for j = #drawn - 199, #drawn do keep[#keep + 1] = drawn[j] end
+    drawn = keep
+  end
   if x == 0 and y == 0 then
     local t = string.match(s, "^%s*(%a[%a ]-)%s*[%d(]") or string.match(s, "^%s*(.-)%s*$")
     titles[t] = (titles[t] or 0) + 1
@@ -347,9 +359,13 @@ io.open = function(p, mode)
   return raw_open(p, mode)
 end
 os.mkdir = function(p) check_path(p, true, "os.mkdir") return raw_mkdir(p) end
-os.stat = function(p) check_path(p, false, "os.stat") return raw_stat(p) end
+card_ops = {stat = 0, listdir = 0}          -- SD card accesses (they cost real time on the camera)
+os.stat = function(p) check_path(p, false, "os.stat"); card_ops.stat = card_ops.stat + 1 return raw_stat(p) end
 os.remove = function(p) check_path(p, false, "os.remove") return raw_remove(p) end
-os.listdir = function(p, ...) check_path(p, false, "os.listdir") return raw_listdir(p, ...) end
+os.listdir = function(p, ...)
+  check_path(p, false, "os.listdir"); card_ops.listdir = card_ops.listdir + 1
+  return raw_listdir(p, ...)
+end
 os.rename = function(a, b) error("os.rename is not used on the camera (refuses to replace; crashed in long dirs)", 2) end
 
 -- ---------------------------------------------------------------- driver
@@ -409,6 +425,7 @@ while true do
     if coroutine.status(co) ~= "dead" then
       local dt = ((kind == "sleep" or kind == "wait") and math.max(ms or 0, 10) or 10)
       glitch_close()
+      if clock / 30000 ~= (clock + dt) / 30000 then mem_sample() end   -- every 30 s of camera time
       clock = clock + dt
       display_tick(dt)
       if pending > 0 then
@@ -510,6 +527,11 @@ print(string.format("harness: OK, %d shot(s), %d step(s); glitches: flip %d, era
 local tl = {}
 for t, n in pairs(titles) do tl[#tl + 1] = t end
 table.sort(tl)
+io.write(string.format("card: %d stat, %d listdir in %d s\n", card_ops.stat, card_ops.listdir, clock / 1000))
+local ls = lua_kb.samples
+if #ls >= 4 then
+  io.write(string.format("lua memory: first %d KB, last %d KB, max %d KB, samples %d\n", ls[2], ls[#ls], lua_kb.max, #ls))
+end
 -- io.write: CHDK hostlua's print truncates long lines
 io.write("screens: ")
 for _, t in ipairs(tl) do io.write(t, "; ") end

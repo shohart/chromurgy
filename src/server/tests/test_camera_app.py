@@ -332,6 +332,21 @@ def test_both_overlay_buffers_hold_the_menu_before_any_flip(card):
         env={**os.environ, "MFILM_DRAWLOG": str(log)})
 
 
+def test_watcher_does_not_stat_a_big_folder_all_the_time(card):
+    # a folder with 400 DNGs: polling every DNG every 100-200 ms would hit the
+    # card hundreds of times a second while the camera writes its own files
+    d = card / "A" / "DCIM" / "101___01"
+    d.mkdir(parents=True)
+    for k in range(400):
+        (d / f"CRW_{k:04d}.DNG").write_bytes(b"II*\0" + bytes(100))
+    p = run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("wait", 60000)])
+    m = __import__("re").search(r"card: (\d+) stat, (\d+) listdir in (\d+) s", p.stdout)
+    stats, listdirs, secs = int(m[1]), int(m[2]), int(m[3])
+    assert stats < 400 * 6 + 2000, (stats, listdirs, secs)      # a few full checks, not one per poll
+    (r,) = rolls(card)
+    assert r["captured_frames"] == 2
+
+
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
 
 
