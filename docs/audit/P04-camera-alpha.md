@@ -257,3 +257,21 @@ portrait (+216 KB film table). tests/test_camera_dev.py runs it on a
 synthetic CHDK-layout DNG (landscape, both portraits, unknown film), the
 harness covers the app flow (develop, stop, missing data files).
 HARDWARE-TEST REQUIRED: time per frame and heap on the SX510 HS.
+
+## 0.4.1: boot loop with 0.4.0 card; official core, crash-loop guard
+
+The owner's camera rebooted in a loop after installing the 0.4.0 card (our
+own DISKBOOT.BIN, built here from release-1_6 r6355 with GCC 10, plus our
+modules; CHDK autostarts the app at every power-on). Cause not yet proven
+(ROMLOG.LOG from the card is needed). Changes:
+
+- tools/build_chdk16.sh now ships the OFFICIAL CHDK 1.6.1-6355 build for
+  sx510hs 101a (mighty-hoernsche.de, zip pinned by SHA-256): its
+  DISKBOOT.BIN and modules byte for byte, with only lua.flt replaced by ours.
+  Our core build is no longer used on the card.
+- Crash-loop guard in the app: A/CHDK/MFILM/BOOT.TXT reads "starting" until
+  the app has been up 5 s; an autostart that finds "starting" switches CHDK
+  autostart off and says so, so a failing start cannot repeat forever.
+- mfilm_alpha/FALLBACK/lua.flt is the official module: if the loop stays
+  with 0.4.1, putting it in CHDK/MODULES tells core from module apart (the
+  app then runs without the viewer and developer, and says so).

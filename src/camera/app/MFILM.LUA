@@ -29,6 +29,7 @@ local shots_seen = 0
 local notice, notice_until = nil, 0
 local selftest = {}
 local quit = false
+local boot_alive = function() end                -- crash-loop guard heartbeat (set in main's section)
 
 local function have(name) return type(_G[name]) == "function" end
 
@@ -322,6 +323,7 @@ end
 
 -- wait for one of KEYS; returns the key name, "shoot" if alt mode was left, or nil on timeout
 local function key(ms)
+  boot_alive()
   wait_click(ms or 60)
   for _, k in ipairs(KEYS) do
     if is_key(k) then return k end
@@ -781,6 +783,7 @@ local function shooting()
   show_overlay(3000)
   local last_draw, pending_since, shown = 0, nil, false
   while not quit do
+    boot_alive()
     if canon_gallery() then return end
     if have("get_alt_mode") and get_alt_mode() then return end   -- Playback pressed: menu (before drawing)
     local dir = get_image_dir()
@@ -813,12 +816,49 @@ end
 
 -- ------------------------------------------------------------ main
 
+-- Crash-loop guard. CHDK starts this script at every power-on; if a start
+-- dies before the app is up (the camera restarts), the next start would die
+-- the same way, forever (2026-11-05: the camera rebooted in a loop). BOOT.TXT
+-- says "starting" until the app has run for a few seconds; finding it still
+-- there at an autostart means the last start failed: autostart is switched
+-- off so the next power-on is a plain CHDK camera.
+local BOOT = "A/CHDK/MFILM/BOOT.TXT"
+local boot_t0, boot_ok = 0, false
+local function boot_write(s)
+  local f = io.open(BOOT, "wb")
+  if f then f:write(s .. "\n"); f:close() end
+end
+local function boot_guard()
+  boot_t0 = get_tick_count()
+  local f = io.open(BOOT, "rb")
+  local last = f and f:read("*l")
+  if f then f:close() end
+  local auto = have("autostarted") and autostarted()
+  boot_write("starting")
+  if last == "starting" and auto and have("set_autostart") then
+    set_autostart(0)
+    return true
+  end
+  return false
+end
+boot_alive = function()                          -- called from the wait loops
+  if not boot_ok and get_tick_count() - boot_t0 > 5000 then
+    boot_ok = true
+    boot_write("ok")
+  end
+end
+
 local function main()
+  local looped = boot_guard()
   if have("get_gui_screen_width") then W, H = get_gui_screen_width(), get_gui_screen_height() end
   COLS = W / FW
   if COLS > 60 then COLS = 60 end
   local problems = mf.init()
   mf.log("---- start " .. mf.VERSION)
+  if looped then
+    mf.log("the previous start did not finish: CHDK autostart switched OFF")
+    say("Last start failed: autostart is OFF (Diagnostics)", 15000)
+  end
   selftest = run_selftest()
   local fbs = fb_init()
   selftest[#selftest + 1] = fbs
@@ -860,7 +900,7 @@ local function main()
   -- start with the camera: CHDK runs this script at every power-on (the
   -- setting is CHDK's own, saved by set_autostart; toggle it in the menu)
   local auto = have("autostarted") and autostarted()
-  if have("get_autostart") and have("set_autostart") and get_autostart() == 0 and not auto then
+  if not looped and have("get_autostart") and have("set_autostart") and get_autostart() == 0 and not auto then
     set_autostart(1)
     mf.log("autostart enabled")
     say("M-Film now starts with the camera", 5000)

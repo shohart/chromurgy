@@ -25,8 +25,22 @@ sed -i "s|^         0, 0, 0, 0, 0$|         0, 0, mf_can_unload, 0, 0|" "$lua"
 ln -sf "$root/src/camera/chdk/makefile_usermodules.inc" "$b/modules/makefile_usermodules.inc"
 make -C "$b" -s PLATFORM=sx510hs PLATFORMSUB=101a BUILD_SVNREV=6355 MF_ROOT="$root" fir >"$root/build/chdk16-build.log" 2>&1 \
   || { grep -i -B2 -A6 "error" "$root/build/chdk16-build.log" | head -40; exit 1; }
-rm -rf "$card" && mkdir -p "$card"
-cp "$b/bin/DISKBOOT.BIN" "$card/"
-mkdir -p "$card/CHDK" && cp -r "$b/CHDK/MODULES" "$card/CHDK/MODULES"
+# The card gets the OFFICIAL CHDK build (DISKBOOT.BIN = the core, and its
+# modules) with only lua.flt replaced by ours. A core built here with GCC 10
+# was never proven on the camera, and the 2026-11-05 card with our own
+# DISKBOOT.BIN rebooted in a loop; modules from these same sources load on
+# the official core (MFBENCH.FLT did, 2026-11-04): same architecture flag and
+# interface versions.
+OFFICIAL_URL=https://mighty-hoernsche.de/bins/sx510hs-101a-1.6.1-6355-full_ALPHA.zip
+OFFICIAL_SHA=485f464c92025aaffa7aa9f85f4f4c0ff20c377f21fdb7f004a34596878d7cb6
+off=$root/build/chdk-official
+mkdir -p "$off"
+[ -f "$off/full.zip" ] || curl -sfL --max-time 300 -o "$off/full.zip" "$OFFICIAL_URL"
+echo "$OFFICIAL_SHA  $off/full.zip" | sha256sum -c --quiet - || { echo "official CHDK zip: hash mismatch" >&2; exit 1; }
+rm -rf "$off/x" && mkdir -p "$off/x" && (cd "$off/x" && unzip -q ../full.zip)
+rm -rf "$card" && mkdir -p "$card/CHDK"
+cp "$off/x/DISKBOOT.BIN" "$card/"
+cp -r "$off/x/CHDK/MODULES" "$card/CHDK/MODULES"
+cp "$b/CHDK/MODULES/lua.flt" "$card/CHDK/MODULES/lua.flt"
 (cd "$card" && find . -type f | sort | xargs sha256sum > "$root/build/chdk16-card.sha256")
 echo "card tree: $card ($(find "$card" -type f | wc -l) files); DISKBOOT.BIN $(sha256sum "$card/DISKBOOT.BIN" | cut -c1-16)"

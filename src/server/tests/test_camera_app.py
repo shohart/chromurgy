@@ -312,6 +312,17 @@ def test_develop_without_data_files_says_so(card):
         + [("expect", "MFDEV/MFCAM.BIN or MFDEV.BIN")])
 
 
+def test_crash_loop_guard_switches_autostart_off(card):
+    # 2026-11-05: the camera rebooted in a loop; an autostart that dies before the
+    # app is up must not be repeated at the next power-on
+    run(card, [("wait", 6000), ("expect_autostart", 1),
+               ("powercut",), ("boot",), ("wait", 6000), ("expect_autostart", 1),      # a clean start: kept
+               ("powercut",), ("boot",), ("wait", 1000),                                # dies while starting
+               ("powercut",), ("boot",), ("wait", 600), ("expect_autostart", 0),
+               ("expect", "Last start failed: autostart is OFF")])
+    assert "previous start did not finish" in applog(card)
+
+
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
 
 
