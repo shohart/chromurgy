@@ -122,40 +122,68 @@ local function brand_colour(key)
 end
 
 -- a 35 mm canister, 16x16, top-left at x,y
+-- Graphics are drawn so that every pixel is set once: no background box
+-- under a detail that stays. Redrawing a picture over itself then changes
+-- nothing on screen (the strip's black fill under its cells made the whole
+-- strip flash at every redraw, camera 0.5.1).
 local function canister(x, y, key)
   local col = brand_colour(key)
   box(x + 6, y, x + 8, y + 1, CC.grey)           -- spool knob
   box(x + 1, y + 2, x + 11, y + 3, CC.grey_lt)   -- top cap
-  box(x + 2, y + 4, x + 10, y + 12, col)         -- body
+  box(x + 2, y + 4, x + 10, y + 5, col)          -- body above the label
+  box(x + 2, y + 6, x + 2, y + 7, col)
   box(x + 3, y + 6, x + 9, y + 7, CC.white)      -- label stripe
+  box(x + 10, y + 6, x + 10, y + 7, col)
+  box(x + 2, y + 8, x + 10, y + 12, col)         -- body below the label
   box(x + 1, y + 13, x + 11, y + 14, CC.grey_lt) -- bottom cap
   box(x + 11, y + 6, x + 15, y + 11, CC.grey_dk) -- film leader
 end
 
--- film strip: n frames across width w, the first `shot` exposed; 12 px high
+-- film strip: n frames across width w, the first `shot` exposed; 12 px high,
+-- tiled without overlaps (see above)
 local function strip(x, y, w, n, shot)
   if n < 1 then return end
   local cw = w / n
   if cw < 3 then cw = 3 end
-  box(x, y, x + cw * n, y + 11, CC.black)
+  local xe = x + cw * n
+  for _, r in ipairs({0, 3, 8, 11}) do box(x, y + r, xe, y + r, CC.black) end
+  box(xe, y + 1, xe, y + 2, CC.black)
+  box(xe, y + 4, xe, y + 7, CC.black)
+  box(xe, y + 9, xe, y + 10, CC.black)
   for i = 0, n - 1 do
     local cx = x + i * cw
-    if cw >= 5 then
-      box(cx + 1, y + 1, cx + 2, y + 2, CC.grey)  -- sprocket holes
-      box(cx + 1, y + 9, cx + 2, y + 10, CC.grey)
+    for _, r in ipairs({1, 9}) do                 -- sprocket rows
+      if cw >= 5 then
+        box(cx, y + r, cx, y + r + 1, CC.black)
+        box(cx + 1, y + r, cx + 2, y + r + 1, CC.grey)
+        box(cx + 3, y + r, cx + cw - 1, y + r + 1, CC.black)
+      else
+        box(cx, y + r, cx + cw - 1, y + r + 1, CC.black)
+      end
     end
+    box(cx, y + 4, cx, y + 7, CC.black)           -- the frame
     box(cx + 1, y + 4, cx + cw - 1, y + 7, i < shot and CC.yellow or CC.grey_dk)
   end
 end
 
--- loading: the film slides into the frame (~0.4 s)
+-- loading: the film slides into the frame (~0.4 s). Each step draws the
+-- canister and strip at their new place and blacks out only what they left.
 local function anim_load(key, n)
   local y = H / 2 - 8
+  local px = nil
   for step = 0, 8 do
     local x = W - (step * (W - 40)) / 8
-    box(0, y - 4, W - 1, y + 19, CC.black)
-    canister(x - 18, y, key)
+    if not px then box(0, y - 4, W - 1, y + 19, CC.black) end
     strip(x, y + 2, W - 40, n, 0)
+    canister(x - 18, y, key)
+    if px then
+      local d = px - x
+      box(px - 18, y, px - 3, y + 1, CC.black)              -- old canister, rows the strip does not cover
+      box(px - 18, y + 14, px - 3, y + 14, CC.black)
+      box(x + W - 40 + 1, y + 2, px + W - 40, y + 13, CC.black)   -- where the strip ended
+      if d > 0 then box(x - 2, y, x - 1, y + 14, CC.black) end   -- between canister and strip
+    end
+    px = x
     overlay_commit()
     sleep(40)
   end
@@ -305,6 +333,29 @@ local function screen(...)
   end
 end
 
+-- graphics over l.rows text rows. l.key names what the rows hold, l.sig
+-- what changes. l.gfx(y, full): full when the rows do not hold this key yet
+-- (new screen, erased buffer): they are cleared once and drawn whole;
+-- otherwise only what changed is drawn, never a background under something
+-- that stays (the whole contact strip flickered with the pulsing frame,
+-- camera 0.5.1). Nothing on the safety refresh.
+local function paint_gfx_line(row, l)
+  local n = l.rows or 1
+  local kp = "gfx:" .. (l.key or "") .. "#"
+  local k = kp .. (l.sig or "")
+  local full, changed = false, false
+  for j = 0, n - 1 do
+    local d = drawn[row + j] or ""
+    if string.sub(d, 1, string.len(kp)) ~= kp then full = true end
+    if d ~= k then changed = true end
+  end
+  if not (full or changed) then return end
+  if full then for j = 0, n - 1 do text(0, row + j, pad(""), C.fg, C.bg) end end
+  for j = 0, n - 1 do drawn[row + j] = k end
+  l.gfx(row * FH, full)
+  painted = true
+end
+
 paint = function(refresh, title, lines, items, sel, footer, icons)
   local rows_total = H / FH                     -- CHDK's bar is hidden while the menu is up
   local row = 0
@@ -313,34 +364,19 @@ paint = function(refresh, title, lines, items, sel, footer, icons)
   for _, l in ipairs(lines or {}) do
     if row >= rows_total - 1 then break end
     if type(l) == "table" and l.gfx then
-      -- graphics over l.rows text rows: drawn only when l.sig changes (or on
-      -- the safety refresh, same pixels); the rows are blanked once when the
-      -- screen first shows them. l.gfx(y) must paint everything it changes.
-      local n, k = l.rows or 1, "gfx:" .. (l.sig or "")
-      local changed = refresh
-      for j = 0, n - 1 do if drawn[row + j] ~= k then changed = true end end
-      if changed then
-        for j = 0, n - 1 do
-          if string.sub(drawn[row + j] or "", 1, 4) ~= "gfx:" then text(0, row + j, pad(""), C.fg, C.bg) end
-          drawn[row + j] = k
-        end
-        l.gfx(row * FH)
-        painted = true
-      end
-      row = row + n
+      paint_gfx_line(row, l)
+      row = row + (l.rows or 1)
     elseif type(l) == "table" and l.hero then
-      -- the loaded film: canister, big counter, strip (two text rows)
+      -- the loaded film: canister, big counter, strip (two text rows), as a
+      -- graphics line: redrawn when the count changes, never on the refresh
       local r = l.hero
-      local sig = "hero:" .. r.film .. ":" .. #r.frames .. "/" .. r.length
-      local a = row_text(row, pad(""), C.fg, C.bg, sig)
-      local b = row_text(row + 1, pad(""), C.fg, C.bg, sig)
-      if a or b or refresh then                  -- refresh: graphics over themselves, no blanking
-        canister(8, row * FH + 8, r.film)
-        local cs = string.format("%d/%d", #r.frames, r.length)
-        draw_string(32, row * FH, cs, C.hi, C.bg, 2)
+      local cs = #r.frames .. "/" .. r.length
+      paint_gfx_line(row, {rows = 2, key = "hero|" .. r.film .. "|" .. string.len(cs), sig = cs, gfx = function(y, full)
+        if full then canister(8, y + 8, r.film) end
+        draw_string(32, y, cs, C.hi, C.bg, 2)
         local sx = 32 + 16 * string.len(cs) + 12
-        strip(sx, row * FH + 10, W - sx - 8, r.length, #r.frames)
-      end
+        strip(sx, y + 10, W - sx - 8, r.length, #r.frames)
+      end})
       row = row + 2
     else
       local s, col = l, C.dim
@@ -361,7 +397,9 @@ paint = function(refresh, title, lines, items, sel, footer, icons)
       local sig = icon and ("icon:" .. icon) or nil
       local s, bg = pad("   " .. label), C.bg
       if i == sel then s, bg = pad(" > " .. label), C.sel end
-      if row_text(row, s, C.fg, bg, sig, refresh) and icon then
+      -- rows with a canister icon are not refreshed: text over the icon and
+      -- the icon again would flash it every second
+      if row_text(row, s, C.fg, bg, sig, refresh and not icon) and icon then
         canister(3 * FW, row * FH, icon)
       end
       row = row + 1
@@ -596,55 +634,110 @@ end
 local BAR_X, BAR_W, PCT_X = 120, 176, 304
 
 -- a developing tank: lid, body, a window with the reel turning (4 phases)
--- and bubbles rising; 30 x 40 px at x, y
-local function tank(x, y, phase)
-  box(x + 12, y, x + 17, y + 3, CC.grey_lt)        -- agitation knob
-  box(x, y + 4, x + 29, y + 8, CC.grey_lt)          -- lid
-  box(x + 2, y + 9, x + 27, y + 39, CC.grey_dk)     -- body
-  box(x + 5, y + 12, x + 24, y + 36, CC.black)      -- window
-  local cx, cy = x + 14, y + 24
-  box(cx - 1, cy - 1, cx + 1, cy + 1, CC.grey_lt)   -- hub
+-- and bubbles rising; 30 x 40 px at x, y. tank_full draws it all; tank_step
+-- moves the reel and bubbles from one phase to the next, touching only the
+-- pixels that change.
+local function tank_parts(x, y, phase)
+  local cx, cy, out = x + 14, y + 24, {}
   local arm = {{0, -9}, {6, -6}, {9, 0}, {6, 6}}     -- one spoke per phase, and its opposite
   for k = 0, 1 do
     local a = arm[(phase + 2 * k) % 4 + 1]
     for t = 3, 9, 2 do
       local px, py = cx + a[1] * t / 9, cy + a[2] * t / 9
-      box(px - 1, py - 1, px, py, CC.yellow)
-      box(2 * cx - px - 1, 2 * cy - py - 1, 2 * cx - px, 2 * cy - py, CC.yellow)
+      out[#out + 1] = {px - 1, py - 1, CC.yellow}
+      out[#out + 1] = {2 * cx - px - 1, 2 * cy - py - 1, CC.yellow}
     end
   end
   for b = 0, 2 do                                     -- bubbles
-    local by = y + 34 - ((phase * 3 + b * 7) % 20)
-    box(x + 7 + b * 6, by, x + 8 + b * 6, by + 1, CC.blue_lt)
+    out[#out + 1] = {x + 7 + b * 6, y + 34 - ((phase * 3 + b * 7) % 20), CC.blue_lt}
+  end
+  return out                                          -- 2x2 dots: {x, y, colour}
+end
+
+local function tank_full(x, y, phase)
+  box(x + 12, y, x + 17, y + 3, CC.grey_lt)        -- agitation knob
+  box(x, y + 4, x + 29, y + 8, CC.grey_lt)          -- lid
+  box(x + 2, y + 9, x + 27, y + 39, CC.grey_dk)     -- body
+  box(x + 5, y + 12, x + 24, y + 36, CC.black)      -- window
+  box(x + 13, y + 23, x + 15, y + 25, CC.grey_lt)   -- hub
+  for _, d in ipairs(tank_parts(x, y, phase)) do box(d[1], d[2], d[1] + 1, d[2] + 1, d[3]) end
+end
+
+local function tank_step(x, y, from, to)
+  local new, keep = tank_parts(x, y, to), {}
+  for _, d in ipairs(new) do keep[d[1] .. "," .. d[2]] = d[3] end
+  for _, d in ipairs(tank_parts(x, y, from)) do       -- old dots that are not new dots: back to black
+    if not keep[d[1] .. "," .. d[2]] then box(d[1], d[2], d[1] + 1, d[2] + 1, CC.black) end
+  end
+  local hub = {}
+  for _, d in ipairs(tank_parts(x, y, from)) do hub[d[1] .. "," .. d[2]] = d[3] end
+  for _, d in ipairs(new) do
+    if hub[d[1] .. "," .. d[2]] ~= d[3] then box(d[1], d[2], d[1] + 1, d[2] + 1, d[3]) end
   end
 end
 
 -- the roll as a contact strip: one cell per frame, done in the film's colour,
--- the current one pulsing, the rest dark; sprocket holes above and below
-local function contact_strip(y, film, n, shot, done, current, phase)
+-- the current one pulsing, the rest dark; sprocket holes above and below.
+-- strip_full draws it all; strip_cells redraws only cells whose state changed
+-- (cells[i] remembers what each cell shows).
+local function strip_geom(n)
   local x0, x1 = 8, W - 9
+  local cw = (x1 - x0 - 4) / n
+  if cw > 26 then cw = 26 end
+  return x0, x1, cw
+end
+
+local function cell_state(i, film, shot, done, current, phase)
+  if i > shot then return "unexposed" end
+  if i <= done then return "done" end
+  if i == current then return (phase % 2 == 0) and "pulse_on" or "pulse_off" end
+  return "waiting"
+end
+
+local function draw_cell(y, film, n, i, state)
+  local x0, _, cw = strip_geom(n)
+  local cx = x0 + 3 + (i - 1) * cw
+  if state == "unexposed" then                        -- never exposed: an outline only
+    box(cx, y + 7, cx + cw - 3, y + 7, CC.grey_dk)
+    box(cx, y + 20, cx + cw - 3, y + 20, CC.grey_dk)
+    box(cx, y + 8, cx, y + 19, CC.grey_dk)
+    box(cx + cw - 3, y + 8, cx + cw - 3, y + 19, CC.grey_dk)
+  elseif state == "done" then
+    box(cx, y + 7, cx + cw - 3, y + 8, brand_colour(film))
+    if cw >= 8 then
+      box(cx, y + 9, cx + 1, y + 13, brand_colour(film))
+      box(cx + 2, y + 9, cx + cw - 5, y + 13, CC.white)              -- a frame's sky
+      box(cx + cw - 4, y + 9, cx + cw - 3, y + 13, brand_colour(film))
+    else
+      box(cx, y + 9, cx + cw - 3, y + 13, brand_colour(film))
+    end
+    box(cx, y + 14, cx + cw - 3, y + 20, brand_colour(film))
+  else
+    local c = state == "pulse_on" and CC.yellow or (state == "pulse_off" and CC.grey or CC.grey_dk)
+    box(cx, y + 7, cx + cw - 3, y + 20, c)
+  end
+end
+
+local function strip_full(y, film, n, shot, done, current, phase, cells)
+  local x0, x1 = strip_geom(n)
   box(x0, y, x1, y + 27, CC.black)
   for hx = x0 + 3, x1 - 4, 8 do
     box(hx, y + 2, hx + 3, y + 4, CC.grey_dk)
     box(hx, y + 23, hx + 3, y + 25, CC.grey_dk)
   end
-  local cw = (x1 - x0 - 4) / n
-  if cw > 26 then cw = 26 end
-  local colour = brand_colour(film)
   for i = 1, n do
-    local cx = x0 + 3 + (i - 1) * cw
-    local c = CC.grey_dk                              -- shot, waiting
-    if i <= done then c = colour
-    elseif i == current then c = (phase % 2 == 0) and CC.yellow or CC.grey end
-    if i > shot then                                  -- never exposed: an outline only
-      box(cx, y + 7, cx + cw - 3, y + 7, CC.grey_dk)
-      box(cx, y + 20, cx + cw - 3, y + 20, CC.grey_dk)
-      box(cx, y + 8, cx, y + 19, CC.grey_dk)
-      box(cx + cw - 3, y + 8, cx + cw - 3, y + 19, CC.grey_dk)
-    else
-      box(cx, y + 7, cx + cw - 3, y + 20, c)
+    cells[i] = cell_state(i, film, shot, done, current, phase)
+    draw_cell(y, film, n, i, cells[i])
+  end
+end
+
+local function strip_cells(y, film, n, shot, done, current, phase, cells)
+  for i = 1, n do
+    local st = cell_state(i, film, shot, done, current, phase)
+    if cells[i] ~= st then
+      draw_cell(y, film, n, i, st)
+      cells[i] = st
     end
-    if i <= done and cw >= 8 then box(cx + 2, y + 9, cx + cw - 5, y + 13, CC.white) end   -- a frame's sky
   end
 end
 
@@ -660,30 +753,41 @@ end
 
 local STAGES = {{600, "scanning the negative"}, {700, "halation"}, {1001, "printing"}}
 
+local devui = {}                                   -- what the developing screen shows now
+
 local function develop_lines(r, i, n, pm, done, failed, eta)
   local phase = get_tick_count() / 250 % 4
   local stage = ""
   for _, st in ipairs(STAGES) do if pm < st[1] then stage = st[2] break end end
   local roll_pm = ((i - 1) * 1000 + pm) / n
+  local len = r.length or n
   return {
-    {rows = 3, sig = string.format("tank%d|%s|%s", phase, r.film, stage), gfx = function(y)
-      tank(12, y + 4, phase)
-      draw_string(56, y + 4, string.sub(mf.film_name(r.film), 1, 36), C.hi, C.bg)
-      draw_string(56, y + 20, string.format("%d frames, shot %s", n, string.sub(r.created_at or "", 1, 10)), C.dim, C.bg)
-      draw_string(56, y + 36, lpad(stage, 30), C.fg, C.bg)
+    {rows = 3, key = "tank|" .. r.film, sig = phase .. "|" .. stage, gfx = function(y, full)
+      if full then
+        tank_full(12, y + 4, phase)
+        draw_string(56, y + 2, string.sub(mf.film_name(r.film), 1, 36), C.hi, C.bg)
+        draw_string(56, y + 17, n .. " frames, shot " .. string.sub(r.created_at or "", 1, 10), C.dim, C.bg)
+      elseif devui.phase ~= phase then
+        tank_step(12, y + 4, devui.phase or 0, phase)
+      end
+      if full or devui.stage ~= stage then draw_string(56, y + 32, lpad(stage, 30), C.fg, C.bg) end
+      devui.phase, devui.stage = phase, stage
     end},
     "",
-    {rows = 2, sig = string.format("strip%d|%d|%d", done, i, phase % 2), gfx = function(y)
-      contact_strip(y + 2, r.film, r.length or n, n, done, i, phase)
+    {rows = 2, key = "strip|" .. r.film .. "|" .. len .. "|" .. n, sig = done .. "|" .. i .. "|" .. phase % 2,
+     gfx = function(y, full)
+      devui.cells = (full or not devui.cells) and {} or devui.cells
+      if full then strip_full(y + 2, r.film, len, n, done, i, phase, devui.cells)
+      else strip_cells(y + 2, r.film, len, n, done, i, phase, devui.cells) end
     end},
     "",
-    {rows = 1, sig = "bf" .. i .. "|" .. pm / 5, gfx = function(y)
-      bar_row(y, string.format("Frame %d/%d", i, n), pm)
+    {rows = 1, key = "barf", sig = i .. "|" .. pm / 5, gfx = function(y)
+      bar_row(y, "Frame " .. i .. "/" .. n, pm)
     end},
-    {rows = 1, sig = "br" .. roll_pm / 5, gfx = function(y) bar_row(y, "Roll", roll_pm) end},
+    {rows = 1, key = "barr", sig = tostring(roll_pm / 5), gfx = function(y) bar_row(y, "Roll", roll_pm) end},
     "",
     eta,
-    failed > 0 and {string.format("%d frame(s) failed", failed), C.warn} or "",
+    failed > 0 and {failed .. " frame(s) failed", C.warn} or "",
   }
 end
 
@@ -716,6 +820,7 @@ local function develop_roll(r)
       return nil
     end
   end
+  devui = {}
   mf.journal(r, "DEVELOP on camera started, " .. #r.frames .. " frame(s)")
   mf.log("develop: start" .. heap())
   local last_err = nil

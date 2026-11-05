@@ -32,6 +32,7 @@
 --                          at random moments from now on (0, 0: off)
 --   {"heap", free, largest} the camera's free heap (the developer needs a big block)
 --   {"open_menu"}          press Playback if the M-Film menu is not up
+--   {"expect_no_ghosts", px} no pass so far redrew more than px pixels back to their old colour
 --   {"fuzz"}               random walks: keys while shooting go to Canon, a quit app is started again
 --   {"expect_glitches", max_flip, max_erase_ms}  display model, see below
 -- Display model: at every yield the app has finished a pass, so the active
@@ -147,11 +148,12 @@ local function display_tick(dt)
   if splash_at and clock >= splash_at then
     splash_at = nil
     fbuf = {[0] = {}, [1] = {}}
+    canvas_reset()
     cause = "erase"
   end
   local p = dt * 1000                       -- per-mille chance scaled by elapsed ms
   if chaos.flips > 0 and rnd(1000000) < chaos.flips * p then fb_active = 1 - fb_active; cause = cause or "flip" end
-  if chaos.erases > 0 and rnd(1000000) < chaos.erases * p then fbuf[fb_active] = {}; cause = "erase" end
+  if chaos.erases > 0 and rnd(1000000) < chaos.erases * p then fbuf[fb_active] = {}; canvas_reset(); cause = "erase" end
   if cause and os.getenv("MFILM_CHAOS_LOG") then
     log(string.format("chaos %s at %d dt %d active %d differs %s", cause, clock, dt, fb_active, tostring(fb_sig(fb_active) ~= meant)))
   end
@@ -197,6 +199,63 @@ function peek(addr, size)
   end
   error(string.format("peek at unexpected address %x size %d", addr, size), 2)
 end
+-- Pixel model of the active overlay buffer, for flicker WITHIN a pass: a
+-- pixel that changes during the app's pass and ends where it started was
+-- visible in between (e.g. a whole strip filled black, then redrawn) --
+-- "ghost" pixels. Counted per pass while the app is in ALT mode.
+canvas, pass_first, pass_mid = {}, {}, {}
+ghost = {passes = 0, max = 0, total = 0}
+local function px_set(idx, v)
+  local cur = canvas[idx]
+  if cur == v then return end
+  if pass_first[idx] == nil then pass_first[idx] = cur or false end
+  canvas[idx] = v
+  if v ~= (pass_first[idx] or nil) then pass_mid[idx] = true end
+end
+function canvas_rect(x1, y1, x2, y2, v)
+  for y = y1, y2 do
+    local base = y * 360
+    for x = x1, x2 do px_set(base + x, v) end
+  end
+end
+function canvas_reset() canvas, pass_first, pass_mid = {}, {}, {} end
+function ghost_pass_end()
+  if alt then
+    local n, bx1, by1, bx2, by2 = 0, 999, 999, -1, -1
+    for idx in pairs(pass_mid) do
+      local f = pass_first[idx]
+      if f == false then f = nil end
+      if canvas[idx] == f then
+        n = n + 1
+        local gx, gy = idx % 360, idx / 360
+        if gx < bx1 then bx1 = gx end
+        if gy < by1 then by1 = gy end
+        if gx > bx2 then bx2 = gx end
+        if gy > by2 then by2 = gy end
+      end
+    end
+    ghost.box = string.format("%d,%d-%d,%d", bx1, by1, bx2, by2)
+    -- a new screen changes thousands of pixels and some happen to match the
+    -- old one: that is a screen change, not flicker
+    local net = 0
+    for idx in pairs(pass_first) do
+      local f = pass_first[idx]
+      if f == false then f = nil end
+      if canvas[idx] ~= f then net = net + 1 end
+    end
+    if net > 5000 then n = 0 end
+    if n > 0 then
+      ghost.passes = ghost.passes + 1
+      ghost.total = ghost.total + n
+      if n > ghost.max then ghost.max = n end
+      if os.getenv("MFILM_GLITCH_LOG") and n > 50 then
+        log(string.format("ghost %d px in %s at %d: %s", n, ghost.box, clock,
+            app_co and string.gsub(debug.traceback(app_co, "", 1), "\n%s*", " | ") or ""))
+      end
+    end
+  end
+  pass_first, pass_mid = {}, {}
+end
 -- CHDK does not clip: text past the bitmap edge writes outside the screen buffer
 function draw_string(x, y, s, fg, bg, scale)
   local sc = scale or 1
@@ -206,6 +265,11 @@ function draw_string(x, y, s, fg, bg, scale)
   -- the menu must never be drawn while Canon's information display is on:
   -- Canon's icons collided with it and it flickered (alpha 0.1.0-0.1.7)
   if alt and rec_mode and props[105] == 0 then error("menu text drawn over Canon's information display: " .. s, 2) end
+  -- text on the canvas: each 8x16 cell (scaled) gets the character and colours
+  for ci = 1, string.len(s) do
+    local cx = x + (ci - 1) * 8 * sc
+    canvas_rect(cx, y, cx + 8 * sc - 1, y + 16 * sc - 1, string.sub(s, ci, ci) .. "/" .. tostring(fg) .. "/" .. tostring(bg))
+  end
   drawn[#drawn + 1] = s
   if #drawn > 400 then                      -- keep the harness's own memory flat (expect looks at recent text)
     local keep = {}
@@ -228,6 +292,7 @@ function draw_rect_filled(x1, y1, x2, y2, c1, c2)
   check_rect(x1, y1, x2, y2)
   if alt and rec_mode and props[105] == 0 then error("menu graphics drawn over Canon's information display", 2) end
   -- rows hold rects keyed by their origin, next to the text drawn there
+  canvas_rect(x1, y1, x2, y2, c2 or c1)
   local k = string.format("r%d.%d", x1, y1)
   for r = y1 / 16, y2 / 16 do
     local row = fbuf[fb_active][r]
@@ -237,7 +302,7 @@ function draw_rect_filled(x1, y1, x2, y2, c1, c2)
   dlog(string.format("R %d %d %d %d %d", x1, y1, x2, y2, c2 or c1))
 end
 function draw_rect(x1, y1, x2, y2) check_rect(x1, y1, x2, y2) end
-function draw_clear() drawn[#drawn + 1] = "<clear>"; fbuf = {[0] = {}, [1] = {}}; dlog("C") end
+function draw_clear() drawn[#drawn + 1] = "<clear>"; fbuf = {[0] = {}, [1] = {}}; canvas_reset(); dlog("C") end
 function set_draw_title_line(on) title_line = on end
 function get_gui_screen_width() return 360 end
 function get_gui_screen_height() return 240 end
@@ -308,7 +373,7 @@ function mf_overlay_mirror()
   fbuf[1 - fb_active] = c
   return true
 end
-function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; dlog("C"); return true end
+function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; canvas_reset(); dlog("C"); return true end
 function get_prop(id) return props[id] end
 function set_prop(id, v) props[id] = v end
 function click(k)
@@ -425,6 +490,7 @@ while true do
     if coroutine.status(co) ~= "dead" then
       local dt = ((kind == "sleep" or kind == "wait") and math.max(ms or 0, 10) or 10)
       glitch_close()
+      ghost_pass_end()
       if clock / 30000 ~= (clock + dt) / 30000 then mem_sample() end   -- every 30 s of camera time
       clock = clock + dt
       display_tick(dt)
@@ -474,6 +540,11 @@ while true do
         elseif k == "chaos" then rng, chaos.flips, chaos.erases = s[2] % 65537, s[3], s[4]
         elseif k == "fuzz" then fuzz = true
         elseif k == "heap" then heap.free, heap.largest = s[2], s[3]
+        elseif k == "expect_no_ghosts" then
+          if ghost.max > s[2] then
+            log(string.format("FAIL: step %d: a pass redrew %d px back to what they were (flicker), %d such passes",
+                i - 1, ghost.max, ghost.passes)) os.exit(1)
+          end
         elseif k == "expect_glitches" then
           glitch_close()
           if glitch.flip > s[2] or glitch.longest > s[3] then
@@ -527,6 +598,7 @@ print(string.format("harness: OK, %d shot(s), %d step(s); glitches: flip %d, era
 local tl = {}
 for t, n in pairs(titles) do tl[#tl + 1] = t end
 table.sort(tl)
+io.write(string.format("ghosts: %d passes, max %d px\n", ghost.passes, ghost.max))
 io.write(string.format("card: %d stat, %d listdir in %d s\n", card_ops.stat, card_ops.listdir, clock / 1000))
 local ls = lua_kb.samples
 if #ls >= 4 then

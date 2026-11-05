@@ -347,6 +347,14 @@ def test_watcher_does_not_stat_a_big_folder_all_the_time(card):
     assert r["captured_frames"] == 2
 
 
+def test_developing_screen_redraws_only_what_changes(card):
+    # camera 0.5.1: the whole contact strip flickered with the pulsing current
+    # frame (filled black, then redrawn at every pulse)
+    _dev_files(card)
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(3) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+        + [("expect", "Frame 1/3"), ("wait", 8000), ("expect_no_ghosts", 40)])
+
+
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
 
 

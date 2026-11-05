@@ -29,6 +29,7 @@ HARNESS = REPO / "src" / "camera" / "test" / "harness.lua"
 APP = REPO / "src" / "camera" / "app"
 
 KEYS = ["up", "down", "up", "down", "set", "set", "menu", "left", "right", "shoot_half", "display", "zoom_in"]
+MAX_GHOST_PX = 40           # pixels a pass may set and set back (a redraw over itself that flashes)
 MAX_ERASE_MS = 400          # erase visible until the next poll (60 ms menus, 200 ms developing); the viewer caption under
                             # flip+erase storms (unrealistic in playback) reached 360 ms once in 100 runs
 
@@ -129,7 +130,12 @@ def run_one(args) -> dict:
         m = re.search(r"glitches: flip (\d+), erase (\d+), longest (\d+) ms", p.stdout)
         if m:
             out.update(flip=int(m[1]), erase=int(m[2]), longest=int(m[3]))
+        gm = re.search(r"ghosts: (\d+) passes, max (\d+) px", p.stdout)
+        if gm:
+            out.update(ghost_passes=int(gm[1]), ghost_max=int(gm[2]))
         problems = []
+        if gm and int(gm[2]) > MAX_GHOST_PX:
+            problems.append(f"in-place redraw flashed {gm[2]} px ({gm[1]} passes)")
         if p.returncode != 0:
             problems.append("harness failed")
         if m and int(m[1]) > 0:

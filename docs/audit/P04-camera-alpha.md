@@ -340,3 +340,24 @@ developing); Lua memory flat over an hour of camera time (151 shots).
 Known: under flip+erase storms the viewer caption was once missing for
 360 ms. CHDK's default alt_prevent_shutdown keeps the camera on while the
 app is in ALT mode (menus, developing).
+
+## 0.5.2: no redraw over itself (camera: the strip flickered)
+
+Owner, camera 0.5.1: developing works; the contact strip on the developing
+screen flickered as a whole with the pulsing current frame. Cause: every
+pulse redrew the strip from a black fill up. The harness only compared
+screens at the end of each pass, so it could not see a flash inside one.
+It now keeps a pixel model of the overlay and counts "ghost" pixels -- set
+and set back within one pass (a new screen, > 5000 changed pixels, is not
+counted); the fuzz fails above 40. It found the strip (3190 px per pulse),
+the main menu's film block (canister, counter, strip redrawn over themselves
+by the 1 s safety refresh -- a flash every second), the load animation, the
+canister icons in lists on the refresh, and the stage text drawn 4 px into
+the next row.
+
+Fixed: graphics lines have a key (what they show) and a signature (what
+changes) and draw whole only when the key is new or the buffer was erased,
+otherwise just the changed parts (the strip redraws the one cell that
+changed; the tank moves only the dots of the reel and bubbles); canister and
+strips are tiled so every pixel is set once; nothing graphic is redrawn by
+the safety refresh. 100 fuzz runs: 0 ghosts above 40 px.
