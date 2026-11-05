@@ -275,3 +275,19 @@ modules; CHDK autostarts the app at every power-on). Cause not yet proven
 - mfilm_alpha/FALLBACK/lua.flt is the official module: if the loop stays
   with 0.4.1, putting it in CHDK/MODULES tells core from module apart (the
   app then runs without the viewer and developer, and says so).
+
+## 0.4.2: the boot loop explained (ROMLOG) and fixed
+
+ROMLOG 2026-11-05 13:03: Exception vector 0x04 (undefined instruction) in
+PhySw (the task running scripts), PC 0x005B0E14 (in the stack), return
+addresses 0x422D15, 0x425965, 0x425993, 0x425FE1. Matched against lua.elf,
+they fit exactly one load base, 0x4162D0: luaF_newproto, hashnum,
+mainposition, newkey — Lua running in a module that was no longer there.
+Cause: 0.4.0 had set _liblua's can_unload to a function returning "not
+busy". CHDK calls can_unload on every keyboard tick and unloads the module
+as soon as it returns true (modules/module_load.c module_tick_unloader), so
+the Lua module was unloaded under the running script at every autostart.
+Fix: can_unload stays 0 (tools/build_chdk16.sh refuses otherwise). The
+developer task needs no such guard: the app waits for every frame or stops
+it before the script can end. The official core (0.4.1) and the crash-loop
+guard stay.

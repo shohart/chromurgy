@@ -18,10 +18,11 @@ grep -q "^static const luaL_Reg chdk_funcs\[\] = {" "$lua" || { echo "luascript.
 sed -i "s|^static const luaL_Reg chdk_funcs\[\] = {|#include \"$root/src/camera/chdk/mfilm_lua.c\"\n\n&|" "$lua"
 sed -i "s|^    FUNC(peek)$|    FUNC(peek)\n    FUNC(mf_viewport)\n    FUNC(mf_show)\n    FUNC(mf_overlay_clear)\n    FUNC(mf_dev_start)\n    FUNC(mf_dev_status)\n    FUNC(mf_dev_cancel)|" "$lua"
 grep -q "FUNC(mf_show)" "$lua" || { echo "patch failed" >&2; exit 1; }
-# keep the Lua module loaded while the developer task runs
-n=$(grep -c "^         0, 0, 0, 0, 0$" "$lua")
-[ "$n" = 1 ] || { echo "luascript.c: _liblua base not found" >&2; exit 1; }
-sed -i "s|^         0, 0, 0, 0, 0$|         0, 0, mf_can_unload, 0, 0|" "$lua"
+# NOTE: do not touch _liblua's can_unload. CHDK calls can_unload on EVERY tick
+# and unloads the module as soon as it returns true (module_tick_unloader);
+# 0.4.0 put a function there and the Lua module was unloaded under the
+# running script -> crash in PhySw at every autostart (ROMLOG 2026-11-05).
+grep -q "mf_can_unload" "$lua" && { echo "can_unload must stay 0" >&2; exit 1; }
 ln -sf "$root/src/camera/chdk/makefile_usermodules.inc" "$b/modules/makefile_usermodules.inc"
 make -C "$b" -s PLATFORM=sx510hs PLATFORMSUB=101a BUILD_SVNREV=6355 MF_ROOT="$root" fir >"$root/build/chdk16-build.log" 2>&1 \
   || { grep -i -B2 -A6 "error" "$root/build/chdk16-build.log" | head -40; exit 1; }

@@ -118,15 +118,16 @@ static int luaCB_mf_overlay_clear(lua_State *L)
  *   mf_dev_start(camfile, devfile, film, dng, jpg|nil, mfv|nil, tmp, seed_hi, seed_lo) -> true | nil, error
  *   mf_dev_status() -> "idle"|"running"|"done"|"error", permille, rc, ms
  *   mf_dev_cancel()
- * The Lua module is not unloaded while a frame is being developed
- * (_liblua can_unload, patched in by tools/build_chdk16.sh). */
+ * The developer task runs code of this module: the app develops
+ * synchronously (it waits for every frame or stops it), so the script, and
+ * the module with it, does not end while a frame is in progress.
+ * Do NOT use the module's can_unload for this: CHDK calls it every tick and
+ * unloads the module when it returns true (0.4.0 boot loop, 2026-11-05). */
 int mfdc_start(const char *camf, const char *devf, const char *film, const char *dng, const char *jpg,
                const char *mfv, const char *tmp, unsigned seed_hi, unsigned seed_lo);
 void mfdc_status(int *state, int *permille, int *rc, int *ms);
 void mfdc_cancel(void);
 int mfdc_busy(void);
-
-static int mf_can_unload(void) { return !mfdc_busy(); }
 
 static int luaCB_mf_dev_start(lua_State *L)
 {
