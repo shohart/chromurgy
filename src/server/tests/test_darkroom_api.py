@@ -187,3 +187,11 @@ def test_nef_upload(logged):
 def test_unsupported_raw_family_reports_reason(logged):
     r = upload(logged, CR2, "SAMPLE.DNG", declare_hash=False)
     assert r.status_code == 422 and r.json()["error_code"] in ("UNSUPPORTED_RAW", "NOT_RAW"), r.text
+
+
+def test_ui_is_served_with_strict_csp(client):
+    r = client.get("/darkroom")
+    assert r.status_code == 200 and "default-src 'self'" in r.headers["content-security-policy"]
+    assert "script-src" not in r.headers["content-security-policy"] or "unsafe-inline" not in r.headers["content-security-policy"].split("script-src")[1].split(";")[0]
+    assert client.get("/darkroom/static/darkroom.js").status_code == 200
+    assert client.get("/darkroom/static/..%2f..%2fapp.py").status_code == 404

@@ -1,0 +1,20 @@
+# Web Darkroom (docs/web/33). Per-user variant, like mfilm-worker.service.
+# First: mfilmctl web-passwd   (sets the operator password in <data>/web/auth.json)
+# Binds to localhost; for LAN access put an HTTPS reverse proxy in front, or
+# pass --host with the LAN address on a trusted network (plain HTTP).
+# Frames are developed by mfilm-worker (same queue, lock and memory budget as camera rolls).
+[Unit]
+Description=M-Film Web Darkroom (browser UI + API)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=MFILM_CONFIG=%h/.config/mfilm/config.toml
+ExecStartPre=/usr/bin/mountpoint -q /mnt/theVault
+ExecStart=%h/services/mfilm/src/server/.venv/bin/mfilm-web --host 127.0.0.1 --port 8766
+Restart=on-failure
+RestartSec=30
+Nice=5
+
+[Install]
+WantedBy=default.target
