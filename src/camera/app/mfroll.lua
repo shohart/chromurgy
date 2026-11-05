@@ -22,7 +22,7 @@
 
 local M = {}
 
-M.VERSION = "0.2.1-alpha"
+M.VERSION = "0.3.0-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 
@@ -398,6 +398,30 @@ function M.list_rolls()
   end
   table.sort(out, function(a, b) return (a.created_at or "") > (b.created_at or "") end)
   return out
+end
+
+-- ------------------------------------------------------------------ developed rolls (viewer)
+-- The server puts developed frames on the card at Wi-Fi sync (mfilm_server
+-- camera_view.py): A/CHDK/MFVIEW/INDEX.CFG and <ROLL8>/F01.MFV ... Kept
+-- outside A/CHDK/MFILM, which every sync downloads.
+M.VIEW_ROOT = "A/CHDK/MFVIEW"
+
+-- roll uuid -> {roll_id, film, short, day, frames, dir}
+function M.view_index()
+  local out = {}
+  local s = M.read(M.VIEW_ROOT .. "/INDEX.CFG")
+  if not s then return out end
+  for line in string.gmatch(s, "[^\r\n]+") do
+    local id, film, short, day, n, dir = string.match(line, "^roll=([^|]+)|([^|]*)|([^|]*)|([^|]*)|(%d+)|(%x%x%x%x%x%x%x%x)")
+    if id then
+      out[id] = {roll_id = id, film = film, short = short, day = day, frames = tonumber(n), dir = dir}
+    end
+  end
+  return out
+end
+
+function M.view_frame(v, i)
+  return string.format("%s/%s/F%02d.MFV", M.VIEW_ROOT, v.dir, i)
 end
 
 -- ------------------------------------------------------------------ frame detection

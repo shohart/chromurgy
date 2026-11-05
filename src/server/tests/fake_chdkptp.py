@@ -52,7 +52,18 @@ for line in lines:
             Path(words[2]).write_bytes(b"part")
             print("ERROR: ptpip read failed", flush=True)
             continue
+        if not (card / words[1][2:]).is_file():
+            print("ERROR: no such file", flush=True)
+            continue
         shutil.copyfile(card / words[1][2:], words[2])
+    elif words[0] == "u":                  # upload: u LOCAL REMOTE
+        dst = card / words[2][2:]
+        if not dst.parent.is_dir():
+            print("ERROR: no such directory", flush=True)
+            continue
+        shutil.copyfile(words[1], dst)
+    elif words[0] == "mkdir":
+        (card / words[1][2:]).mkdir(parents=True, exist_ok=True)
     else:
         print(f"unknown command {words[0]}")
         sys.exit(1)

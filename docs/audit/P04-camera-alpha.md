@@ -179,3 +179,48 @@ Diagnostics and APP.LOG show "bitmap buffers ... active N".
 The harness models both buffers (flip, flip every n draws, Canon erase,
 peek) and checks that both hold the same complete screen; the 0.2.0 app
 fails that test with the second buffer empty, as on the camera.
+
+## 0.3.0: rolls, own viewer, M-Film CHDK build
+
+Owner's request (2026-11-05): rolls on the card with Develop / View, the
+developed frames viewed in the app, Canon's own gallery never shown. The
+owner allowed a folder for developed frames; it turned out not to be needed
+in DCIM (below).
+
+Display path. CHDK Lua cannot show a photo, and per-byte poke from Lua is far
+too slow (camera: ~60k Lua loop iterations/s; a frame is 518 KB). So the app
+runs on a CHDK built from the same source as the camera's (release-1_6
+r6355, exported over HTTP into build/chdk-1.6-src; tools/build_chdk16.sh)
+with three Lua functions added to its Lua module (src/camera/chdk/mfilm_lua.c):
+
+- `mf_show(path)`: copies an MFV file into the playback image buffer
+  (`vid_get_viewport_active_buffer()`, which is viewport_fb_d in playback),
+  only in playback and only if the file's geometry equals the buffer's;
+- `mf_overlay_clear()`: makes both overlay buffers transparent so Canon's
+  playback icons do not cover the photo (bitmap_buffer[] at 0x413c from the
+  sx510hs 101a stubs; refuses on any other platform at run time);
+- `mf_viewport()`: the buffer address and geometry, for diagnostics.
+
+Nothing is written to flash; the only memory written is the picture and the
+overlay. HARDWARE-TEST REQUIRED: Diagnostics -> SET runs a screen test
+(CHDK/MFVIEW/TEST.MFV: colour bars, grey ramp, a circle that must look
+round); the log records the viewport geometry.
+
+MFV (src/server/mfilm_server/camera_view.py): "MFV1", u16 width 720,
+height 480, byte width 1080, then UYVYYY rows (U, V signed, as CHDK's
+histogram reads them), 518,412 bytes. A 4:3 frame fills the 720x480 buffer
+(non-square pixels on the 4:3 screen); a portrait frame is pillarboxed.
+
+Frames reach the camera at Wi-Fi sync: camera-sync --run now imports,
+develops and publishes while the camera is still connected, then uploads
+A/CHDK/MFVIEW/<ROLL8>/Fnn.MFV for rolls whose set changed and an INDEX.CFG
+(outside A/CHDK/MFILM, which every sync downloads).
+
+App: Rolls (card rolls and developed rolls, canister icons, DEV marker) ->
+roll card (film, date, frames, state) -> View developed frames (left/right,
+SET hides the caption, MENU back, half-press: shoot) or Develop (on-camera
+developing is the next step; the item says so). Canon's playback while
+shooting is caught and turned back into the M-Film menu.
+
+Installing: the card needs the M-Film DISKBOOT.BIN and CHDK/MODULES from
+`mfilmctl camera-card OUT --chdk`; the app says so if it runs on stock CHDK.

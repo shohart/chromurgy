@@ -83,7 +83,14 @@ def test_app_uses_only_chdk_161_functions():
     for f in ("MFILM.LUA", "mfroll.lua"):
         listing = subprocess.run([str(LUAC), "-p", "-l", str(APP / f)], capture_output=True, text=True, check=True)
         assert not re.findall(r"SETGLOBAL\s.*;\s*(\w+)", listing.stdout), f"{f} assigns a global"
-    unknown = used - have - lua_std - chdk_tables
+    # the M-Film CHDK build (tools/build_chdk16.sh) registers luaCB_<name> from mfilm_lua.c;
+    # the app checks have(name) and says when the stock build lacks them
+    mfilm_build = set(re.findall(r"luaCB_(mf_\w+)", (REPO / "src/camera/chdk/mfilm_lua.c").read_text()))
+    script = (REPO / "tools/build_chdk16.sh").read_text()
+    assert all(f"FUNC({n})" in script for n in mfilm_build), "register every mfilm_lua.c function"
+    app = (APP / "MFILM.LUA").read_text()
+    assert all(f'have("{n}")' in app for n in used & mfilm_build), "guard M-Film build functions with have()"
+    unknown = used - have - lua_std - chdk_tables - mfilm_build
     # names the app guards with have()/type() checks before use are allowed to be missing on the camera
     assert not unknown, f"not in CHDK 1.6.1: {sorted(unknown)}"
 
@@ -223,6 +230,46 @@ def test_menu_screen_full_with_a_loaded_film(card):
     run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1)
         + [("playback",), ("wait", 900), ("flip",), ("wait", 300), ("expect_screen_full",),
            ("flip",), ("wait", 300), ("expect_screen_full",)])
+
+
+def _developed_on_card(card, n=3, rid="aaaaaaaa-1111-4222-8333-444444444444"):
+    vroot = card / "A" / "CHDK" / "MFVIEW"
+    (vroot / "AAAAAAAA").mkdir(parents=True)
+    for i in range(1, n + 1):
+        (vroot / "AAAAAAAA" / f"F{i:02d}.MFV").write_bytes(b"MFV1" + bytes(8))
+    (vroot / "INDEX.CFG").write_text(f"roll={rid}|portra400|Portra400|2026-11-04|{n}|AAAAAAAA|12345678\n")
+
+
+ROLLS = [("wait", 1200), ("key", "down"), ("key", "down"), ("key", "down"), ("key", "set"), ("wait", 300)]
+
+
+def test_viewer_shows_developed_frames_in_playback_and_returns(card):
+    _developed_on_card(card)
+    run(card, ROLLS + [("expect", "Portra400 +3 DEV"), ("key", "set"), ("expect", "DEVELOPED: 3 frames"),
+                       ("key", "set"), ("wait", 600), ("expect_rec", False), ("expect_shown", "AAAAAAAA/F01.MFV"),
+                       ("expect", "Portra400 2026%-11%-04  1/3"),
+                       ("key", "right"), ("wait", 200), ("expect_shown", "F02.MFV"),
+                       ("key", "left"), ("key", "left"), ("wait", 200), ("expect_shown", "F03.MFV"),
+                       ("key", "menu"), ("wait", 900), ("expect_rec", True), ("expect", "View developed frames")])
+
+
+def test_viewer_without_the_mfilm_chdk_build_says_so(card):
+    _developed_on_card(card)
+    run(card, [("stock_chdk",)] + ROLLS + [("key", "set"), ("key", "set"), ("expect", "M%-Film CHDK build"),
+                                            ("expect_rec", True)])
+
+
+def test_screen_test_from_diagnostics(card):
+    assert (card / "A" / "CHDK" / "MFVIEW" / "TEST.MFV").read_bytes()[:4] == b"MFV1"   # from write_card
+    run(card, [("wait", 1200)] + [("key", "down")] * 5 + [("key", "set"), ("expect", "SET: screen test"),
+               ("key", "set"), ("wait", 600), ("expect_shown", "TEST.MFV"), ("expect", "Screen test  1/1"),
+               ("key", "menu"), ("wait", 900), ("expect_rec", True)])
+
+
+def test_canon_gallery_is_blocked_while_shooting(card):
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("canon_playback",), ("wait", 900), ("expect_rec", True),
+                                     ("expect", "M%-Film 0%.")])
+    assert "Canon playback blocked" in applog(card)
 
 
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"

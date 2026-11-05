@@ -3,8 +3,8 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from mfilm_server.camera_sync import SyncError, sync
+from test_worker import sample_card  # noqa: F401  (fixture)
 
 FAKE = __file__.replace("test_camera_sync.py", "fake_chdkptp.py")
 
@@ -54,3 +54,31 @@ def test_sync_reports_downloads_that_keep_failing(make_card, store, conn, tmp_pa
     assert r.downloaded == [] and len(r.failed) == 2
     assert all("attempt 2: got 4 of" in why and "ptpip read failed" in why for _, why in r.failed)
     assert not list((tmp_path / "m").rglob("*.part"))
+
+
+def test_developed_frames_go_to_the_camera_viewer_once(store, conn, tmp_path, request):
+    from test_worker import SAMPLE, pytestmark  # noqa: F401
+    if not SAMPLE.is_file():
+        pytest.skip("needs vendor/m-film sample DNG")
+    from mfilm_server import worker
+    from mfilm_server.camera_view import HEIGHT, MAGIC, parse_index
+
+    card = request.getfixturevalue("sample_card")
+    cmd = f"{sys.executable} {FAKE} --card {card}"
+
+    def develop(rolls):
+        for x in rolls:
+            if x.status == "IMPORTED":
+                worker.enqueue_roll(conn, x.roll_id, x.device_id)
+        worker.run(conn, store)
+
+    r = sync(store, conn, chdkptp=cmd, mirror=tmp_path / "m", develop=develop)
+    assert r.failed == [] and len(r.viewer_rolls) == 1
+    idx = (card / "CHDK" / "MFVIEW" / "INDEX.CFG").read_text()
+    assert len(parse_index(idx)) == 1
+    line = idx.splitlines()[0].split("|")
+    frames = sorted((card / "CHDK" / "MFVIEW" / line[5]).glob("F*.MFV"))
+    assert [f.name for f in frames] == ["F01.MFV"] and line[4] == "1"
+    assert all(f.read_bytes()[:4] == MAGIC and f.stat().st_size == 12 + HEIGHT * 1080 for f in frames)
+    again = sync(store, conn, chdkptp=cmd, mirror=tmp_path / "m", develop=develop)
+    assert again.viewer_rolls == [] and again.downloaded == []

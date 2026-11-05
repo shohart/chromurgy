@@ -24,6 +24,10 @@
 --   {"flip_every", n}      ... after every n draw_string calls (0/nil: never)
 --   {"canon_erase"}        Canon erases the active bitmap buffer
 --   {"expect_screen_full"} both buffers hold the same complete screen
+--   {"stock_chdk"}         CHDK without the M-Film Lua functions
+--   {"canon_playback"}     the owner switches the camera to Canon's playback
+--   {"expect_shown", pat}  the last frame the viewer showed matches pat
+--   {"expect_rec", bool}   shooting (true) or playback (false) mode
 -- Exit status 0 = scenario passed.
 
 local app_dir, scen_path = arg[1], arg[2]
@@ -148,6 +152,20 @@ rec_mode = true                     -- camera starts in shooting mode
 -- mode cycles 0 -> 1 -> 0
 props = {[105] = 0}
 local disp_modes = 2
+-- M-Film CHDK build functions (src/camera/chdk/mfilm_lua.c)
+shown_frames = {}
+function mf_viewport() return 0x40a00000, 720, 480, 1080, 2, 0, not rec_mode end
+function mf_show(path)
+  if rec_mode then return nil, "not in playback mode" end
+  local f = io.open(path, "rb")
+  if not f then return nil, "cannot open file" end
+  local hd = f:read(4); f:close()
+  if hd ~= "MFV1" then return nil, "not an MFV1 file" end
+  shown_frames[#shown_frames + 1] = path
+  dlog("SHOW " .. path)
+  return true, 40
+end
+function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; dlog("C"); return true end
 function get_prop(id) return props[id] end
 function set_prop(id, v) props[id] = v end
 function click(k)
@@ -294,6 +312,15 @@ while true do
                 tostring(want_rec), tostring(want_osd))) os.exit(1)
           end
         elseif k == "flip" then fb_active = 1 - fb_active
+        elseif k == "stock_chdk" then mf_show, mf_overlay_clear, mf_viewport = nil, nil, nil
+        elseif k == "canon_playback" then rec_mode = false     -- the owner opens Canon's gallery
+        elseif k == "expect_shown" then
+          local last = shown_frames[#shown_frames]
+          if not last or not string.find(last, s[2]) then
+            log("FAIL: step " .. (i - 1) .. ": shown " .. tostring(last) .. ", expected " .. s[2]) os.exit(1)
+          end
+        elseif k == "expect_rec" then
+          if rec_mode ~= s[2] then log("FAIL: rec_mode " .. tostring(rec_mode)) os.exit(1) end
         elseif k == "flip_every" then flip_every = (s[2] ~= 0) and s[2] or nil
         elseif k == "canon_erase" then fbuf[fb_active] = {}
         elseif k == "expect_screen_full" then

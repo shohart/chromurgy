@@ -390,27 +390,6 @@ local function seal_now()
   end
 end
 
-local function show_rolls()
-  local rolls = mf.list_rolls()
-  local items = {}
-  for _, r in ipairs(rolls) do
-    items[#items + 1] = string.format("%s %s %d/%d %s", string.sub(r.created_at or "", 6, 10),
-                                      string.sub(mf.film_name(r.film), 1, 14), #r.frames, r.length,
-                                      r.state == "SEALED" and "ready" or "in camera")
-  end
-  if #items == 0 then items = {"(no rolls yet)"} end
-  return choose("Rolls on this card (" .. #rolls .. ")", {}, items, 1)
-end
-
-local function show_diag()
-  invalidate()
-  local lines = {}
-  for _, s in ipairs(selftest) do lines[#lines + 1] = s end
-  lines[#lines + 1] = "device " .. mf.device.device_id
-  lines[#lines + 1] = "log: CHDK/MFILM/LOGS/APP.LOG"
-  repeat screen("Diagnostics", lines, nil, 1, "any key: back") until key()
-end
-
 local function title_line(on)
   if have("set_draw_title_line") then set_draw_title_line(on and 1 or 0) end
 end
@@ -484,6 +463,144 @@ local function chdk_osd(on)
   end
 end
 
+-- ------------------------------------------------------------ viewer
+-- Developed frames are shown full screen in playback mode: the app copies a
+-- prepared frame (MFV, from the server) into the playback image buffer and
+-- makes the overlay transparent, so Canon's own gallery is never seen. Needs
+-- the M-Film CHDK build (mf_show, mf_overlay_clear in its Lua module).
+local function caption_row(text_, painted)
+  -- one opaque text row at the bottom, in whichever overlay buffer is active
+  local b = active_buffer()
+  local k = text_ or ""
+  if painted[b] == k and b ~= 9 then return end
+  if text_ then text(0, H / FH - 1, pad(" " .. text_), C.fg, C.bg) end
+  painted[b] = k
+end
+
+local function viewer(title, frames, start)
+  if not have("mf_show") or not have("mf_overlay_clear") then
+    say("Viewer needs the M-Film CHDK build (DISKBOOT.BIN)", 8000)
+    mf.log("viewer: mf_show missing (stock CHDK)")
+    return
+  end
+  if not set_rec(false) then say("Could not switch to playback", 6000) return end
+  local i, show_cap, quit_to = start or 1, true, nil
+  local shown, err, painted = 0, nil, {}
+  while true do
+    if shown ~= i then
+      local ok, e = mf_show(frames[i])
+      err = (not ok) and tostring(e) or nil
+      if err then mf.log("viewer: " .. frames[i] .. ": " .. err) end
+      mf_overlay_clear()
+      shown = i
+      painted = {}
+    end
+    local cap = show_cap and string.format("%s  %d/%d", title, i, #frames) or nil
+    if err then cap = "ERROR " .. err end
+    caption_row(cap, painted)
+    local k = key()
+    if k == "right" or k == "down" then i = (i < #frames) and i + 1 or 1
+    elseif k == "left" or k == "up" then i = (i > 1) and i - 1 or #frames
+    elseif k == "set" then show_cap = not show_cap; mf_overlay_clear(); painted = {}
+    elseif k == "menu" then break
+    elseif k == "shoot_half" or k == "shoot" then quit_to = "shoot" break
+    end
+  end
+  mf_overlay_clear()
+  set_rec(true)
+  canon_info(false)
+  invalidate()
+  return quit_to
+end
+
+local function roll_card(r, v)
+  -- r: roll on this card (or nil), v: its developed set from the server (or nil)
+  local film = r and r.film or v.film
+  local lines = {{mf.film_name(film), C.hi}}
+  lines[#lines + 1] = "shot " .. (r and string.sub(r.created_at or "", 1, 10) or v.day)
+  if r then
+    lines[#lines + 1] = string.format("%d of %d frames, %s", #r.frames, r.length,
+                                      r.state == "SEALED" and "finished" or "in the camera")
+  end
+  lines[#lines + 1] = v and string.format("DEVELOPED: %d frames", v.frames) or "not developed yet"
+  local items, acts = {}, {}
+  if v then items[#items + 1] = "View developed frames"; acts[#acts + 1] = "view" end
+  if not v then items[#items + 1] = "Develop"; acts[#acts + 1] = "develop" end
+  items[#items + 1] = "Back"; acts[#acts + 1] = "back"
+  while true do
+    local shown_lines = {}
+    for _, l in ipairs(lines) do shown_lines[#shown_lines + 1] = l end
+    if notice and get_tick_count() < notice_until then shown_lines[#shown_lines + 1] = {notice, C.warn} end
+    local i = choose("Roll " .. string.sub((r and r.roll_id) or v.roll_id, 1, 8), shown_lines, items, 1)
+    if i == "shoot" then return "shoot" end
+    if i == nil or acts[i] == "back" then return end
+    if acts[i] == "view" then
+      local frames = {}
+      for k = 1, v.frames do frames[k] = mf.view_frame(v, k) end
+      if viewer(mf.film_short(film) .. " " .. (v.day or ""), frames) == "shoot" then return "shoot" end
+    elseif acts[i] == "develop" then
+      if r and r.state ~= "SEALED" then
+        say("Finish the roll first (menu: Finish roll now)", 6000)
+      else
+        say("Camera developing: next version. Now: Wi-Fi sync", 8000)
+      end
+    end
+  end
+end
+
+local function show_rolls()
+  local rolls, dev = mf.list_rolls(), mf.view_index()
+  local seen, entries = {}, {}
+  for _, r in ipairs(rolls) do
+    entries[#entries + 1] = {r = r, v = dev[r.roll_id]}
+    seen[r.roll_id] = true
+  end
+  for id, v in pairs(dev) do                      -- developed but no longer on this card
+    if not seen[id] then entries[#entries + 1] = {v = v} end
+  end
+  local items, icons = {}, {}
+  for _, e in ipairs(entries) do
+    local film = e.r and e.r.film or e.v.film
+    local day = e.r and string.sub(e.r.created_at or "", 6, 10) or string.sub(e.v.day or "", 6, 10)
+    local n = e.r and string.format("%d/%d", #e.r.frames, e.r.length) or tostring(e.v.frames)
+    local st = e.v and "DEV" or (e.r.state == "SEALED" and "done" or "in cam")
+    items[#items + 1] = string.format("%s %-12s %5s %s", day, string.sub(mf.film_short(film) or film, 1, 12), n, st)
+    icons[#icons + 1] = film
+  end
+  if #items == 0 then return choose("Rolls on this card", {"No rolls yet."}, {"Back"}, 1) end
+  local sel = 1
+  while true do
+    local i = choose("Rolls (" .. #entries .. ")", {}, items, sel, icons)
+    if type(i) ~= "number" then return i end
+    sel = i
+    if roll_card(entries[i].r, entries[i].v) == "shoot" then return "shoot" end
+  end
+end
+
+local function screen_test()
+  local p = mf.VIEW_ROOT .. "/TEST.MFV"
+  if have("mf_viewport") then
+    local addr, w, h, bw, ys, off, play = mf_viewport()
+    mf.log(string.format("viewport (rec): %x %dx%d bw %d ys %d off %d play %s", addr or 0, w or 0, h or 0, bw or 0,
+                         ys or 0, off or 0, tostring(play)))
+  end
+  return viewer("Screen test", {p})
+end
+
+local function show_diag()
+  invalidate()
+  local lines = {}
+  for _, s in ipairs(selftest) do lines[#lines + 1] = s end
+  lines[#lines + 1] = "device " .. mf.device.device_id
+  lines[#lines + 1] = "log: CHDK/MFILM/LOGS/APP.LOG"
+  local k
+  repeat
+    screen("Diagnostics", lines, nil, 1, "SET: screen test   other keys: back")
+    k = key()
+  until k
+  if k == "set" then return screen_test() end
+end
+
 local function menu()
   chdk_osd(false)
   set_rec(true)                                  -- the menu lives in shooting mode
@@ -514,7 +631,7 @@ local function menu()
         set_autostart(auto_on and 0 or 1)
         mf.log("autostart " .. (auto_on and "off" or "on"))
       end
-    elseif i == 6 then show_diag()
+    elseif i == 6 then r = show_diag()
     elseif i == 7 then
       if confirm("Quit M-Film", {"Frames shot after quitting are NOT recorded.", "The roll stays loaded."}) then
         quit = true
@@ -560,9 +677,18 @@ end
 local function shooting()
   canon_info(false)                              -- straight to shooting after autostart
   if have("exit_alt") then exit_alt() end
+  local function canon_gallery()
+    -- Canon's own gallery is not used: playback outside the app's viewer
+    -- goes straight back to the M-Film menu (Rolls -> View shows developed frames)
+    if is_rec() then return false end
+    mf.log("Canon playback blocked: back to the menu")
+    if have("enter_alt") then enter_alt() end
+    return true
+  end
   show_overlay(3000)
   local last_draw, pending_since, shown = 0, nil, false
   while not quit do
+    if canon_gallery() then return end
     if have("get_alt_mode") and get_alt_mode() then return end   -- Playback pressed: menu (before drawing)
     local dir = get_image_dir()
     local n = shot_count()

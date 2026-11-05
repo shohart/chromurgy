@@ -74,35 +74,43 @@ def cmd_import_card(args) -> int:
 
 
 def cmd_camera_sync(args) -> int:
+    from . import worker
     from .camera_sync import SyncError, sync
     store, conn = _open(args.data_dir, args.cfg)
     host = args.host or (None if args.usb else args.cfg.camera_host)
+    queued, dev_rc = [], [0]
+
+    def develop(rolls):
+        # queue the imported rolls; with --run develop and publish them while the
+        # camera is still connected, so their frames go to its viewer this session
+        for x in rolls:
+            if x.status in ("IMPORTED", "UNCHANGED"):
+                try:
+                    queued.append(worker.enqueue_roll(conn, x.roll_id, x.device_id))
+                except Exception as e:  # noqa: BLE001 - reported per roll, the sync goes on
+                    queued.append({"roll_id": x.roll_id, "error": str(e)})
+        if args.run:
+            args.max_jobs, args.jobs, args.no_publish = None, None, False
+            dev_rc[0] = _worker_pass(args)
+
     try:
-        r = sync(store, conn, host=host, mirror=Path(args.mirror) if args.mirror else None, chdkptp=args.cfg.chdkptp)
+        r = sync(store, conn, host=host, mirror=Path(args.mirror) if args.mirror else None, chdkptp=args.cfg.chdkptp,
+                 develop=develop)
     except SyncError as e:
         _out(args, {"ok": False, "error_code": e.code, "detail": e.detail}, f"camera-sync: {e.code}: {e.detail}")
         return 1
-    queued = []
-    from . import worker
-    for x in r.rolls:
-        if x.status in ("IMPORTED", "UNCHANGED"):
-            try:
-                queued.append(worker.enqueue_roll(conn, x.roll_id, x.device_id))
-            except Exception as e:
-                queued.append({"roll_id": x.roll_id, "error": str(e)})
     lines = [f"camera via {r.connection}: downloaded {len(r.downloaded)} file(s)"
              + (f", {len(r.failed)} FAILED" if r.failed else "") + (f" (log {r.log_path})" if r.log_path else "")]
     lines += [f"FAILED     {src}: {why}" for src, why in r.failed]
     lines += [f"{x.status:10} {x.device_id or '-'}/{x.roll_id or '-'}" + (f"  ({x.detail})" if x.detail else "")
               for x in r.rolls]
+    lines += [f"VIEWER     {rid}: developed frames sent to the camera" for rid in r.viewer_rolls]
     _out(args, {"ok": True, "connection": r.connection, "downloaded": r.downloaded,
                 "failed": [{"path": p, "detail": d} for p, d in r.failed], "log": r.log_path, "rolls": as_dict(r.rolls),
-                "queued": queued}, "\n".join(lines))
-    if args.run:                      # develop + publish, as one mfilmctl worker pass
-        args.max_jobs, args.jobs, args.no_publish = None, None, False
-        return _worker_pass(args)
+                "viewer_rolls": r.viewer_rolls, "queued": queued}, "\n".join(lines))
+    if args.run:
+        return dev_rc[0]
     return 1 if any(x.status in ("INVALID", "CONFLICT", "INCOMPLETE") for x in r.rolls) else 0
-
 
 def cmd_develop(args) -> int:
     from . import worker
@@ -276,7 +284,7 @@ def cmd_device_revoke(args) -> int:
 
 def cmd_camera_card(args) -> int:
     from .camera_card import write_card
-    for p in write_card(Path(args.out), utc_offset=args.utc_offset, bench=args.bench):
+    for p in write_card(Path(args.out), utc_offset=args.utc_offset, bench=args.bench, chdk=args.chdk):
         print(p)
     return 0
 
@@ -384,6 +392,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("out")
     s.add_argument("--utc-offset", help="camera clock offset, e.g. +02:00 (default: this host's)")
     s.add_argument("--bench", action="store_true", help="also the MFBENCH module and probe (tools/build_chdk.sh)")
+    s.add_argument("--chdk", action="store_true",
+                   help="also the M-Film CHDK build: DISKBOOT.BIN + CHDK/MODULES (tools/build_chdk16.sh)")
     s.set_defaults(fn=cmd_camera_card)
     s = sub.add_parser("list-rolls", parents=[common])
     s.add_argument("--state", choices=db.ROLL_SERVER_STATES)

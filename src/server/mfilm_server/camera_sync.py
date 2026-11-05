@@ -52,6 +52,7 @@ class SyncResult:
     downloaded: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)   # (camera path, chdkptp's answer)
     log_path: str | None = None
+    viewer_rolls: list[str] = field(default_factory=list)     # rolls whose developed frames went to the camera
     rolls: list[RollResult] = field(default_factory=list)
     log: str = ""
 
@@ -153,8 +154,62 @@ def wanted_files(card: Path, conn: sqlite3.Connection) -> list[tuple[str, int]]:
     return out
 
 
+def _device_ids(card: Path) -> set[str]:
+    out = set()
+    for m in find_manifests(card):
+        try:
+            d = json.loads(m.read_text()).get("device_id")
+        except (OSError, ValueError):
+            continue
+        if d:
+            out.add(d)
+    return out
+
+
+def push_viewer(ses: _Session, store: Store, conn: sqlite3.Connection, card: Path, res: SyncResult) -> None:
+    """Developed frames for the camera's viewer (camera_view.py): only rolls whose set changed."""
+    from . import camera_view as cv
+    vroot = card / cv.VIEW_DIR
+    vroot.mkdir(parents=True, exist_ok=True)
+    idx_local = vroot / "INDEX.CFG"
+    part = vroot / "INDEX.CFG.part"
+    ses.cmd(f"d {_q('A/' + cv.VIEW_DIR + '/INDEX.CFG')} {_q(str(part))}")
+    on_camera = cv.parse_index(part.read_text(errors="replace")) if part.is_file() else {}
+    if part.exists():
+        part.unlink()
+    rolls = [v for dev in sorted(_device_ids(card)) for v in cv.developed_rolls(conn, store, dev)]
+    if not rolls:
+        return
+    ses.cmd(f"mkdir {_q('A/' + cv.VIEW_DIR)}")
+    for v in rolls:
+        if on_camera.get(v.roll_id) == v.set_hash():
+            continue
+        rdir = vroot / v.dir8
+        rdir.mkdir(parents=True, exist_ok=True)
+        ses.cmd(f"mkdir {_q(f'A/{cv.VIEW_DIR}/{v.dir8}')}")
+        ok = True
+        for i, src in enumerate(v.frames, 1):
+            f = rdir / f"F{i:02d}.MFV"
+            f.write_bytes(cv.mfv_from_jpeg(src))
+            out = ses.cmd(f"u {_q(str(f))} {_q(f'A/{cv.VIEW_DIR}/{v.dir8}/{f.name}')}")
+            if "ERROR" in out or "failed" in out:
+                ok = False
+                res.failed.append((f"viewer {v.dir8}/{f.name}", out.strip()[-200:]))
+                break
+        if ok:
+            on_camera[v.roll_id] = v.set_hash()
+            res.viewer_rolls.append(v.roll_id)
+    # the index lists only rolls whose frames are all on the camera
+    lines = [v.index_line() for v in rolls if on_camera.get(v.roll_id) == v.set_hash()]
+    idx_local.write_text("\n".join(lines) + "\n")
+    ses.cmd(f"u {_q(str(idx_local))} {_q('A/' + cv.VIEW_DIR + '/INDEX.CFG')}")
+
+
 def sync(store: Store, conn: sqlite3.Connection, *, host: str | None = None, mirror: Path | None = None,
-         chdkptp: str | None = None, timeout: int = 3600) -> SyncResult:
+         chdkptp: str | None = None, timeout: int = 3600, develop=None) -> SyncResult:
+    """develop(rolls): optional callable run after the import while the camera is still
+    connected (camera-sync --run develops the new frames), so the developed
+    frames can go back to the camera's viewer in the same session."""
     name = host or "usb"
     mirror = Path(mirror or store.root / "camera-mirror" / name.replace(":", "_")).resolve()
     card = mirror / "A"
@@ -197,6 +252,14 @@ def sync(store: Store, conn: sqlite3.Connection, *, host: str | None = None, mir
             res.failed = [(f[0], why) for f, why in failed]
             if not todo:
                 break
+        # 3. the same import as an SD card; 4. develop (optional); 5. viewer frames back to the camera
+        res.rolls = import_card(card, store, conn)
+        if develop is not None:
+            develop(res.rolls)
+        try:
+            push_viewer(ses, store, conn, card, res)
+        except SyncError as e:                   # the import stands; the viewer gets them next time
+            res.failed.append(("viewer", f"{e.code}: {e.detail}"[:300]))
     finally:
         ses.close()
         res.log = ses.log
@@ -208,6 +271,4 @@ def sync(store: Store, conn: sqlite3.Connection, *, host: str | None = None, mir
             res.log_path = str(lp)
         except OSError:
             pass
-    # 3. the same import as an SD card
-    res.rolls = import_card(card, store, conn)
     return res
