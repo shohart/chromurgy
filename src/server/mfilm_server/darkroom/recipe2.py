@@ -61,8 +61,10 @@ def normalize(recipe: dict, bundle: core.Bundle) -> dict:
         known = look["id"] in {i for i, _, _ in catalog.CAMERA_LOOKS}
         raise RecipeError("UNSUPPORTED_CAMERA_LOOK" if known else "UNKNOWN_CAMERA_LOOK",
                           f"{look['id']}: " + ("not implemented in this engine yet" if known else "not in the catalog"))
-    if look["strength"] != 1 and look["id"] == "neutral":
+    if look["id"] == "neutral":
         look["strength"] = 1                       # neutral has no strength: one identity per rendition
+    elif look["strength"] == 0:
+        look["id"], look["strength"] = "neutral", 1   # a look at strength 0 is no look
     r["film"]["id"] = resolve_film(r["film"]["id"], bundle)
     film_hash = r["film"].get("bundle_hash")
     if film_hash and film_hash != bundle.sha256:
@@ -70,28 +72,57 @@ def normalize(recipe: dict, bundle: core.Bundle) -> dict:
     r["film"]["bundle_hash"] = bundle.sha256
     for k in ("grain_scale", "halation_scale", "softness_scale"):
         r["film"].setdefault(k, 1.0)
-    opt = r["optical"]
-    enabled = [s["id"] for s in opt["stack"] if s["enabled"]]
-    known_fx = {i for i, _ in catalog.OPTICAL_EFFECTS}
-    for fx in enabled:
-        if fx not in known_fx:
-            raise RecipeError("UNKNOWN_OPTICAL_EFFECT", fx)
-        if fx not in catalog.SUPPORTED_EFFECTS:
-            raise RecipeError("UNSUPPORTED_OPTICAL_EFFECT", f"{fx}: not implemented in this engine yet")
-    presets = known_fx | {"golden_haze"}
-    if opt["preset_id"] != "none" and opt["preset_id"] not in presets:
-        raise RecipeError("UNKNOWN_OPTICAL_PRESET", opt["preset_id"])
-    if opt["preset_id"] in presets and opt["preset_id"] not in catalog.SUPPORTED_EFFECTS and opt["strength"] > 0:
-        raise RecipeError("UNSUPPORTED_OPTICAL_EFFECT", f"{opt['preset_id']}: not implemented in this engine yet")
-    rd = r["render"]
-    if rd["output_format"] != "jpeg" or rd["output_color_space"] != "srgb":
-        raise RecipeError("UNSUPPORTED_OUTPUT", f"{rd['output_format']}/{rd['output_color_space']}: only jpeg/srgb")
+    r["optical"] = _optical(r["optical"])
     wb = (r.get("extensions") or {}).get("white_balance", "daylight")
     if wb not in ("daylight", "as-shot"):
         raise RecipeError("INVALID_RECIPE", f"extensions.white_balance={wb!r}: use daylight or as-shot")
+    rd = r["render"]
+    if rd["output_format"] != "jpeg" or rd["output_color_space"] != "srgb":
+        raise RecipeError("UNSUPPORTED_OUTPUT", f"{rd['output_format']}/{rd['output_color_space']}: only jpeg/srgb")
     if bool(rd.get("width")) != bool(rd.get("height")):
         raise RecipeError("INVALID_RECIPE", "render.width and render.height go together")
     return r
+
+
+def _optical(opt: dict) -> dict:
+    """Canonical optical block: effects expanded, every parameter explicit, engine order, halation rules."""
+    from .creative import EFFECT_ORDER, PARAM_RANGE, PRESETS
+    from .creative_params import EFFECTS
+    known = {i for i, _ in catalog.OPTICAL_EFFECTS}
+    pid, policy = opt["preset_id"], opt.get("halation_policy", "film")
+    if pid != "none" and pid not in known and pid not in PRESETS:
+        raise RecipeError("UNKNOWN_OPTICAL_PRESET", pid)
+    items: dict[str, dict] = {}
+    for s in opt["stack"]:
+        if s["id"] not in known:
+            raise RecipeError("UNKNOWN_OPTICAL_EFFECT", s["id"])
+        if s["id"] in items:
+            raise RecipeError("INVALID_RECIPE", f"optical.stack lists {s['id']} twice")
+        allowed = EFFECTS[s["id"]]
+        for k, v in s["parameters"].items():
+            if k not in allowed:
+                raise RecipeError("INVALID_RECIPE", f"{s['id']}: unknown parameter {k!r} (allowed: {', '.join(sorted(allowed))})")
+            lo, hi = PARAM_RANGE[k]
+            if not lo <= v <= hi:
+                raise RecipeError("INVALID_RECIPE", f"{s['id']}.{k}={v} outside {lo}..{hi}")
+        items[s["id"]] = {"id": s["id"], "enabled": bool(s["enabled"]), "parameters": {**allowed, **s["parameters"]}}
+    if not items and pid != "none":                      # a preset name alone selects its bundle
+        for eid, over in PRESETS.get(pid, [(pid, {})]):
+            items[eid] = {"id": eid, "enabled": True, "parameters": {**EFFECTS[eid], **over}}
+    active = [e for e in EFFECT_ORDER if e in items and items[e]["enabled"]]
+    strength = opt["strength"]
+    extra = "film_halation_extra" in active
+    if extra and policy == "film":
+        raise RecipeError("HALATION_CONFLICT", "film_halation_extra with halation_policy 'film' would apply halation twice: "
+                          "use 'optical' (the effect replaces the film's halation) or 'stacked' (both, deliberately)")
+    if policy == "optical" and not extra:
+        raise RecipeError("HALATION_CONFLICT", "halation_policy 'optical' needs film_halation_extra enabled")
+    if policy == "disabled" and extra:
+        raise RecipeError("HALATION_CONFLICT", "halation_policy 'disabled' contradicts an enabled film_halation_extra")
+    if not active or strength <= 0:
+        return {"preset_id": "none", "strength": 0, "halation_policy": policy if policy == "disabled" else "film", "stack": []}
+    return {"preset_id": pid, "strength": strength, "halation_policy": policy,
+            "stack": [items[e] for e in EFFECT_ORDER if e in items]}
 
 
 def recipe_hash(r: dict, *, look_only: bool = False) -> str:
@@ -105,17 +136,29 @@ def recipe_hash(r: dict, *, look_only: bool = False) -> str:
 def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = None) -> dict:
     """The v1 recipe develop() understands. width/height 0 = native size."""
     from ..develop import INPUT_NORMALIZATION
+    from .creative import VERSION
     h = recipe_hash(r, look_only=True)
     rd = r["render"]
-    return {"schema_version": 1, "recipe_id": f"web2-{h[:16]}", "film_profile_id": r["film"]["id"],
+    policy = r["optical"].get("halation_policy", "film")
+    halation = 0.0 if policy in ("optical", "disabled") else r["film"]["halation_scale"]   # exactly one owner of the halation
+    creative: dict = {}
+    if r["camera_look"]["id"] != "neutral":
+        creative["camera_look"] = {"id": r["camera_look"]["id"], "strength": r["camera_look"]["strength"]}
+    if r["optical"]["stack"] and r["optical"]["strength"] > 0:
+        creative["optical"] = {"strength": r["optical"]["strength"], "stack": r["optical"]["stack"]}
+    v1 = {"schema_version": 1, "recipe_id": f"web2-{h[:16]}", "film_profile_id": r["film"]["id"],
             "profile_bundle_hash": r["film"]["bundle_hash"], "film_core_abi_version": core.abi_version(),
             "input_normalization_version": INPUT_NORMALIZATION,
             "white_balance_mode": (r.get("extensions") or {}).get("white_balance", "daylight"), "demosaic_mode": "reference", "exposure_compensation_ev": 0.0,
             "grain_seed_mode": "derived-per-frame", "user_seed": int(r["seed"]),
-            "look_controls": {k: r["film"][k] for k in ("grain_scale", "halation_scale", "softness_scale")},
+            "look_controls": {"grain_scale": r["film"]["grain_scale"], "halation_scale": halation,
+                              "softness_scale": r["film"]["softness_scale"]},
             "output_spec": {"format": "image/jpeg", "colorspace": "sRGB", "width": width, "height": height,
                             "jpeg_quality": quality if quality is not None else rd["quality"],
                             "orientation_policy": "normalize-pixels"}}
+    if creative:                                  # absent for neutral/no-effect: those render ids stay as before
+        v1["creative"] = {"version": VERSION, **creative}
+    return v1
 
 
 def default(film_id: str, bundle: core.Bundle) -> dict:

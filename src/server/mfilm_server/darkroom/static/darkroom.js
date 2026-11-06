@@ -29,14 +29,20 @@ async function api(path, opts = {}) {
 /* ---------------- state ---------------- */
 const S = { catalog: null, assets: [], selected: new Set(), current: null,
   look: "neutral", film: null, strength: 1, grain: 1, halation: 1, softness: 1, quality: 92, seed: 0, wb: "daylight",
-  width: 0, height: 0, filmQuery: "" };
+  width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film" };
 const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Preview · Develop"];
 
+function opticalBlock() {
+  if (S.fxPreset === "golden_haze") return { preset_id: "golden_haze", strength: S.fxStrength, halation_policy: S.policy, stack: [] };
+  const on = [...S.fx];
+  if (!on.length) return { preset_id: "none", strength: 0, halation_policy: S.policy === "disabled" ? "disabled" : "film", stack: [] };
+  return { preset_id: on[0], strength: S.fxStrength, halation_policy: S.policy, stack: on.map(id => ({ id, enabled: true, parameters: {} })) };
+}
 function recipe() {
   const r = { schema_version: 2,
     camera_look: { id: S.look, version: "1.0.0", strength: S.look === "neutral" ? 1 : S.strength },
     film: { id: S.film, grain_scale: S.grain, halation_scale: S.halation, softness_scale: S.softness },
-    optical: { preset_id: "none", strength: 0, stack: [] },
+    optical: opticalBlock(),
     render: { output_format: "jpeg", output_color_space: "srgb", quality: S.quality },
     seed: S.seed, extensions: { white_balance: S.wb } };
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
@@ -69,9 +75,9 @@ async function boot() {
     step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared M-Film engine`, filmPanel()),
-    step(4, "Optical effects", "optional", opticsPanel()),
+    step(4, "Optical effects", "optional · applied before the look and film", opticsPanel()),
     step(5, "Preview, develop", "", previewPanel(), developPanel()));
-  await refreshAssets(); refreshJobs(); renderLooks(); renderFilms();
+  await refreshAssets(); refreshJobs(); syncControls();
 }
 $("#logout").addEventListener("click", async () => { try { await api("/logout", { method: "POST" }); } finally { showLogin(); } });
 
@@ -276,8 +282,8 @@ function renderLooks() {
     const b = h("button", { class: "card", "aria-pressed": String(S.look === l.id), "aria-disabled": String(!l.supported),
       title: l.supported ? "" : "Not implemented in this engine yet", onclick: () => {
         if (!l.supported) return toast(`${l.name}: not implemented in this engine yet`);
-        S.look = l.id; $("#strength").disabled = l.id === "neutral"; renderLooks(); schedulePreview(); } },
-      h("strong", {}, l.name), h("small", {}, l.evidence_tier), h("br"), h("span", { class: "tag" }, l.supported ? "available" : "not yet implemented"));
+        S.look = l.id; syncControls(); schedulePreview(); } },
+      h("strong", {}, l.name), h("small", {}, l.evidence_tier), h("br"), h("span", { class: "tag" }, l.supported ? "available" : "not available"));
     return b;
   }));
 }
@@ -299,8 +305,42 @@ function renderFilms() {
 
 /* ---------------- step 4: optics ---------------- */
 function opticsPanel() {
-  return h("div", {}, h("p", { class: "dim" }, "These effects are part of the spec but not implemented in the film engine yet, so they are shown disabled. A recipe that asks for one is rejected rather than rendered without it."),
-    h("div", { class: "cards" }, [...S.catalog.optical_effects, ...S.catalog.optical_presets.filter(p => p.id !== "none")].map(o => h("div", { class: "card", "aria-disabled": "true" }, h("strong", {}, o.name), h("span", { class: "tag" }, "not yet implemented")))));
+  const norm = t => String(t || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const findFilm = alias => { const n = norm(alias); const f = S.catalog.films.find(x => norm(x.id) === n || norm(x.name) === n); return f ? f.id : null; };
+  const quick = h("div", { class: "cards", style: "margin-bottom:1rem" }, S.catalog.composites.map(c => h("button", { class: "card", title: "Sets camera look, film and optics together",
+    onclick: () => {
+      S.look = c.camera_look; S.strength = c.look_strength; const f = c.film && findFilm(c.film); if (f) S.film = f;
+      S.fx = new Set(c.optical_preset === "golden_haze" ? [] : [c.optical_preset]); S.fxPreset = c.optical_preset === "golden_haze" ? "golden_haze" : "none";
+      S.fxStrength = c.optical_strength; S.policy = c.halation_policy || "film"; syncControls(); schedulePreview(true); toast("Applied: " + c.name); } },
+    h("strong", {}, c.name), h("small", {}, "quick combination"))));
+  const cards = h("div", { class: "cards", id: "fxcards" });
+  const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 100, value: 50, "aria-label": "Optical effects strength", oninput: e => { S.fxStrength = e.target.value / 100; $("#fxv").textContent = S.fxStrength.toFixed(2); schedulePreview(); } });
+  const policy = h("select", { id: "policy", onchange: e => { S.policy = e.target.value; schedulePreview(); } },
+    h("option", { value: "film" }, "film: the film stock owns halation"), h("option", { value: "optical" }, "optical: replaces the film's halation"),
+    h("option", { value: "stacked" }, "stacked: film + optical (deliberate)"), h("option", { value: "disabled" }, "disabled: no halation at all"));
+  return h("div", {}, h("p", { class: "dim" }, "Effects run on scene-linear light before the look and film, in the engine's fixed order. Starter parameters are provisional artistic approximations, not measured recreations of any filter."),
+    quick, cards, h("div", { class: "grid2", style: "margin-top:1rem" },
+      h("div", {}, h("label", { for: "fxstrength" }, "Effects strength ", h("span", { id: "fxv" }, "0.50")), strength),
+      h("div", {}, h("label", { for: "policy" }, "Halation (applied exactly once)"), policy)));
+}
+function renderFx() {
+  const box = $("#fxcards"); if (!box) return;
+  const items = [...S.catalog.optical_effects, ...S.catalog.optical_presets.filter(p => p.id !== "none")];
+  box.replaceChildren(...items.map(o => {
+    const on = o.id === "golden_haze" ? S.fxPreset === "golden_haze" : S.fx.has(o.id);
+    return h("button", { class: "card", "aria-pressed": String(on), "aria-disabled": String(!o.supported), onclick: () => {
+      if (!o.supported) return toast(`${o.name}: not available`);
+      if (o.id === "golden_haze") { S.fxPreset = on ? "none" : "golden_haze"; S.fx.clear(); }
+      else { S.fxPreset = "none"; on ? S.fx.delete(o.id) : S.fx.add(o.id); }
+      if (o.id === "film_halation_extra") S.policy = S.fx.has(o.id) ? "optical" : "film";
+      syncControls(); schedulePreview(); } }, h("strong", {}, o.name), h("small", {}, o.id === "golden_haze" ? "composite preset" : "optical effect"));
+  }));
+}
+function syncControls() {
+  renderLooks(); renderFilms(); renderFx();
+  if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); }
+  if ($("#fxstrength")) { $("#fxstrength").value = Math.round(S.fxStrength * 100); $("#fxv").textContent = S.fxStrength.toFixed(2); }
+  if ($("#policy")) $("#policy").value = S.policy;
 }
 
 /* ---------------- step 5: preview ---------------- */

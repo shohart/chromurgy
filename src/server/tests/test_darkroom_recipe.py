@@ -27,13 +27,14 @@ def neutral(film="portra400"):
     return r
 
 
-def test_catalog_marks_unimplemented_stages(bundle):
+def test_catalog_lists_every_look_and_effect_as_available(bundle):
     c = catalog.build(bundle)
     looks = {x["id"]: x["supported"] for x in c["camera_looks"]}
-    assert len(looks) == 9 and looks["neutral"] and not looks["leica_m9_ccd"]
-    assert {x["id"] for x in c["optical_effects"]} >= {"soft_sun_glow", "ricoh_hdf_diffusion", "orton_glow"}
-    assert not any(x["supported"] for x in c["optical_effects"])
-    assert len(c["films"]) == 72
+    assert len(looks) == 9 and all(looks.values()) and "leica_m9_ccd" in looks
+    assert {x["id"] for x in c["optical_effects"]} == {"soft_sun_glow", "ricoh_hdf_diffusion", "black_pro_mist_like",
+                                                       "vintage_veiling_flare", "film_halation_extra", "orton_glow"}
+    assert all(x["supported"] and x["defaults"] for x in c["optical_effects"])
+    assert len(c["films"]) == 72 and c["effect_order"][0] == "vintage_veiling_flare"
 
 
 def test_neutral_recipe_normalizes_and_pins_bundle(bundle):
@@ -48,11 +49,17 @@ def test_spec_style_film_alias_resolves(bundle):
 
 
 @pytest.mark.parametrize("code,edit", [
-    ("UNSUPPORTED_CAMERA_LOOK", lambda r: r["camera_look"].update(id="leica_m9_ccd")),
     ("UNKNOWN_CAMERA_LOOK", lambda r: r["camera_look"].update(id="made_up")),
-    ("UNSUPPORTED_OPTICAL_EFFECT", lambda r: r["optical"].update(
+    ("INVALID_RECIPE", lambda r: r["optical"].update(
         preset_id="soft_sun_glow", strength=0.4,
-        stack=[{"id": "soft_sun_glow", "enabled": True, "parameters": {"threshold": 1.0}}])),
+        stack=[{"id": "soft_sun_glow", "enabled": True, "parameters": {"bogus": 1.0}}])),
+    ("INVALID_RECIPE", lambda r: r["optical"].update(
+        preset_id="soft_sun_glow", strength=0.4,
+        stack=[{"id": "soft_sun_glow", "enabled": True, "parameters": {"veil": 9.0}}])),
+    ("HALATION_CONFLICT", lambda r: r["optical"].update(
+        preset_id="film_halation_extra", strength=0.4, stack=[{"id": "film_halation_extra", "enabled": True, "parameters": {}}])),
+    ("HALATION_CONFLICT", lambda r: r["optical"].update(preset_id="none", strength=0, halation_policy="optical", stack=[])),
+    ("UNKNOWN_OPTICAL_PRESET", lambda r: r["optical"].update(preset_id="nonsense", strength=0.5, stack=[])),
     ("UNSUPPORTED_PROFILE", lambda r: r["film"].update(id="no-such-film")),
     ("UNSUPPORTED_OUTPUT", lambda r: r["render"].update(output_format="tiff")),
     ("INVALID_RECIPE", lambda r: r.pop("seed")),
@@ -85,11 +92,35 @@ def test_v1_bridge_and_seed_identity(bundle):
     assert v1a["film_profile_id"] == "portra400" and v1a["profile_bundle_hash"] == bundle.sha256
 
 
-def test_golden_haze_is_a_known_but_unsupported_preset(bundle):
-    c = catalog.build(bundle)
-    assert {p["id"]: p["supported"] for p in c["optical_presets"]} == {"none": True, "golden_haze": False}
+def test_presets_expand_to_an_explicit_canonical_stack(bundle):
     r = neutral()
-    r["optical"] = {"preset_id": "golden_haze", "strength": 0.5, "stack": []}
-    with pytest.raises(recipe2.RecipeError) as e:
-        recipe2.normalize(r, bundle)
-    assert e.value.code == "UNSUPPORTED_OPTICAL_EFFECT"
+    r["optical"] = {"preset_id": "golden_haze", "strength": 0.75, "stack": []}
+    n = recipe2.normalize(r, bundle)
+    assert [e["id"] for e in n["optical"]["stack"]] == ["soft_sun_glow", "black_pro_mist_like"]      # engine order
+    assert n["optical"]["stack"][0]["parameters"]["warm_shift"] == 0.18 and "radius_fraction" in n["optical"]["stack"][0]["parameters"]
+    assert recipe2.recipe_hash(n) == recipe2.recipe_hash(recipe2.normalize(copy.deepcopy(n), bundle))   # idempotent
+    v1 = recipe2.to_v1(n)
+    assert v1["creative"]["optical"]["strength"] == 0.75 and v1["look_controls"]["halation_scale"] == 1.0
+
+
+def test_no_effect_and_neutral_keep_the_old_identity(bundle):
+    plain = recipe2.to_v1(recipe2.normalize(neutral(), bundle))
+    assert "creative" not in plain                                    # same render ids as before this feature
+    off = neutral()
+    off["optical"] = {"preset_id": "soft_sun_glow", "strength": 0, "stack": []}
+    assert recipe2.recipe_hash(recipe2.normalize(off, bundle)) == recipe2.recipe_hash(recipe2.normalize(neutral(), bundle))
+    zero = neutral()
+    zero["camera_look"] = {"id": "leica_m9_ccd", "version": "1", "strength": 0}
+    assert recipe2.normalize(zero, bundle)["camera_look"]["id"] == "neutral"
+
+
+def test_halation_policy_has_one_owner(bundle):
+    r = neutral()
+    r["optical"] = {"preset_id": "film_halation_extra", "strength": 0.35, "halation_policy": "optical", "stack": []}
+    v1 = recipe2.to_v1(recipe2.normalize(r, bundle))
+    assert v1["look_controls"]["halation_scale"] == 0.0 and v1["creative"]["optical"]["stack"][0]["id"] == "film_halation_extra"
+    r["optical"]["halation_policy"] = "stacked"
+    assert recipe2.to_v1(recipe2.normalize(r, bundle))["look_controls"]["halation_scale"] == 1.0
+    d = neutral()
+    d["optical"] = {"preset_id": "none", "strength": 0, "halation_policy": "disabled", "stack": []}
+    assert recipe2.to_v1(recipe2.normalize(d, bundle))["look_controls"]["halation_scale"] == 0.0

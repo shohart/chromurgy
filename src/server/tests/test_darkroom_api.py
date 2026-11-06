@@ -98,17 +98,17 @@ def test_password_file_is_private_and_short_passwords_refused(store):
 @needs_core
 def test_catalog_and_recipe_validation_over_http(logged):
     cat = logged.get(f"{dapp.API}/catalog").json()
-    assert len(cat["films"]) == 72 and sum(x["supported"] for x in cat["camera_looks"]) == 1
+    assert len(cat["films"]) == 72 and all(x["supported"] for x in cat["camera_looks"])
     ok = logged.post(f"{dapp.API}/recipe/validate", headers=H, json={
         "schema_version": 2, "camera_look": {"id": "neutral", "version": "1", "strength": 1},
         "film": {"id": "portra400"}, "optical": {"preset_id": "none", "strength": 0, "stack": []},
         "render": {"output_format": "jpeg", "output_color_space": "srgb", "quality": 90}, "seed": 1})
     assert ok.status_code == 200 and len(ok.json()["recipe_hash"]) == 64
     bad = logged.post(f"{dapp.API}/recipe/validate", headers=H, json={
-        "schema_version": 2, "camera_look": {"id": "leica_m9_ccd", "version": "1", "strength": 1},
+        "schema_version": 2, "camera_look": {"id": "made_up_cam", "version": "1", "strength": 1},
         "film": {"id": "portra400"}, "optical": {"preset_id": "none", "strength": 0, "stack": []},
         "render": {"output_format": "jpeg", "output_color_space": "srgb", "quality": 90}, "seed": 1})
-    assert bad.status_code == 422 and bad.json()["error_code"] == "UNSUPPORTED_CAMERA_LOOK"
+    assert bad.status_code == 422 and bad.json()["error_code"] == "UNKNOWN_CAMERA_LOOK"
 
 
 @needs_dng

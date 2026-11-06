@@ -26,7 +26,7 @@ import numpy as np
 
 from .. import core, develop
 from ..ids import canonical_json
-from . import engine
+from . import creative, engine
 
 NORM_EDGE = 2048
 PREVIEW_DEMOSAIC = "fast"
@@ -100,6 +100,8 @@ def _render(job: dict) -> dict:
         info = {"scanner_ev": None}
     else:
         v1 = job["v1"]
+        if v1.get("creative"):
+            lin = creative.apply_creative(lin, v1["creative"])
         bundle = engine.current_bundle()
         look = v1["look_controls"]
         seed = develop.recipe_seed(v1, *job["seed_ids"])

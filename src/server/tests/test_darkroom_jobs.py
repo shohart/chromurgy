@@ -116,9 +116,9 @@ def test_job_validation(logged):
         r = logged.post(f"{dapp.API}/jobs", headers=H, json=body)
         assert (r.status_code, r.json()["error_code"]) == (status, code), r.text
     bad = recipe()
-    bad["camera_look"]["id"] = "fujifilm_s5_pro"
+    bad["camera_look"]["id"] = "made_up_cam"
     r = logged.post(f"{dapp.API}/jobs", headers=H, json=job_body([src], bad))
-    assert r.status_code == 422 and r.json()["error_code"] == "UNSUPPORTED_CAMERA_LOOK"
+    assert r.status_code == 422 and r.json()["error_code"] == "UNKNOWN_CAMERA_LOOK"
     assert logged.get(f"{dapp.API}/jobs/zzz").status_code == 404
 
 

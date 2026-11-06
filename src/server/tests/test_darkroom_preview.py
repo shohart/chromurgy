@@ -57,12 +57,12 @@ def test_preview_changes_with_film_and_is_cached(logged):
     assert np.abs(px(logged, bf["preview_id"]) - px(logged, a["preview_id"])).mean() > 3
 
 
-def test_unsupported_look_is_refused_not_ignored(logged):
+def test_unknown_look_is_refused_not_ignored(logged):
     src = upload(logged, DNG, "a.dng").json()["source"]["asset_id"]
     r = recipe()
-    r["camera_look"]["id"] = "leica_m9_ccd"
+    r["camera_look"]["id"] = "made_up_cam"
     resp = logged.post(f"{dapp.API}/previews", headers=H, json={"asset_id": src, "recipe": r})
-    assert resp.status_code == 422 and resp.json()["error_code"] == "UNSUPPORTED_CAMERA_LOOK"
+    assert resp.status_code == 422 and resp.json()["error_code"] == "UNKNOWN_CAMERA_LOOK"
     assert logged.post(f"{dapp.API}/previews", headers=H, json={"asset_id": "nope", "recipe": recipe()}).status_code == 404
     assert logged.post(f"{dapp.API}/previews", headers=H, json={"asset_id": src, "recipe": recipe(), "max_edge": 10}).status_code == 422
     assert logged.get(f"{dapp.API}/previews/{'0' * 64}").status_code == 404
