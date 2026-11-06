@@ -430,3 +430,34 @@ mirror, their DNGs are not asked for and their frames are not sent back;
 the archive, database and published photos are kept.
 Tests: both confirmations, declining, a server-developed roll; sync test;
 the fuzz deletes rolls among everything else (80 runs clean).
+
+## 0.7.0: Wi-Fi from the M-Film menu; ALT is CHDK's, Playback is M-Film's
+
+Owner: with Canon's gallery taken over, Canon's Wi-Fi ("Computer" -> mfilm)
+could no longer be reached; and with the ALT button moved to DISP and the
+Playback button opening M-Film, ALT should always give CHDK's menu. The
+menu opened over playback is stable, over the live view it flickered.
+
+- Menu "Wi-Fi: send to server": checks the battery, writes the sync index,
+  switches to playback (lens in), hands the screen and keys to Canon and
+  presses Up (SX510 HS manual: in playback, Up opens the Wi-Fi menu). The
+  owner picks Computer -> mfilm as before. The app keeps running; ALT
+  during the session gives the keys straight back to Canon; a half-press
+  ends it and the app shows what the sync did (A/CHDK/MFILM/SYNC.TXT).
+- Sync without stopping the app: Lua commands from chdkptp are refused while
+  a script runs, file transfers are not (CHDK core/ptp.c). The app keeps
+  A/CHDK/MFILM/ROLLS/INDEX.TXT (roll manifests, journals, DELETED.CFG) and
+  creates A/CHDK/MFVIEW/<ROLL8> for sealed rolls; camera-sync downloads the
+  index and the listed files, uploads without mkdir, writes SYNC.TXT. Apps
+  before 0.7 (no index): killscript + mdl as before.
+- ALT while shooting: CHDK's ALT mode. While a script runs CHDK uses its
+  script handler there (MENU does nothing), so the app calls mf_chdk_alt()
+  (M-Film CHDK build: gui_set_mode(&altGuiHandler)); MENU then opens CHDK's
+  menu the usual way. The app draws nothing and resumes when ALT is left.
+  Note: in CHDK's ALT mode a full shutter press starts the selected script
+  (CHDK's behaviour) -- i.e. restarts M-Film. HARDWARE-TEST REQUIRED.
+- The M-Film menu opens only with the Playback button (Canon's playback).
+Harness: ALT vs Playback buttons, Canon's Wi-Fi menu, SYNC.TXT, key routing
+to CHDK/Canon; it fails if the app draws over CHDK's ALT/menu or Canon's
+Wi-Fi screen (found: the menu drawn over the Wi-Fi screen on ALT). Fake
+chdkptp refuses Lua commands while the app runs. 80 fuzz runs clean.

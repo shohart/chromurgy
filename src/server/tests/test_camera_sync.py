@@ -50,7 +50,7 @@ def test_sync_retries_a_broken_download_and_keeps_the_log(make_card, store, conn
 
 def test_sync_reports_downloads_that_keep_failing(make_card, store, conn, tmp_path):
     card = make_card(mutate=_hashless)
-    r = sync(store, conn, chdkptp=f"{sys.executable} {FAKE} --card {card} --fail-d 4", mirror=tmp_path / "m")
+    r = sync(store, conn, chdkptp=f"{sys.executable} {FAKE} --card {card} --fail-d 5", mirror=tmp_path / "m")   # 1 for the INDEX.TXT try
     assert r.downloaded == [] and len(r.failed) == 2
     assert all("attempt 2: got 4 of" in why and "ptpip read failed" in why for _, why in r.failed)
     assert not list((tmp_path / "m").rglob("*.part"))
@@ -96,3 +96,28 @@ def test_a_roll_deleted_on_the_camera_is_not_asked_for(make_card, store, conn, t
     r = sync(store, conn, chdkptp=f"{sys.executable} {FAKE} --card {card}", mirror=tmp_path / "m")
     assert r.failed == [] and r.downloaded == [] and r.deleted == [rid]
     assert not any(x.status == "INCOMPLETE" for x in r.rolls)
+
+
+def test_sync_with_the_app_running_needs_no_killscript(make_card, store, conn, tmp_path):
+    # app 0.7: ROLLS/INDEX.TXT lists the roll files; plain downloads work while
+    # the app runs, so the server no longer stops it
+    card = make_card(mutate=_hashless)
+    rolls_dir = card / "CHDK" / "MFILM" / "ROLLS"
+    listed = sorted(str(p.relative_to(rolls_dir)) for p in rolls_dir.rglob("*") if p.is_file())
+    (rolls_dir / "INDEX.TXT").write_text("\n".join(listed) + "\n")
+    log = tmp_path / "cmds.log"
+    r = sync(store, conn, chdkptp=f"{sys.executable} {FAKE} --card {card} --app-running --log {log}",
+             mirror=tmp_path / "m")
+    cmds = log.read_text().split()
+    assert r.app_kept and "killscript" not in cmds and "mdl" not in cmds and "mkdir" not in cmds
+    assert [x.status for x in r.rolls] == ["IMPORTED"] and len(r.downloaded) == 2
+    assert (card / "CHDK" / "MFILM" / "SYNC.TXT").read_text().startswith("done ")
+
+
+def test_sync_with_an_old_app_still_stops_it(make_card, store, conn, tmp_path):
+    card = make_card(mutate=_hashless)
+    log = tmp_path / "cmds.log"
+    r = sync(store, conn, chdkptp=f"{sys.executable} {FAKE} --card {card} --app-running --log {log}",
+             mirror=tmp_path / "m")
+    assert not r.app_kept and "killscript" in log.read_text().split()
+    assert [x.status for x in r.rolls] == ["IMPORTED"]

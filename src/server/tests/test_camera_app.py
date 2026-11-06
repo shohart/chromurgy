@@ -112,7 +112,7 @@ def test_full_roll_seals_and_imports(card, store, conn):
 def test_power_cut_resume_and_finish_from_menu(card, store, conn):
     run(card, LOAD_PORTRA + LEN36 + [("wait", 600)] + shots(3) + [("powercut",), ("restart",), ("wait", 300),
         ("expect", "3/36"), ("key", "shoot_half"), ("wait", 600)] + shots(2)
-        + [("playback",), ("expect", "M%-Film"), ("key", "down"), ("key", "down"), ("key", "set"),   # Finish roll now
+        + [("canon_playback",), ("expect", "M%-Film"), ("key", "down"), ("key", "down"), ("key", "set"),   # Finish roll now
            ("expect", "Seal it now"), ("key", "up"), ("key", "set"), ("wait", 300), ("expect", "NO FILM")])
     (r,) = rolls(card)
     assert r["roll_state"] == "SEALED" and r["captured_frames"] == 5 and r["roll_length"] == 36
@@ -140,7 +140,7 @@ def test_overwritten_dng_is_flagged_not_double_counted(card):
 def test_old_dngs_are_not_frames_and_new_film_seals_the_old_roll(card):
     run(card, [("shoot",), ("wait", 300), ("shoot",)])                 # DNGs on the card before a roll is loaded
     run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1)
-        + [("playback",), ("key", "down"), ("key", "set"), ("expect", "Finish %(seal%) it"), ("key", "up"),
+        + [("canon_playback",), ("key", "down"), ("key", "set"), ("expect", "Finish %(seal%) it"), ("key", "up"),
            ("key", "set"), ("expect", "Choose film"), ("key", "down"), ("key", "set"), ("key", "set"),
            ("wait", 600)] + shots(1))
     rs = rolls(card)
@@ -155,7 +155,7 @@ def test_old_dngs_are_not_frames_and_new_film_seals_the_old_roll(card):
 
 
 def test_quit_from_menu(card):
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("playback",), ("key", "up"), ("key", "set"),
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("canon_playback",), ("key", "up"), ("key", "set"),
         ("expect", "NOT recorded"), ("key", "up"), ("key", "set"), ("expect_exit",)])
     assert "---- quit" in applog(card)
     (r,) = rolls(card)
@@ -172,21 +172,49 @@ def test_autostart_goes_straight_to_shooting_with_film_loaded(card):
 
 def test_autostart_can_be_switched_off_from_the_menu(card):
     run(card, [("expect", "Start with camera: ON"), ("key", "down"), ("key", "down"), ("key", "down"),
-               ("key", "down"), ("key", "set"), ("expect", "Start with camera: OFF"), ("expect_autostart", 0)])
+               ("key", "down"), ("key", "down"), ("key", "set"), ("expect", "Start with camera: OFF"), ("expect_autostart", 0)])
 
 
-def test_menu_in_shooting_mode_with_canon_info_off_chdk_osd_off_then_restored(card):
-    # 0.2.0: Canon's information display is switched off (DISP) for the app's
-    # lifetime; the menu stays in shooting mode with CHDK's OSD off
+def test_menu_from_playback_with_chdk_osd_off_then_shooting_with_canon_info_off(card):
+    # 0.7.0: the M-Film menu comes with the Playback button and stays in
+    # playback (CHDK's OSD off); shooting has Canon's information display off
     run(card, [("wait", 300), ("expect_state", True, 0), ("expect_prop", 105, 1)] + LOAD_PORTRA + LEN12
         + [("wait", 600), ("expect_state", True, 1), ("expect", "Portra400 0/12")] + shots(1)
-        + [("playback",), ("wait", 900), ("expect_state", True, 0), ("key", "shoot_half"), ("wait", 600),
+        + [("canon_playback",), ("wait", 900), ("expect_state", False, 0), ("key", "shoot_half"), ("wait", 900),
            ("expect_state", True, 1), ("expect_prop", 105, 1)])
 
 
-def test_owner_turning_canon_info_back_on_is_undone_at_the_menu(card):
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("set_prop", 105, 0), ("playback",), ("wait", 900),
-                                     ("expect_prop", 105, 1), ("expect", "Shoot")])
+def test_owner_turning_canon_info_back_on_is_undone_when_shooting_again(card):
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600), ("set_prop", 105, 0), ("canon_playback",), ("wait", 900),
+                                     ("expect", "Shoot"), ("key", "set"), ("wait", 1500), ("expect_prop", 105, 1)])
+
+
+def test_alt_button_while_shooting_gives_chdk_its_alt_mode_and_keeps_counting(card):
+    # owner: DISP (CHDK's ALT button) must open CHDK's menu, never the M-Film one
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1)
+        + [("playback",), ("wait", 900), ("expect_chdk_alt", True), ("wait", 2000),
+           ("playback",), ("wait", 900), ("expect_chdk_alt", False)] + shots(1) + [("expect", "Portra400 2/12")])
+    assert "CHDK ALT entered while shooting" in applog(card)
+    (r,) = rolls(card)
+    assert r["captured_frames"] == 2
+
+
+def test_wifi_from_the_menu_hands_canon_the_screen_and_comes_back(card):
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1) + [("canon_playback",), ("wait", 900)]
+        + [("key", "down"), ("key", "down"), ("key", "down"), ("key", "down"), ("key", "set"), ("wait", 1500),
+           ("expect_wifi_menu", True), ("expect_rec", False),
+           ("server_sync", "done 2026-11-06T10:00:00+02:00 1 roll"), ("wait", 2000),
+           ("half_press",), ("wait", 1500), ("expect_rec", True), ("expect", "Synced: done")])
+    log = applog(card)
+    assert "wifi: handing the screen" in log and "wifi: done 2026-11-06" in log
+    idx = (card / "A" / "CHDK" / "MFILM" / "ROLLS" / "INDEX.TXT").read_text().split()
+    assert any(x.endswith("/MANIFEST.JSN") for x in idx)
+
+
+def test_wifi_refused_on_a_low_battery(card):
+    run(card, [("wait", 1200), ("canon_playback",), ("wait", 900), ("vbatt", 3400)]
+        + [("key", "down")] * 4 + [("key", "set"), ("wait", 600), ("expect_wifi_menu", False),
+                                   ("expect", "Battery low: charge it before Wi%-Fi")])
 
 
 def test_quit_restores_canon_info(card):
@@ -228,7 +256,7 @@ def test_menu_complete_in_both_bitmap_buffers(card):
 
 def test_menu_screen_full_with_a_loaded_film(card):
     run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1)
-        + [("playback",), ("wait", 900), ("flip",), ("wait", 300), ("expect_screen_full",),
+        + [("canon_playback",), ("wait", 900), ("flip",), ("wait", 300), ("expect_screen_full",),
            ("flip",), ("wait", 300), ("expect_screen_full",)])
 
 
@@ -261,7 +289,7 @@ def test_viewer_without_the_mfilm_chdk_build_says_so(card):
 
 def test_screen_test_from_diagnostics(card):
     assert (card / "A" / "CHDK" / "MFVIEW" / "TEST.MFV").read_bytes()[:4] == b"MFV1"   # from write_card
-    run(card, [("wait", 1200)] + [("key", "down")] * 5 + [("key", "set"), ("expect", "SET: screen test"),
+    run(card, [("wait", 1200)] + [("key", "down")] * 6 + [("key", "set"), ("expect", "SET: screen test"),
                ("key", "set"), ("wait", 600), ("expect_shown", "TEST.MFV"), ("expect", "Screen test  1/1"),
                ("key", "menu"), ("wait", 900), ("expect_rec", False)])
 
@@ -286,7 +314,7 @@ DEVELOP_LOADED = ROLLS + [("key", "set"), ("expect", "not developed yet"), ("key
 
 def test_develop_on_camera_then_view(card):
     _dev_files(card)
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("canon_playback",), ("wait", 900)] + DEVELOP_LOADED
         + [("expect", "Frame 1/2"), ("wait", 4000), ("expect", "Frame 2/2"), ("wait", 4000),
            ("expect", "DEVELOPED: 2 frames %(camera%)"), ("key", "set"), ("wait", 600),
            ("expect_shown", "MFVIEW/C%w+/F01.MFV"), ("key", "right"), ("wait", 200), ("expect_shown", "F02.MFV"),
@@ -302,13 +330,13 @@ def test_develop_on_camera_then_view(card):
 
 def test_develop_can_be_stopped_and_keeps_the_roll_undeveloped(card):
     _dev_files(card)
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("canon_playback",), ("wait", 900)] + DEVELOP_LOADED
         + [("expect", "Frame 1/2"), ("key", "menu"), ("wait", 1000), ("expect", "Developing stopped")])
     assert not (card / "A" / "CHDK" / "MFVIEW" / "CAMINDEX.CFG").exists()
 
 
 def test_develop_without_data_files_says_so(card):
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1) + [("canon_playback",), ("wait", 900)] + DEVELOP_LOADED
         + [("expect", "MFDEV/MFCAM.BIN or MFDEV.BIN")])
 
 
@@ -351,7 +379,7 @@ def test_developing_screen_redraws_only_what_changes(card):
     # camera 0.5.1: the whole contact strip flickered with the pulsing current
     # frame (filled black, then redrawn at every pulse)
     _dev_files(card)
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(3) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(3) + [("canon_playback",), ("wait", 900)] + DEVELOP_LOADED
         + [("expect", "Frame 1/3"), ("wait", 8000), ("expect_no_ghosts", 40)])
 
 
@@ -373,7 +401,7 @@ def test_power_on_in_playback_with_a_good_battery_shows_the_menu_until_shoot(car
 
 def test_develop_stops_on_a_low_battery_and_resumes_later(card):
     _dev_files(card)
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(3) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(3) + [("canon_playback",), ("wait", 900)] + DEVELOP_LOADED
         + [("expect", "Frame 1/3"), ("vbatt", 3440), ("wait", 4000), ("expect", "Battery low: developing stopped"),
            ("expect", "DEVELOPED: 1 of 3"), ("vbatt", 3900), ("key", "down"), ("key", "set"),
            ("expect", "Frame 2/3"), ("wait", 8000), ("expect", "DEVELOPED: 3 frames")])
@@ -394,7 +422,7 @@ DELETE_FIRST = ROLLS + [("key", "set"), ("expect", "Delete roll"), ("key", "down
 
 def test_delete_a_roll_not_on_the_server_asks_twice_and_removes_raw_and_developed(card):
     _dev_files(card)
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("canon_playback",), ("wait", 900)] + DEVELOP_LOADED
         + [("wait", 8000), ("expect", "DEVELOPED: 2 frames")] + [("key", "down"), ("key", "set"),
            ("expect", "NOT ON THE SERVER"), ("key", "up"), ("key", "set"), ("expect", "This cannot be undone"),
            ("key", "up"), ("key", "set"), ("expect", "Roll deleted: 2 RAW, 2 developed")])
@@ -408,13 +436,13 @@ def test_delete_a_roll_not_on_the_server_asks_twice_and_removes_raw_and_develope
 
 
 def test_delete_can_be_declined(card):
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1) + [("playback",), ("wait", 900)] + DELETE_FIRST
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1) + [("canon_playback",), ("wait", 900)] + DELETE_FIRST
         + [("key", "set"), ("wait", 300), ("expect", "Develop")])                # "No" is the default
     assert len(rolls(card)) == 1 and list((card / "A").glob("DCIM/*/*.DNG"))
 
 
 def test_delete_a_roll_the_server_has_asks_once(card):
-    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)])
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("canon_playback",), ("wait", 900)])
     (r,) = rolls(card)
     _developed_on_card(card, n=2, rid=r["roll_id"])                          # the server developed it
     run(card, ROLLS + [("key", "set"), ("expect", "DEVELOPED: 2 frames .server."), ("key", "down"), ("key", "set"),

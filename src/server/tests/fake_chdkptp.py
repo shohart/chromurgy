@@ -12,6 +12,8 @@ args = sys.argv[1:]
 card = Path(args[args.index("--card") + 1])
 offline = "--offline" in args
 fail_d = int(args[args.index("--fail-d") + 1]) if "--fail-d" in args else 0   # first n downloads break off
+app_running = "--app-running" in args      # a camera script runs: Lua commands are refused until killscript
+cmd_log = open(args[args.index("--log") + 1], "a") if "--log" in args else None
 connected = False
 lines = [a[2:] for a in args if a.startswith("-e")]
 if "-i" in args:                       # interactive: commands on stdin, like chdkptp -i
@@ -23,11 +25,15 @@ for line in lines:
     words = shlex.split(line)
     if not words:
         continue
+    if cmd_log:
+        cmd_log.write(words[0] + "\n")
+        cmd_log.flush()
     if words[0] in ("dis", "quit"):
         if words[0] == "quit":
             break
         continue
     if words[0] == "killscript":
+        app_running = False
         continue
     if words[0] in ("connect", "c"):
         if offline:
@@ -38,6 +44,9 @@ for line in lines:
         continue
     if not connected:
         print("ERROR: not connected", flush=True)
+        continue
+    if words[0] in ("mdl", "mkdir") and app_running:
+        print("ERROR: a script is already running", flush=True)
         continue
     if words[0] == "mdl":
         src, dst = Path(card / words[-2][2:]), Path(words[-1])

@@ -59,14 +59,19 @@ MACROS = {
     "load_film": lambda rng: TO_MENU + K("down", "set") + K(*(["down"] * rng.randrange(0, 8)), "set")
     + K(*(["down"] * rng.randrange(0, 3)), "set") + [("wait", 900)],
     "shoot_some": lambda rng: [x for _ in range(rng.randrange(1, 5)) for x in (("shoot", {}), ("wait", 700))],
-    "to_menu": lambda rng: [("playback",), ("wait", 900)] + TO_MENU,
+    "to_menu": lambda rng: [("canon_playback",), ("wait", 900)] + TO_MENU,
+    "chdk_alt": lambda rng: [("playback",), ("wait", rng.choice([300, 2000]))]
+    + K(*[rng.choice(["menu", "down", "set", "up"]) for _ in range(rng.randrange(0, 4))]) + [("playback",), ("wait", 600)],
+    "wifi": lambda rng: TO_MENU + K("down", "down", "down", "down", "set") + [("wait", 1500)]
+    + ([("server_sync", "done 2026-11-06T10:00:00+02:00 1 roll")] if rng.random() < 0.7 else [])
+    + ([("playback",), ("wait", 600)] if rng.random() < 0.3 else []) + [("half_press",), ("wait", 1200)],
     "rolls_develop": lambda rng: TO_MENU + K("down", "down", "down", "set") + K(*(["down"] * rng.randrange(0, 3)), "set")
     + K("set") + K(rng.choice(["set", "up"]), "set") + [("wait", rng.choice([1000, 4000, 9000]))],
     "develop_stop": lambda rng: TO_MENU + K("down", "down", "down", "set", "set", "set", "up", "set") + [("wait", 1500)]
     + K("menu") + [("wait", 1500)],
     "view": lambda rng: TO_MENU + K("down", "down", "down", "set", "set", "set") + [("wait", 900)]
     + K(*[rng.choice(["right", "left", "set", "down"]) for _ in range(rng.randrange(1, 6))]) + K("menu") + [("wait", 900)],
-    "screen_test": lambda rng: TO_MENU + K("down", "down", "down", "down", "down", "set", "set") + [("wait", 900)]
+    "screen_test": lambda rng: TO_MENU + K("down", "down", "down", "down", "down", "down", "set", "set") + [("wait", 900)]
     + K("menu") + [("wait", 900)],
     "delete_roll": lambda rng: TO_MENU + K("down", "down", "down", "set") + K(*(["down"] * rng.randrange(0, 3)), "set")
     + K(*(["down"] * rng.randrange(1, 3)), "set") + K("up", "set") + K(rng.choice(["up", "down"]), "set"),
@@ -88,7 +93,7 @@ def scenario(rng: random.Random, n: int) -> list:
             if rng.random() < 0.3:
                 st.append(("wait", rng.choice([50, 200, 700])))
         elif r < 0.72:
-            st.append(("playback",))
+            st.append((rng.choice(["playback", "canon_playback"]),))
             st.append(("wait", 900))
         elif r < 0.84:
             st.append(("shoot", {"lag": rng.random() < 0.1}))

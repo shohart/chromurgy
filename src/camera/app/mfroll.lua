@@ -22,7 +22,7 @@
 
 local M = {}
 
-M.VERSION = "0.6.1-alpha"
+M.VERSION = "0.7.0-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 
@@ -359,6 +359,7 @@ function M.seal(r, why)
   M.journal(r, "SEALED frames=" .. #r.frames .. " (" .. (why or "") .. ")")
   M.log("roll " .. r.roll_id .. " sealed with " .. #r.frames .. " frame(s): " .. (why or ""))
   M.set_active(nil)
+  M.write_sync_index()
   return ok, err
 end
 
@@ -470,6 +471,33 @@ function M.view_frame(v, i)
   return string.format("%s/%s/F%02d.MFV", M.VIEW_ROOT, v.dir, i)
 end
 
+-- ------------------------------------------------------------------ sync without stopping the app
+-- The server syncs over PTP. Lua commands from it are refused while this app
+-- runs, file download/upload are not. So the app lists what the server needs
+-- (ROLLS/INDEX.TXT: one path per line, relative to A/CHDK/MFILM/ROLLS) and
+-- creates the folders the server uploads viewer frames into (MFVIEW/<ROLL8>);
+-- the server then needs neither Lua nor to stop the app (it used killscript).
+function M.write_sync_index()
+  local lines = {}
+  for _, dir in ipairs(os.listdir(M.ROOT .. "/ROLLS") or {}) do
+    if string.match(dir, "^%x%x%x%x%x%x%x%x$") then
+      for _, f in ipairs({"MANIFEST.JSN", "JOURNAL.LOG"}) do
+        if stat(M.ROOT .. "/ROLLS/" .. dir .. "/" .. f) then lines[#lines + 1] = dir .. "/" .. f end
+      end
+      local r = M.load_roll(dir)
+      if r and r.state == "SEALED" then M.mkdirs(M.VIEW_ROOT .. "/" .. dir) end
+    end
+  end
+  if stat(M.ROOT .. "/ROLLS/DELETED.CFG") then lines[#lines + 1] = "DELETED.CFG" end
+  return write_plain(M.ROOT .. "/ROLLS/INDEX.TXT", table.concat(lines, "\n") .. "\n")
+end
+
+-- what the last sync left (A/CHDK/MFILM/SYNC.TXT, written by the server), or nil
+function M.last_sync()
+  local s = M.read(M.ROOT .. "/SYNC.TXT")
+  return s and string.match(s, "[^\r\n]+")
+end
+
 -- ------------------------------------------------------------------ deleting a roll
 -- Removes the roll's DNGs, its developed frames (from the server: MFVIEW/<ROLL8>,
 -- from the camera: MFVIEW/C<7 hex>, MFDEV/C<7 hex>), its index lines and its
@@ -530,6 +558,7 @@ function M.delete_roll(r, v)
     remove_dir(M.roll_dir(r))
   end
   M.log(string.format("roll %s deleted: %d DNG, %d developed frame(s)", id, dngs, frames))
+  M.write_sync_index()
   return dngs, frames
 end
 

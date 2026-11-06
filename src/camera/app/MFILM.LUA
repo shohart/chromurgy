@@ -1080,6 +1080,54 @@ local function show_diag()
   if k == "set" then return screen_test() end
 end
 
+-- ------------------------------------------------------------ Wi-Fi
+-- Canon's own Wi-Fi ("Computer" -> mfilm) starts from playback with the Up
+-- button (SX510 HS manual: Wi-Fi menu, single-image display only). The app
+-- gives the screen and the keys to Canon for the session and stays running:
+-- the server syncs with file transfers only (ROLLS/INDEX.TXT), so it no longer
+-- stops the app. Ends with a half-press (shooting); ALT is ignored meanwhile
+-- (the M-Film menu over a running connection would hide Canon's screen).
+local function wifi()
+  if vbatt() < BATT_LOW_MV then
+    say("Battery low: charge it before Wi-Fi", 8000)
+    return
+  end
+  mf.write_sync_index()
+  local before = mf.last_sync()
+  if not set_rec(false) then say("Could not switch to playback", 6000) return end
+  mf.log("wifi: handing the screen to Canon's Wi-Fi menu")
+  invalidate()
+  if have("mf_overlay_clear") then mf_overlay_clear() end
+  draw_clear()
+  title_line(true)
+  if have("exit_alt") then exit_alt() end
+  sleep(400)
+  if have("click") then click("up") end           -- Canon: Wi-Fi menu (playback, Up button)
+  local result = "menu"
+  while true do
+    sleep(300)
+    boot_alive()
+    if is_rec() then result = "shoot" break end   -- half-press: back to shooting
+    if have("get_alt_mode") and get_alt_mode() then
+      -- ALT pressed during the session: the connection may be running, so
+      -- the keys go straight back to Canon's Wi-Fi screen
+      if have("exit_alt") then exit_alt() end
+      mf.log("wifi: ALT pressed during the session, keys back to Canon")
+    end
+  end
+  local after = mf.last_sync()
+  if after and after ~= before then
+    mf.log("wifi: " .. after)
+    say("Synced: " .. string.sub(after, 1, 38), 10000, true)
+  else
+    mf.log("wifi: ended, no sync recorded")
+  end
+  if have("enter_alt") then enter_alt() end
+  title_line(false)
+  invalidate()
+  return result
+end
+
 local function menu()
   chdk_osd(false)
   -- the menu stays in whatever mode the camera is in: it covers the whole
@@ -1097,8 +1145,8 @@ local function menu()
     if notice and get_tick_count() < notice_until then status[#status + 1] = {notice, C.hi} end
     local auto_on = have("get_autostart") and get_autostart() == 1
     local items = {"Shoot", roll and roll.state ~= "SEALED" and "Load new film (finish this one)" or "Load film",
-                   "Finish roll now", "Rolls on card", "Start with camera: " .. (auto_on and "ON" or "OFF"),
-                   "Diagnostics", "Quit M-Film"}
+                   "Finish roll now", "Rolls on card", "Wi-Fi: send to server",
+                   "Start with camera: " .. (auto_on and "ON" or "OFF"), "Diagnostics", "Quit M-Film"}
     local i = choose("M-Film " .. mf.VERSION, status, items, sel)
     if i == "shoot" or i == 1 or i == nil then
       -- to shoot the lens must be out; on a low battery stay in the menu
@@ -1115,13 +1163,14 @@ local function menu()
     elseif i == 2 then r = load_film()
     elseif i == 3 then seal_now()
     elseif i == 4 then r = show_rolls()
-    elseif i == 5 then
+    elseif i == 5 then r = wifi()
+    elseif i == 6 then
       if have("set_autostart") then
         set_autostart(auto_on and 0 or 1)
         mf.log("autostart " .. (auto_on and "off" or "on"))
       end
-    elseif i == 6 then r = show_diag()
-    elseif i == 7 then
+    elseif i == 7 then r = show_diag()
+    elseif i == 8 then
       if confirm("Quit M-Film", {"Frames shot after quitting are NOT recorded.", "The roll stays loaded."}) then
         quit = true
       end
@@ -1171,6 +1220,28 @@ local function shooting()
   end
   canon_info(false)                              -- straight to shooting after autostart
   if have("exit_alt") then exit_alt() end
+  -- The ALT button (owner: DISP) is CHDK's: pressed while shooting it opens
+  -- CHDK's ALT mode, where MENU gives CHDK's menu -- not the M-Film menu,
+  -- which comes with the Playback button. While a script runs CHDK uses its
+  -- script handler in ALT mode (MENU does nothing there), so the app hands
+  -- ALT mode to CHDK's normal handler (mf_chdk_alt) and keeps watching for
+  -- frames, drawing nothing, until ALT is left.
+  local alt_handed = false
+  local function chdk_alt()
+    if not (have("get_alt_mode") and get_alt_mode()) then
+      if alt_handed then mf.log("CHDK ALT left: back to shooting") end
+      alt_handed = false
+      return false
+    end
+    if not alt_handed then
+      alt_handed = true
+      if overlay_until > get_tick_count() then overlay_until = 0 end
+      draw_clear()
+      if have("mf_chdk_alt") then mf_chdk_alt() end
+      mf.log("CHDK ALT entered while shooting: CHDK's menu, M-Film keeps watching")
+    end
+    return true
+  end
   local function canon_gallery()
     -- Canon's own gallery is not used: playback outside the app's viewer
     -- goes straight back to the M-Film menu (Rolls -> View shows developed frames)
@@ -1185,43 +1256,45 @@ local function shooting()
   while not quit do
     boot_alive()
     if canon_gallery() then return end
-    if have("get_alt_mode") and get_alt_mode() then return end   -- Playback pressed: menu (before drawing)
-    local dir = get_image_dir()
-    local n = shot_count()
-    if n ~= shots_seen then
-      shots_seen = n
-      pending_since = pending_since or get_tick_count()
-    end
-    -- the card is read when a shot was taken (until its DNG is in), on a new
-    -- folder, and every 5 s anyway; every 30 s known DNGs are re-checked
-    local now = get_tick_count()
-    local found = {}
-    if pending_since or dir ~= last_dir or now - last_poll >= 5000 then
-      -- a shot with no new DNG after 1.5 s: maybe it overwrote one, check sizes now
-      local full = now - last_full_poll >= 30000
-                   or (pending_since and now - pending_since > 1500 and last_full_poll < pending_since)
-      found = watcher.poll(dir, full)
-      last_poll, last_dir = now, dir
-      if full then last_full_poll = now end
-    end
-    for _, f in ipairs(found) do on_new_dng(f) end
-    if #found > 0 then pending_since = nil; show_overlay(3000) end
-    if pending_since and get_tick_count() - pending_since > 10000 then
-      pending_since = nil
-      mf.log("shot without a new DNG within 10 s (RAW off?)")
-      say("No DNG written: is RAW/DNG on in CHDK?", 8000)
-    end
-    if get_tick_count() < overlay_until then
-      if get_tick_count() - last_draw > 400 then
-        overlay()
-        last_draw, shown = get_tick_count(), true
+    if chdk_alt() then                               -- DISP/ALT while shooting: CHDK's own ALT mode and menu
+      sleep(200)
+    else
+      local dir = get_image_dir()
+      local n = shot_count()
+      if n ~= shots_seen then
+        shots_seen = n
+        pending_since = pending_since or get_tick_count()
       end
-    elseif shown then
-      draw_clear()                                 -- give the screen back to Canon
-      shown = false
+      -- the card is read when a shot was taken (until its DNG is in), on a new
+      -- folder, and every 5 s anyway; every 30 s known DNGs are re-checked
+      local now = get_tick_count()
+      local found = {}
+      if pending_since or dir ~= last_dir or now - last_poll >= 5000 then
+        -- a shot with no new DNG after 1.5 s: maybe it overwrote one, check sizes now
+        local full = now - last_full_poll >= 30000
+                     or (pending_since and now - pending_since > 1500 and last_full_poll < pending_since)
+        found = watcher.poll(dir, full)
+        last_poll, last_dir = now, dir
+        if full then last_full_poll = now end
+      end
+      for _, f in ipairs(found) do on_new_dng(f) end
+      if #found > 0 then pending_since = nil; show_overlay(3000) end
+      if pending_since and get_tick_count() - pending_since > 10000 then
+        pending_since = nil
+        mf.log("shot without a new DNG within 10 s (RAW off?)")
+        say("No DNG written: is RAW/DNG on in CHDK?", 8000)
+      end
+      if get_tick_count() < overlay_until then
+        if get_tick_count() - last_draw > 400 then
+          overlay()
+          last_draw, shown = get_tick_count(), true
+        end
+      elseif shown then
+        draw_clear()                                 -- give the screen back to Canon
+        shown = false
+      end
+      sleep(pending_since and 100 or 200)
     end
-    if have("get_alt_mode") and get_alt_mode() then return end   -- Playback pressed: menu
-    sleep(pending_since and 100 or 200)
   end
 end
 
@@ -1276,6 +1349,7 @@ local function main()
   if COLS > 60 then COLS = 60 end
   local problems = mf.init()
   mf.log("---- start " .. mf.VERSION)
+  mf.write_sync_index()                          -- what a Wi-Fi sync downloads (no Lua needed on the camera)
   if looped then
     mf.log("the previous start did not finish, or 4 autostarts in 60 s: CHDK autostart switched OFF")
     say("Last start failed: autostart is OFF (Diagnostics)", 15000)

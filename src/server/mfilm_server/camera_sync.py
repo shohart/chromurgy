@@ -55,6 +55,7 @@ class SyncResult:
     log_path: str | None = None
     viewer_rolls: list[str] = field(default_factory=list)     # rolls whose developed frames went to the camera
     deleted: list[str] = field(default_factory=list)          # rolls the owner deleted on the camera
+    app_kept: bool = False                                     # synced without stopping the camera app
     rolls: list[RollResult] = field(default_factory=list)
     log: str = ""
 
@@ -129,6 +130,32 @@ def _q(s: str) -> str:
     if '"' in s:
         raise SyncError("BAD_PATH", s)
     return f'"{s}"'
+
+
+def fetch_listed(ses: _Session, card: Path) -> bool:
+    """Download ROLLS/INDEX.TXT and the files it lists into the mirror; False if
+    the camera has no index (an app before 0.7)."""
+    base = card / MFILM_DIR
+    base.mkdir(parents=True, exist_ok=True)
+    part = base / "INDEX.TXT.part"
+    out = ses.cmd(f"d {_q('A/' + str(MFILM_DIR) + '/INDEX.TXT')} {_q(str(part))}")
+    if "ERROR" in out or not part.is_file():
+        part.unlink(missing_ok=True)              # no index, or a broken transfer: the old way
+        return False
+    listed = [ln.strip() for ln in part.read_text(errors="replace").splitlines() if ln.strip()]
+    part.replace(base / "INDEX.TXT")
+    for rel in listed:
+        if ".." in rel or rel.startswith("/") or not all(c.isalnum() or c in "._/-" for c in rel):
+            continue                                  # only the app's own 8.3 paths
+        dst = base / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dst.with_name(dst.name + ".part")
+        out = ses.cmd(f"d {_q('A/' + str(MFILM_DIR) + '/' + rel)} {_q(str(tmp))}")
+        if "ERROR" not in out and tmp.is_file():
+            tmp.replace(dst)
+        else:
+            tmp.unlink(missing_ok=True)
+    return True
 
 
 def deleted_rolls(card: Path) -> set[str]:
@@ -214,13 +241,16 @@ def push_viewer(ses: _Session, store: Store, conn: sqlite3.Connection, card: Pat
              if v.roll_id not in gone]
     if not rolls:
         return
-    ses.cmd(f"mkdir {_q('A/' + cv.VIEW_DIR)}")
+    lua = not res.app_kept                        # with the app running Lua is refused: the app made the folders
+    if lua:
+        ses.cmd(f"mkdir {_q('A/' + cv.VIEW_DIR)}")
     for v in rolls:
         if on_camera.get(v.roll_id) == v.set_hash():
             continue
         rdir = vroot / v.dir8
         rdir.mkdir(parents=True, exist_ok=True)
-        ses.cmd(f"mkdir {_q(f'A/{cv.VIEW_DIR}/{v.dir8}')}")
+        if lua:
+            ses.cmd(f"mkdir {_q(f'A/{cv.VIEW_DIR}/{v.dir8}')}")
         ok = True
         for i, src in enumerate(v.frames, 1):
             f = rdir / f"F{i:02d}.MFV"
@@ -255,12 +285,15 @@ def sync(store: Store, conn: sqlite3.Connection, *, host: str | None = None, mir
         out = ses.cmd(_connect(host), timeout=60)
         if "connected:" not in out:
             raise SyncError("CAMERA_NOT_CONNECTED", out.strip()[-800:])
-        # a running camera script (the M-Film app) blocks chdkptp's remote calls
-        ses.cmd("killscript", timeout=30)
-        # 1. roll metadata (small): mdownload puts the contents of A/CHDK/MFILM/ROLLS into the target
-        out = ses.cmd(f"mdl -overwrite=y {_q('A/' + str(MFILM_DIR))} {_q(str(card / MFILM_DIR))}")
-        if "ERROR" in out and "no matching files" not in out:
-            raise SyncError("CHDKPTP_FAILED", out.strip()[-800:])
+        # 1. roll metadata (small). App 0.7+ lists it in ROLLS/INDEX.TXT, so plain
+        #    file downloads do -- they work while the app runs (Lua commands do
+        #    not). Older apps: stop the script, mdownload the folder.
+        res.app_kept = fetch_listed(ses, card)
+        if not res.app_kept:
+            ses.cmd("killscript", timeout=30)
+            out = ses.cmd(f"mdl -overwrite=y {_q('A/' + str(MFILM_DIR))} {_q(str(card / MFILM_DIR))}")
+            if "ERROR" in out and "no matching files" not in out:
+                raise SyncError("CHDKPTP_FAILED", out.strip()[-800:])
         res.deleted = forget_deleted(card)
         # 2. originals the sealed rolls need
         # a failed file is tried once more at the end; what chdkptp said is
@@ -295,6 +328,14 @@ def sync(store: Store, conn: sqlite3.Connection, *, host: str | None = None, mir
             push_viewer(ses, store, conn, card, res)
         except SyncError as e:                   # the import stands; the viewer gets them next time
             res.failed.append(("viewer", f"{e.code}: {e.detail}"[:300]))
+        # what the app shows after the session (A/CHDK/MFILM/SYNC.TXT)
+        imported = sum(1 for x in res.rolls if x.status == "IMPORTED")
+        note = card / "CHDK" / "MFILM" / "SYNC.TXT"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(f"done {time.strftime('%Y-%m-%d %H:%M')} {imported} new roll(s), "
+                        f"{len(res.downloaded)} file(s), {len(res.viewer_rolls)} to view"
+                        + (f", {len(res.failed)} failed" if res.failed else "") + "\n")
+        ses.cmd(f"u {_q(str(note))} {_q('A/CHDK/MFILM/SYNC.TXT')}")
     finally:
         ses.close()
         res.log = ses.log

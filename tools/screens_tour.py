@@ -37,9 +37,9 @@ def main():
             + K("set") + [snap("develop_confirm")] + K("up", "set") + dev
             + [("wait", 2000), snap("roll_card_developed")] + K("set") + [("wait", 900), snap("viewer")]
             + K("set") + [snap("viewer_no_caption")] + K("menu") + [("wait", 900)]
-            + fz.TO_MENU + K("down", "down", "down", "down", "down", "set") + [snap("diagnostics")]
+            + fz.TO_MENU + K("down", "down", "down", "down", "down", "down", "set") + [snap("diagnostics")]
             + K("menu") + [("wait", 600)] + fz.TO_MENU
-            + K("down", "down", "down", "down", "down", "down", "set") + [snap("quit_confirm")])
+            + K("down", "down", "down", "down", "down", "down", "down", "set") + [snap("quit_confirm")])
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / "A").mkdir()

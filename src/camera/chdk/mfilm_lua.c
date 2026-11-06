@@ -186,3 +186,18 @@ static int luaCB_mf_dev_cancel(lua_State *L)
     mfdc_cancel();
     return 0;
 }
+
+
+/* ------------------------------------------------------------ CHDK's own ALT mode
+ * mf_chdk_alt(): while a script runs CHDK uses its script handler in ALT mode,
+ * where MENU does nothing; this hands ALT mode to CHDK's normal handler, so
+ * MENU opens CHDK's menu the usual way (and its "back" returns to ALT). The
+ * app calls it when the owner presses the ALT button while shooting. */
+extern gui_handler altGuiHandler;
+
+static int luaCB_mf_chdk_alt(lua_State *L)
+{
+    (void) L;
+    gui_set_mode(&altGuiHandler);
+    return 0;
+}

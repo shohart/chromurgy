@@ -9,7 +9,11 @@
 -- yield across pcall fails here as it would on the camera. A scenario is a
 -- list of steps consumed whenever the app waits:
 --   {"key", name}          click a key (seen by the next is_key)
---   {"playback"}           short Playback press: toggles ALT (menu) mode
+--   {"playback"}           the ALT button (owner: DISP): toggles CHDK's ALT mode
+--   {"canon_playback"}     the Playback button: Canon's playback (the app shows its menu)
+--   {"server_sync", text}  a Wi-Fi sync ran and left A/CHDK/MFILM/SYNC.TXT
+--   {"half_press"}         shutter half-press: Canon goes to shooting
+--   {"expect_wifi_menu", b} / {"expect_chdk_alt", b}
 --   {"shoot", opts}        the camera writes a DNG (+ JPG): opts.dir, opts.lag, opts.raw=false, opts.overwrite
 --   {"wait", ms}           let time pass
 --   {"powercut"}           kill the app mid-flight; the next step restarts it on the same card
@@ -271,6 +275,8 @@ function draw_string(x, y, s, fg, bg, scale)
   -- the menu must never be drawn while Canon's information display is on:
   -- Canon's icons collided with it and it flickered (alpha 0.1.0-0.1.7)
   if alt and rec_mode and props[105] == 0 then error("menu text drawn over Canon's information display: " .. s, 2) end
+  if chdk_alt_mode then error("drawn while CHDK owns ALT mode (its menu): " .. s, 2) end
+  if wifi_menu then error("drawn over Canon's Wi-Fi menu: " .. s, 2) end
   -- text on the canvas: each 8x16 cell (scaled) gets the character and colours
   for ci = 1, string.len(s) do
     local cx = x + (ci - 1) * 8 * sc
@@ -387,8 +393,12 @@ end
 function mf_overlay_clear() fbuf = {[0] = {}, [1] = {}}; canvas_reset(); app_drew = true; dlog("C"); return true end
 function get_prop(id) return props[id] end
 function set_prop(id, v) props[id] = v end
+wifi_menu = false                           -- Canon's Wi-Fi menu is up (Up in playback, not in ALT mode)
+chdk_alt_mode = false                       -- the app handed ALT mode to CHDK's own handler
+function mf_chdk_alt() chdk_alt_mode = true; dlog("CHDK_ALT") end
 function click(k)
   if k == "display" and rec_mode then props[105] = (props[105] + 1) % disp_modes; transition_until = clock + 600 end
+  if k == "up" and not rec_mode and not alt then wifi_menu = true; dlog("WIFI_MENU") end
   coroutine.yield("sleep", 10)
 end
 -- CHDK config (new ids, CONF_OSD 2000 + osd id); an id below 1000 is an OLD id
@@ -455,6 +465,8 @@ local function new_app()
   if conf[2120] == 1 then splash_at = clock + 2500 end   -- CHDK's splash ends and is erased
   package.loaded["mfroll"] = nil
   alt = true                                   -- CHDK starts scripts in ALT mode
+  chdk_alt_mode = false                        -- ... with its script handler
+  wifi_menu = false                            -- a (re)start: no Canon Wi-Fi screen up
   return coroutine.create(chunk)
 end
 
@@ -520,13 +532,24 @@ while true do
         i = i + 1
         local k = s[1]
         if k == "key" and kind ~= "wait" then        -- keys reach the app only when it waits for one
-          if not alt and fuzz then k = "-"            -- shooting: the key went to Canon
+          if (not alt or chdk_alt_mode or wifi_menu) and fuzz then k = "-"   -- the key went to Canon / CHDK
           else i = i - 1; k = "-" end
         end
         if k == "-" then
         elseif k == "key" then pressed_key = s[2]
-        elseif k == "playback" then alt = not alt
-        elseif k == "open_menu" then alt = true            -- Playback pressed only if the menu is not up
+        elseif k == "playback" then                  -- the ALT button (owner: DISP)
+          alt = not alt
+          if not alt then chdk_alt_mode = false end
+        elseif k == "open_menu" then                   -- the Playback button, if the M-Film menu is not up
+          if not alt then rec_mode = false; chdk_alt_mode = false end
+        elseif k == "server_sync" then               -- a Wi-Fi sync ran: the server leaves SYNC.TXT
+          local f = assert(io.open("A/CHDK/MFILM/SYNC.TXT", "wb")); f:write(s[2] .. "\n"); f:close()
+        elseif k == "half_press" then                -- Canon goes back to shooting
+          if not alt then rec_mode = true; wifi_menu = false end
+        elseif k == "expect_wifi_menu" then
+          if wifi_menu ~= s[2] then log("FAIL: step " .. (i - 1) .. ": Wi-Fi menu " .. tostring(wifi_menu)) os.exit(1) end
+        elseif k == "expect_chdk_alt" then
+          if chdk_alt_mode ~= s[2] then log("FAIL: step " .. (i - 1) .. ": CHDK ALT " .. tostring(chdk_alt_mode)) os.exit(1) end
         elseif k == "shoot" then step_shoot(s[2])
         elseif k == "wait" then pending = s[2]
         elseif k == "setdir" then image_dir = s[2]
@@ -572,7 +595,8 @@ while true do
           end
         elseif k == "stock_chdk" then
           mf_show, mf_overlay_clear, mf_viewport, mf_dev_start, mf_overlay_mirror = nil, nil, nil, nil, nil
-        elseif k == "canon_playback" then rec_mode = false     -- the owner opens Canon's gallery
+        elseif k == "canon_playback" then           -- the Playback button: Canon's gallery
+          if not alt then rec_mode = false end      -- in ALT mode CHDK keeps the key from Canon
         elseif k == "expect_shown" then
           local last = shown_frames[#shown_frames]
           if not last or not string.find(last, s[2]) then

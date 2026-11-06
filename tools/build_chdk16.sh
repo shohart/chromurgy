@@ -16,7 +16,7 @@ rm -rf "$b" && cp -a "$src" "$b" && mkdir -p "$b/bin"
 lua=$b/modules/luascript.c
 grep -q "^static const luaL_Reg chdk_funcs\[\] = {" "$lua" || { echo "luascript.c layout changed" >&2; exit 1; }
 sed -i "s|^static const luaL_Reg chdk_funcs\[\] = {|#include \"$root/src/camera/chdk/mfilm_lua.c\"\n\n&|" "$lua"
-sed -i "s|^    FUNC(peek)$|    FUNC(peek)\n    FUNC(mf_viewport)\n    FUNC(mf_show)\n    FUNC(mf_overlay_clear)\n    FUNC(mf_overlay_mirror)\n    FUNC(mf_dev_start)\n    FUNC(mf_dev_status)\n    FUNC(mf_dev_cancel)|" "$lua"
+sed -i "s|^    FUNC(peek)$|    FUNC(peek)\n    FUNC(mf_viewport)\n    FUNC(mf_show)\n    FUNC(mf_overlay_clear)\n    FUNC(mf_overlay_mirror)\n    FUNC(mf_dev_start)\n    FUNC(mf_dev_status)\n    FUNC(mf_dev_cancel)\n    FUNC(mf_chdk_alt)|" "$lua"
 grep -q "FUNC(mf_show)" "$lua" || { echo "patch failed" >&2; exit 1; }
 # NOTE: do not touch _liblua's can_unload. CHDK calls can_unload on EVERY tick
 # and unloads the module as soon as it returns true (module_tick_unloader);
