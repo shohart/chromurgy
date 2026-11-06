@@ -517,7 +517,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         except ValueError:
             raise ApiError(400, "BAD_REQUEST", "JSON body required") from None
         try:
-            jid, created = jobs.create_job(c, bundle(), body)
+            jid, created = jobs.create_job(c, bundle(), body, cfg.photoprism.web_folder)
         except recipe2.RecipeError as e:
             raise ApiError(422, e.code, e.detail) from None
         except jobs.JobError as e:

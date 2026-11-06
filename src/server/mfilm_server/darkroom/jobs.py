@@ -42,7 +42,8 @@ def _job_schema() -> dict:
     return doc
 
 
-def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict) -> tuple[str, bool]:
+def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict,
+               web_folder: str = "M-Film/Developed") -> tuple[str, bool]:
     """Returns (job_id, created). Raises JobError / recipe2.RecipeError."""
     try:
         jsonschema.validate(request, _job_schema())
@@ -52,8 +53,6 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict) -> 
     if src["kind"] not in SOURCE_KINDS:
         raise JobError("SOURCE_KIND_UNAVAILABLE", f"{src['kind']} is not available yet")
     out = request["output"]
-    if out.get("publish"):
-        raise JobError("PUBLISH_UNAVAILABLE", "publishing to PhotoPrism is not available yet; use publish=false")
     recipe_in = copy.deepcopy(request["recipe"])
     if "quality" in out:
         recipe_in["render"]["quality"] = out["quality"]
@@ -83,10 +82,12 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict) -> 
                 raise JobError("IDEMPOTENCY_CONFLICT", "this key was used for a different request", 409)
             return have["id"], False
     jid = uuid.uuid4().hex
+    publish = publish_settings(out, jid, web_folder) if out.get("publish") else None
     conn.execute("BEGIN IMMEDIATE")
     try:
-        conn.execute("INSERT INTO darkroom_jobs(id, idempotency_key, request, recipe, recipe_hash) VALUES (?,?,?,?,?)",
-                     (jid, key, body, json.dumps(recipe, sort_keys=True), rhash))
+        conn.execute("INSERT INTO darkroom_jobs(id, idempotency_key, request, recipe, recipe_hash, publish) VALUES (?,?,?,?,?,?)",
+                     (jid, key, body, json.dumps(recipe, sort_keys=True), rhash,
+                      json.dumps(publish, sort_keys=True) if publish else None))
         for i, r in enumerate(rows, 1):
             conn.execute("INSERT INTO darkroom_items(job_id, source_id, source_sha256, ordinal, state) "
                          "VALUES (?,?,?,?, 'QUEUED')", (jid, r["id"], r["sha256"], i))
@@ -97,13 +98,37 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict) -> 
     return jid, True
 
 
+def publish_settings(out: dict, job_id: str, web_folder: str) -> dict:
+    """Validated destination of a publishing job. The folder is relative to the PhotoPrism originals
+    (never absolute, never '..'); a folder and an album are independent choices (docs/web/29)."""
+    import datetime as dt
+    given = (out.get("photoprism_folder") or "").strip()
+    if given.startswith(("/", "~")):
+        raise JobError("UNSAFE_PATH", f"photoprism_folder {given!r}: must be relative to the PhotoPrism originals")
+    folder = given.rstrip("/") or f"{web_folder}/{dt.date.today().year}/{job_id[:8]}"
+    parts = folder.split("/")
+    if "\0" in folder or "\\" in folder or any(p in ("", ".", "..") or p.startswith(".") for p in parts):
+        raise JobError("UNSAFE_PATH", f"photoprism_folder {folder!r}")
+    if out.get("photoprism_album_uid") and out.get("create_album_name"):
+        raise JobError("INVALID_JOB", "choose an existing album or a new album name, not both")
+    name = (out.get("create_album_name") or "").strip()
+    if len(name) > 200:
+        raise JobError("INVALID_JOB", "album name too long")
+    return {"folder": folder, "album_uid": out.get("photoprism_album_uid") or None, "create_album_name": name or None}
+
+
+ACTIVE_PUB = ("STAGED", "PUBLISHING", "INDEXING", "ALBUM_LINKING")
+
+
 def job_state(counts: dict[str, int]) -> str:
     n = sum(counts.values())
     if not n:
         return "EMPTY"
-    done = counts.get("COMPLETE", 0) + counts.get("STAGED", 0)
+    done = counts.get("COMPLETE", 0)
     if any(counts.get(s) for s in ACTIVE):
         return "RUNNING" if (n - counts.get("QUEUED", 0)) else "QUEUED"
+    if any(counts.get(s) for s in ACTIVE_PUB):
+        return "PUBLISHING"
     if counts.get("CANCELLED", 0) and counts["CANCELLED"] + done == n:
         return "CANCELLED" if not done else "PARTIAL"
     if counts.get("FAILED", 0) == n:
@@ -123,13 +148,15 @@ def job_view(conn: sqlite3.Connection, job_id: str, *, items: bool = True) -> di
     view = {"job_id": j["id"], "state": job_state(counts), "counts": counts, "total": sum(counts.values()),
             "cancel_requested": bool(j["cancel_requested"]), "created_at": j["created_at"],
             "recipe_hash": j["recipe_hash"], "film": recipe["film"]["id"], "camera_look": recipe["camera_look"]["id"],
-            "idempotency_key": j["idempotency_key"]}
+            "idempotency_key": j["idempotency_key"], "publish": json.loads(j["publish"]) if j["publish"] else None,
+            "album_uid": j["album_uid"]}
     if items:
         view["recipe"] = recipe
         view["items"] = [{
             "item_id": r["id"], "asset_id": r["source_id"], "filename": r["filename"], "ordinal": r["ordinal"],
             "state": r["state"], "attempt": r["attempt"], "error_code": r["error_code"],
-            "error_detail": r["error_detail"],
+            "error_detail": r["error_detail"], "published_path": r["pub_path"], "photoprism_photo_uid": r["pp_photo_uid"],
+            "publish_note": r["pub_note"],
             "render": None if not r["render_id"] else {
                 "render_id": r["render_id"], "width": r["width"], "height": r["height"], "bytes": r["bytes"],
                 "sha256": r["rsha"]}}
@@ -237,8 +264,9 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
         rid = recipe_render_id(src["sha256"], v1, bundle.sha256, seed)
         have = conn.execute("SELECT * FROM web_renders WHERE id=?", (rid,)).fetchone()
         if have and (store.root / have["path"]).is_file():
-            _set(conn, iid, "COMPLETE", render_id=rid, finished_at=None)
-            conn.execute(f"UPDATE darkroom_items SET finished_at={NOW} WHERE id=?", (iid,))
+            done = "STAGED" if job["publish"] else "COMPLETE"
+            _set(conn, iid, done, render_id=rid, finished_at=None)
+            conn.execute(f"UPDATE darkroom_items SET finished_at={NOW if done == 'COMPLETE' else 'NULL'} WHERE id=?", (iid,))
             return iid, rid, "COMPLETE", None, "reused"
         if sha256_file(path)[0] != src["sha256"]:
             raise DevelopError("SOURCE_CHANGED", "the archived original no longer matches its hash")
@@ -272,8 +300,9 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
                      " height) VALUES (?,?,?,?,?,?,?,?,?)",
                      (rid, src["id"], job["recipe_hash"], job["recipe"], str(dest.relative_to(store.root)), sha, nbytes,
                       prov["output_width"], prov["output_height"]))
-        _set(conn, iid, "COMPLETE", render_id=rid)
-        conn.execute(f"UPDATE darkroom_items SET finished_at={NOW} WHERE id=?", (iid,))
+        done = "STAGED" if job["publish"] else "COMPLETE"
+        _set(conn, iid, done, render_id=rid)
+        conn.execute(f"UPDATE darkroom_items SET finished_at={NOW if done == 'COMPLETE' else 'NULL'} WHERE id=?", (iid,))
         conn.execute("COMMIT")
         return iid, rid, "COMPLETE", None, None
     except BundleUnavailable as e:

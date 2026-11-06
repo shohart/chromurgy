@@ -218,6 +218,15 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX darkroom_items_state ON darkroom_items(state, id)
     """,
+    # 7: publication of web renders (docs/web/32): per item destination state, per job album
+    """
+    ALTER TABLE darkroom_jobs ADD COLUMN publish TEXT;
+    ALTER TABLE darkroom_jobs ADD COLUMN album_uid TEXT;
+    ALTER TABLE darkroom_items ADD COLUMN pub_path TEXT;
+    ALTER TABLE darkroom_items ADD COLUMN pp_photo_uid TEXT;
+    ALTER TABLE darkroom_items ADD COLUMN pub_attempts INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE darkroom_items ADD COLUMN pub_note TEXT
+    """,
 ]
 
 

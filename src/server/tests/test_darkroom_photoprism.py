@@ -134,3 +134,107 @@ def test_original_changed_after_selection_fails_the_item(pp, store):
     v = pp.get(f"{dapp.API}/jobs/{jid}").json()
     assert v["state"] == "FAILED" and v["items"][0]["error_code"] == "SOURCE_CHANGED"
     assert renders_on_disk(store) == []
+
+
+# ---- publishing -------------------------------------------------------------------------------------
+def publish_job(pp, store, **out):
+    library(pp)
+    pp.post(f"{P}/select", headers=H, json={"photo_uids": ["p1"], "source_kind": "album", "source_uid": "al1"})
+    body = job_body(["pp_fp1r"], recipe(width=800, height=600), source={
+        "kind": "photoprism_album", "source_uid": "al1", "assets": [{"asset_id": "pp_fp1r"}]},
+        output={"format": "jpeg", "publish": True, **out})
+    r = pp.post(f"{dapp.API}/jobs", headers=H, json=body)
+    assert r.status_code == 202, r.text
+    return r.json()["job_id"]
+
+
+def run_publish(pp, store, runner=None):
+    """What the worker does after developing; the fake stands in for PhotoPrism's API and indexer."""
+    import subprocess
+
+    from mfilm_server.darkroom import photoprism as ppm
+    from mfilm_server.darkroom import publish
+    c = db.connect(store.db_path)
+    cfg = config_mod.Config().photoprism
+    cfg.export_dir = pp.originals
+    cfg.index_template = ["index", "{path}"]
+    seen = []
+
+    def fake_run(argv, **kw):
+        seen.append(argv)
+        if runner:
+            runner(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    try:
+        return publish.publish_pending(c, store, cfg, ppm.Client(cfg, transport=pp.fake), run=fake_run), seen
+    finally:
+        c.close()
+
+
+def index_into_fake(pp):
+    """The indexer: files appear as photos once 'indexed'."""
+    def run(argv):
+        folder = argv[-1]
+        for f in (pp.originals / folder).glob("*.jpg"):
+            pp.fake.photos[f"new-{f.stem}"] = {"UID": f"new-{f.stem}", "Type": "image", "Path": folder, "Name": f.stem, "Files": []}
+    return run
+
+
+def test_publish_to_folder_and_new_album_in_stages(pp, store):
+    jid = publish_job(pp, store, create_album_name="Autumn — M-Film", photoprism_folder="M-Film/Developed/test")
+    drain(store)
+    v = pp.get(f"{dapp.API}/jobs/{jid}").json()
+    # the worker's own pass already copied the file; this host has no PhotoPrism API configured, so it waits
+    assert v["state"] == "PUBLISHING" and v["items"][0]["state"] == "INDEXING"
+    s, _ = run_publish(pp, store)                            # API reachable, indexer has not run: photo not found yet
+    v = pp.get(f"{dapp.API}/jobs/{jid}").json()
+    it = v["items"][0]
+    assert s["waiting"] == 1 and it["state"] == "INDEXING" and "not indexed" in it["publish_note"]
+    out = pp.originals / it["published_path"]
+    assert out.is_file() and out.name.startswith("IMG_1_portra400_") and not list(out.parent.glob(".*"))
+    assert not pp.fake.albums.get("a2")
+    s, seen = run_publish(pp, store, index_into_fake(pp))
+    assert s["completed"] == 1 and seen == [["index", "M-Film/Developed/test"]]
+    v = pp.get(f"{dapp.API}/jobs/{jid}").json()
+    assert v["state"] == "COMPLETE" and v["items"][0]["photoprism_photo_uid"].startswith("new-IMG_1_portra400_")
+    new_album = [a for a in pp.fake.albums.values() if a["Title"] == "Autumn — M-Film"]
+    assert len(new_album) == 1 and new_album[0]["members"] == [v["items"][0]["photoprism_photo_uid"]]
+    assert v["album_uid"] == new_album[0]["UID"]
+    # source RAW and its album are untouched
+    assert pp.fake.albums["al1"]["members"] == ["p1", "p2"]
+    assert sorted(p.name for p in (pp.originals / "trip").iterdir()) == sorted(["IMG_1.DNG", "IMG_2.jpg", "IMG_3.DNG", "IMG_4.CR2"])
+    # running the stage again changes nothing (idempotent): no second album, no second file
+    run_publish(pp, store)
+    assert len([a for a in pp.fake.albums.values() if a["Title"] == "Autumn — M-Film"]) == 1
+    assert len(list(out.parent.glob("*.jpg"))) == 1
+
+
+def test_publish_into_existing_album_same_as_source_album(pp, store):
+    jid = publish_job(pp, store, photoprism_album_uid="al1")
+    drain(store)
+    run_publish(pp, store, index_into_fake(pp))
+    v = pp.get(f"{dapp.API}/jobs/{jid}").json()
+    uid = v["items"][0]["photoprism_photo_uid"]
+    assert v["state"] == "COMPLETE" and pp.fake.albums["al1"]["members"] == ["p1", "p2", uid]   # appended, not replaced
+    assert v["publish"]["folder"].startswith("M-Film/Developed/")                              # default managed folder
+    assert (pp.originals / "trip" / "IMG_1.DNG").is_file()
+
+
+def test_unsafe_destination_is_refused_and_photoprism_outage_keeps_the_render(pp, store):
+    library(pp)
+    pp.post(f"{P}/select", headers=H, json={"photo_uids": ["p1"], "source_kind": "album", "source_uid": "al1"})
+    for bad in ("../outside", "/abs/path", "a/../../b", ".hidden/x"):
+        r = pp.post(f"{dapp.API}/jobs", headers=H, json=job_body(["pp_fp1r"], recipe(), source={
+            "kind": "photoprism_album", "assets": [{"asset_id": "pp_fp1r"}]},
+            output={"format": "jpeg", "publish": True, "photoprism_folder": bad}))
+        assert r.status_code == 422 and r.json()["error_code"] == "UNSAFE_PATH", (bad, r.text)
+    jid = publish_job(pp, store, photoprism_folder="M-Film/Developed/out")
+    drain(store)
+    pp.fake.offline = True
+    s, _ = run_publish(pp, store, index_into_fake(pp))
+    it = pp.get(f"{dapp.API}/jobs/{jid}").json()["items"][0]
+    assert it["state"] == "INDEXING" and "OFFLINE" in it["publish_note"] and it["render"]       # render safe, retry pending
+    pp.fake.offline = False
+    s, _ = run_publish(pp, store)
+    assert pp.get(f"{dapp.API}/jobs/{jid}").json()["state"] == "COMPLETE"                      # recovered without re-rendering
+    assert len(renders_on_disk(store)) == 1

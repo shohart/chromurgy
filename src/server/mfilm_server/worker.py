@@ -326,9 +326,26 @@ def run(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None = None, 
         lock.close()
         raise WorkerBusy("another worker pass is running on this data directory") from None
     try:
-        return _run_locked(conn, store, max_jobs=max_jobs, jobs=jobs)
+        res = _run_locked(conn, store, max_jobs=max_jobs, jobs=jobs)
+        _publish_web(conn, store)
+        return res
     finally:
         lock.close()
+
+
+def _publish_web(conn: sqlite3.Connection, store: Store) -> None:
+    """Web Darkroom publication stage (copy, index, album link) after the developing."""
+    import sys
+
+    from . import config as config_mod
+    from .darkroom import publish
+    try:
+        cfg = config_mod.load(None)
+        if cfg.photoprism.export_dir or conn.execute(
+                "SELECT 1 FROM darkroom_jobs WHERE publish IS NOT NULL LIMIT 1").fetchone():
+            publish.publish_pending(conn, store, cfg.photoprism)
+    except Exception as e:      # noqa: BLE001 - publication trouble must never stop camera work
+        print(f"web publication pass failed: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 def _run_locked(conn: sqlite3.Connection, store: Store, *, max_jobs: int | None, jobs: int) -> list[JobResult]:

@@ -108,8 +108,9 @@ def test_job_validation(logged):
         (job_body([]), 422, "INVALID_JOB"),
         (job_body(["nope"]), 404, "UNKNOWN_ASSET"),
         (job_body([src, src]), 422, "DUPLICATE_ASSET"),
-        (job_body([src], source={"kind": "photoprism_album", "assets": [{"asset_id": src}]}), 422, "SOURCE_KIND_UNAVAILABLE"),
-        (job_body([src], output={"format": "jpeg", "publish": True}), 422, "PUBLISH_UNAVAILABLE"),
+        (job_body([src], source={"kind": "mfilm_roll", "assets": [{"asset_id": src}]}), 422, "SOURCE_KIND_UNAVAILABLE"),
+        (job_body([src], output={"format": "jpeg", "publish": True, "photoprism_album_uid": "a",
+                                 "create_album_name": "b"}), 422, "INVALID_JOB"),
     ]
     for body, status, code in cases:
         r = logged.post(f"{dapp.API}/jobs", headers=H, json=body)
