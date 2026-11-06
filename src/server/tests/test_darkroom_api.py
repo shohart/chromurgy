@@ -216,3 +216,10 @@ def test_grid_thumbnail_comes_from_the_raw_and_expired_uploads_are_dropped(logge
     st = logged.get(f"{dapp.API}/sources/uploads/{j['upload_id']}").json()
     assert st["state"] == "ABORTED" and st["error_code"] == "EXPIRED"
     assert not (store.root / "incoming" / f"web-{j['upload_id']}.part").exists()
+
+
+def test_hidden_attribute_cannot_be_overridden_by_layout_rules(client):
+    """Regression: `.layer { display: grid }` kept an emptied, 'hidden' crop layer on top of the stage, which then
+    swallowed the pointer and froze the before/after wipe. The stylesheet must keep [hidden] absolute."""
+    css = client.get("/darkroom/static/darkroom.css").text
+    assert "[hidden]{display:none!important}" in css.replace(" ", "")

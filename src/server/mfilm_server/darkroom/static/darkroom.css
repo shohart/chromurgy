@@ -5,6 +5,7 @@
   --mono:ui-monospace,"SF Mono","Cascadia Mono","DejaVu Sans Mono",Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}      /* author display rules (grid, flex) must never beat the hidden attribute */
 html{background:var(--bg);color:var(--ink);font:16px/1.45 var(--serif)}
 body{margin:0;min-height:100vh;
   background:radial-gradient(1200px 500px at 85% -10%,rgba(255,74,43,.13),transparent 60%),
@@ -106,3 +107,6 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 #cropbtn[aria-pressed=true]{border-color:var(--safe);color:var(--safe2)}
 
 .cropwrap{margin:12px}
+
+#cropLayer:empty{pointer-events:none}
+.stage .cut{z-index:3}
