@@ -110,3 +110,6 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 
 #cropLayer:empty{pointer-events:none}
 .stage .cut{z-index:3}
+
+.adjust{border:1px solid var(--line);background:var(--panel2);padding:.9rem 1rem;margin-bottom:1rem;border-radius:2px}
+.val{font:.72rem var(--mono);color:var(--safe2)}

@@ -206,7 +206,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
     if recipe.get("profile_bundle_hash", "").lower() != bundle.sha256:
         raise DevelopError("PROFILE_BUNDLE_MISMATCH",
                            f"recipe wants {recipe.get('profile_bundle_hash')}, available {bundle.sha256}")
-    if profile not in bundle.keys:
+    if profile not in bundle.keys and profile != "none":     # "none": the Web Darkroom's switch-off for the film stage
         raise DevelopError("UNSUPPORTED_PROFILE", profile)
     if recipe.get("grain_seed_mode", "derived-per-frame") != "derived-per-frame":
         raise DevelopError("UNSUPPORTED_RECIPE", f"grain_seed_mode={recipe.get('grain_seed_mode')}")
@@ -227,15 +227,23 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
             lin = cropping.apply_crop(lin, recipe["crop"])
         except cropping.CropError as e:
             raise DevelopError("INVALID_CROP", str(e)) from None
+    if recipe.get("wb_profile"):                  # Web Darkroom white-balance profile (gains in sRGB-linear)
+        from .darkroom import wb
+        lin = wb.apply(lin, recipe["wb_profile"])
     if recipe.get("creative"):                    # Web Darkroom optical effects + Camera Look, before the film stage
         from .darkroom import creative
         lin = creative.apply_creative(lin, recipe["creative"])
     lens_info = {**lens_info, "orientation_flip": flip}
     look = recipe.get("look_controls", {})
-    img, scanner_ev = bundle.develop(profile, lin, seed=seed, grain_scale=look.get("grain_scale", 1.0),
-                                     halation_scale=look.get("halation_scale", 1.0),
-                                     softness_scale=look.get("softness_scale", 1.0),
-                                     exposure_ev=recipe.get("exposure_compensation_ev", 0.0))
+    if recipe.get("tone") or profile == "none":    # Web Darkroom: film off / development strength / contrast / filters
+        from .darkroom import tone
+        img, scanner_ev = tone.render_display(lin, recipe, bundle, seed)
+        scanner_ev = scanner_ev if scanner_ev is not None else 0.0
+    else:
+        img, scanner_ev = bundle.develop(profile, lin, seed=seed, grain_scale=look.get("grain_scale", 1.0),
+                                         halation_scale=look.get("halation_scale", 1.0),
+                                         softness_scale=look.get("softness_scale", 1.0),
+                                         exposure_ev=recipe.get("exposure_compensation_ev", 0.0))
     spec = recipe.get("output_spec", {})
     if spec.get("format", "image/jpeg") != "image/jpeg" or spec.get("colorspace", "sRGB") != "sRGB":
         raise DevelopError("UNSUPPORTED_RECIPE", "only image/jpeg sRGB output")
@@ -254,7 +262,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
         "recipe_schema_version": recipe.get("schema_version", 1), "recipe": recipe, "grain_seed": f"{seed:016x}",
         "raw_adapter_version": RAW_ADAPTER_VERSION, "demosaic_mode": recipe.get("demosaic_mode", "reference"),
         "wb_mode": recipe.get("white_balance_mode", "as-shot"), "scanner_ev": round(scanner_ev, 4),
-        "lens_correction": lens_info, "creative": recipe.get("creative"), "crop": recipe.get("crop"),
+        "lens_correction": lens_info, "creative": recipe.get("creative"), "crop": recipe.get("crop"), "tone": recipe.get("tone"), "wb_profile": recipe.get("wb_profile"),
         "source_width": int(lin.shape[1]), "source_height": int(lin.shape[0]),
         "output_width": out_w, "output_height": out_h, "jpeg_quality": int(spec.get("jpeg_quality", 92)),
         "developed_by": "linux", "development_timestamp": t1.isoformat(timespec="seconds"),

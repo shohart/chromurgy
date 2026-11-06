@@ -80,6 +80,9 @@ def build(bundle: core.Bundle) -> dict:
         "optical_effects": [{"id": i, "name": n, "supported": i in SUPPORTED_EFFECTS, "defaults": _FX[i]}
                             for i, n in OPTICAL_EFFECTS],
         "effect_order": creative.EFFECT_ORDER,
+        "film_none": {"id": "none", "name": "None (no film emulation)"},
+        "tone": {"brightness_ev": [-3, 3, 0], "contrast": [-1, 1, 0], "develop_strength": [0, 1, 1],
+                 "filters": ["none", "grayscale", "sepia", "silver"], "filter_strength": [0, 1, 1]},
         "halation_policies": ["film", "optical", "stacked", "disabled"],
         "composites": COMPOSITES,
         "optical_presets": [{"id": "none", "name": "No optical effect", "supported": True},

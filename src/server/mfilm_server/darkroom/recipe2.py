@@ -35,6 +35,8 @@ def _norm(s: str) -> str:
 
 
 def resolve_film(film_id: str, bundle: core.Bundle) -> str:
+    if film_id == "none":
+        return "none"                                 # no film emulation at all (Darkroom: every stage can be off)
     """Bundle key, or a spec-style alias ('kodak-portra-400' -> 'portra400')."""
     if film_id in bundle.keys:
         return film_id
@@ -48,7 +50,7 @@ def resolve_film(film_id: str, bundle: core.Bundle) -> str:
     raise RecipeError("UNSUPPORTED_PROFILE", f"film {film_id!r} is not in bundle {bundle.sha256[:12]}")
 
 
-def normalize(recipe: dict, bundle: core.Bundle) -> dict:
+def normalize(recipe: dict, bundle: core.Bundle, wb_lookup=None) -> dict:
     """Validated, canonical copy: film resolved to its key, bundle hash pinned."""
     try:
         jsonschema.validate(recipe, _schema())
@@ -72,6 +74,9 @@ def normalize(recipe: dict, bundle: core.Bundle) -> dict:
     r["film"]["bundle_hash"] = bundle.sha256
     for k in ("grain_scale", "halation_scale", "softness_scale"):
         r["film"].setdefault(k, 1.0)
+    if r["film"]["id"] == "none":
+        for k in ("grain_scale", "halation_scale", "softness_scale"):
+            r["film"][k] = 1.0                       # nothing to scale: one identity for "no film"
     r["optical"] = _optical(r["optical"])
     wb = (r.get("extensions") or {}).get("white_balance", "daylight")
     if wb not in ("daylight", "as-shot"):
@@ -80,6 +85,8 @@ def normalize(recipe: dict, bundle: core.Bundle) -> dict:
     if rd["output_format"] != "jpeg" or rd["output_color_space"] != "srgb":
         raise RecipeError("UNSUPPORTED_OUTPUT", f"{rd['output_format']}/{rd['output_color_space']}: only jpeg/srgb")
     ext = r.get("extensions") or {}
+    _tone(ext)
+    _wb_profile(ext, wb_lookup)
     if "crop" in ext:
         try:
             canon = cropping.normalize_crop(ext["crop"])
@@ -89,12 +96,74 @@ def normalize(recipe: dict, bundle: core.Bundle) -> dict:
             ext["crop"] = canon
         else:
             ext.pop("crop")                                  # the whole frame is no crop: one identity for it
+    if ext:
         r["extensions"] = ext
-        if not ext:
-            r.pop("extensions")
+    else:
+        r.pop("extensions", None)                            # an empty block is no block: one identity for "nothing set"
     if bool(rd.get("width")) != bool(rd.get("height")):
         raise RecipeError("INVALID_RECIPE", "render.width and render.height go together")
     return r
+
+
+TONE_LIMITS = {"brightness_ev": (-3.0, 3.0, 0.0), "contrast": (-1.0, 1.0, 0.0), "develop_strength": (0.0, 1.0, 1.0),
+               "filter_strength": (0.0, 1.0, 1.0)}
+
+
+def _tone(ext: dict) -> None:
+    """extensions.tone -> canonical (defaults dropped, 3 decimals); an all-default tone is no tone."""
+    if "tone" not in ext:
+        return
+    t = ext["tone"]
+    if not isinstance(t, dict):
+        raise RecipeError("INVALID_RECIPE", "extensions.tone must be an object")
+    out: dict = {}
+    for k, v in t.items():
+        if k == "filter":
+            if v not in ("none", "grayscale", "sepia", "silver"):
+                raise RecipeError("INVALID_RECIPE", f"tone.filter {v!r}: none, grayscale, sepia or silver")
+            if v != "none":
+                out["filter"] = v
+        elif k in TONE_LIMITS:
+            lo, hi, default = TONE_LIMITS[k]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+                raise RecipeError("INVALID_RECIPE", f"tone.{k}={v!r} outside {lo}..{hi}")
+            if round(float(v), 3) != default:
+                out[k] = round(float(v), 3)
+        else:
+            raise RecipeError("INVALID_RECIPE", f"unknown tone setting {k!r}")
+    if out.get("filter") is None:
+        out.pop("filter_strength", None)             # a strength without a filter changes nothing
+    if out:
+        ext["tone"] = out
+    else:
+        ext.pop("tone")
+
+
+def _wb_profile(ext: dict, lookup) -> None:
+    """extensions.wb_profile: an id (built-in or imported) or a profile object -> the canonical embedded profile,
+    so a later edit or deletion of the profile can never change what an old recipe means."""
+    if "wb_profile" not in ext:
+        return
+    from . import wb
+    p = ext["wb_profile"]
+    try:
+        if p in (None, "", "none"):
+            ext.pop("wb_profile")
+            return
+        if isinstance(p, str):
+            found = (lookup or wb.builtin)(p)
+            if not found:
+                raise RecipeError("UNKNOWN_WB_PROFILE", p)
+            ext["wb_profile"] = wb.canonical(found)
+        elif isinstance(p, dict):
+            ext["wb_profile"] = wb.canonical(wb.make_profile(p.get("name") or "custom", kelvin=p.get("kelvin"),
+                                                             tint=p.get("tint", 0) or 0, gains=p.get("gains"), pid=str(p.get("id") or "custom")))
+        else:
+            raise RecipeError("INVALID_RECIPE", "extensions.wb_profile must be an id or an object")
+    except wb.WBError as e:
+        raise RecipeError("INVALID_WB_PROFILE", str(e)) from None
+    if abs(max(ext["wb_profile"]["gains"]) - 1) < 1e-4 and abs(min(ext["wb_profile"]["gains"]) - 1) < 1e-4:
+        ext.pop("wb_profile")                        # identity gains: the same picture as no profile
 
 
 def _optical(opt: dict) -> dict:
@@ -143,7 +212,12 @@ def recipe_hash(r: dict, *, look_only: bool = False) -> str:
     look_only drops the render block: the creative decisions without size/quality, which is
     what the grain seed derives from, so a preview and the full render share one grain pattern."""
     drop = {"preset_id", "render"} if look_only else {"preset_id"}
-    return hashlib.sha256(canonical_json({k: v for k, v in r.items() if k not in drop})).hexdigest()
+    body = {k: v for k, v in r.items() if k not in drop}
+    if look_only and body.get("extensions"):
+        # brightness / contrast / strength / filter / white balance must not reshuffle the grain while a slider moves
+        ext = {k: v for k, v in body["extensions"].items() if k not in ("tone", "wb_profile")}
+        body = {**body, "extensions": ext} if ext else {k: v for k, v in body.items() if k != "extensions"}
+    return hashlib.sha256(canonical_json(body)).hexdigest()
 
 
 def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = None) -> dict:
@@ -169,7 +243,16 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
             "output_spec": {"format": "image/jpeg", "colorspace": "sRGB", "width": width, "height": height,
                             "jpeg_quality": quality if quality is not None else rd["quality"],
                             "orientation_policy": "normalize-pixels"}}
-    crop = (r.get("extensions") or {}).get("crop")
+    ext = r.get("extensions") or {}
+    tone = ext.get("tone") or {}
+    if "brightness_ev" in tone:
+        v1["exposure_compensation_ev"] = tone["brightness_ev"]
+    rest = {k: v for k, v in tone.items() if k != "brightness_ev"}
+    if rest:
+        v1["tone"] = rest                         # absent at defaults: those render ids stay as before
+    if ext.get("wb_profile"):
+        v1["wb_profile"] = ext["wb_profile"]
+    crop = ext.get("crop")
     if crop:
         v1["crop"] = crop                         # absent when uncropped: those render ids stay as before
     if creative:                                  # absent for neutral/no-effect: those render ids stay as before

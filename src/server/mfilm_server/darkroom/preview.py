@@ -26,7 +26,7 @@ import numpy as np
 
 from .. import core, develop
 from ..ids import canonical_json
-from . import creative, cropping, engine
+from . import creative, cropping, engine, tone, wb
 
 NORM_EDGE = 2048
 PREVIEW_DEMOSAIC = "fast"
@@ -104,15 +104,14 @@ def _render(job: dict) -> dict:
         info = {"scanner_ev": None}
     else:
         v1 = job["v1"]
+        if v1.get("wb_profile"):
+            lin = wb.apply(lin, v1["wb_profile"])
         if v1.get("creative"):
             lin = creative.apply_creative(lin, v1["creative"])
         bundle = engine.current_bundle()
-        look = v1["look_controls"]
         seed = develop.recipe_seed(v1, *job["seed_ids"])
-        img, ev = bundle.develop(v1["film_profile_id"], lin, seed=seed, grain_scale=look["grain_scale"],
-                                 halation_scale=look["halation_scale"], softness_scale=look["softness_scale"],
-                                 exposure_ev=v1["exposure_compensation_ev"])
-        info = {"scanner_ev": round(ev, 4)}
+        img, ev = tone.render_display(lin, v1, bundle, seed)
+        info = {"scanner_ev": None if ev is None else round(ev, 4)}
     develop.write_jpeg(img, out, PREVIEW_QUALITY, f"M-Film preview {job['kind']} {job['key'][:16]} (not export quality)")
     meta = {"width": int(img.shape[1]), "height": int(img.shape[0]), "elapsed_s": round(time.monotonic() - t0, 3),
             "recipe_hash": job["recipe_hash"], "kind": job["kind"], "max_edge": job["max_edge"], **info}

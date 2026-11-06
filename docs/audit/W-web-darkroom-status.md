@@ -61,6 +61,13 @@ larger than the kept pixels" (never upscaled). Tested: normalization rules, same
 output (73.3 % x 65.1 % of 4000x3000 -> 2931x1954), dedup of equal crops, publish-later keeps the framing; driven with a real mouse in the browser.
 Not included: straighten/rotate by an angle, lens-perspective correction.
 
+## Adjustments, film off, filters, white balance (fourth pass)
+- **Every stage can be off:** film `none` (no film emulation at all: the developed RAW, exposure + sRGB), Camera Look neutral, optics none; the UI has **Everything off**. Grain/halation/softness are not applicable without a film and are disabled.
+- **Brightness** (exposure compensation in stops, -3..+3, the film engine's own control), **Contrast** (monotonic S-curve in display space, -100..+100 %), **Development strength** (0 % = developed without the film, 100 % = full film look; blends the film render with the same frame developed without film).
+- **Filters:** plain Black & white (luminance), **Silver B&W film** (panchromatic grey, film S-curve with base fog and rolled shoulder, luminance-weighted silver grain defined as a fraction of the picture width, deterministic from the render seed), Sepia; each with a strength.
+- **White balance profiles:** 31 built-in presets from published values (Nikon manuals, RED guide, CIE illuminants, common light sources; the source is stored with each entry) plus custom Kelvin/tint. Import: `.json`, `.csv`, Adobe `.xmp` / `.lrtemplate`, RawTherapee `.pp3` (stored immutably under `<data>/wb-profiles/`, `user:` ids; recipes embed a copy, so editing or deleting a profile never changes an old render). Applied as von-Kries gains in sRGB-linear relative to 5500 K, luminance kept: an approximation, not camera-native colour science.
+- All of it lives in the recipe (`extensions.tone`, `extensions.wb_profile`, film id `none`), is rendered identically by the preview and the full-size job, and is part of the render id. Brightness/contrast/white balance do not reshuffle the grain while a slider moves. With everything at its default the old render ids are unchanged.
+
 ## Known limits
 - Preview demosaic is LibRaw's fast linear one (documented in preview.py); final renders use the recipe's demosaic.
 - A job's `GET` is polled by the UI (2.5 s); SSE is not implemented.

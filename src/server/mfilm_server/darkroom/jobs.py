@@ -43,7 +43,7 @@ def _job_schema() -> dict:
 
 
 def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict,
-               web_folder: str = "M-Film/Developed") -> tuple[str, bool]:
+               web_folder: str = "M-Film/Developed", wb_lookup=None) -> tuple[str, bool]:
     """Returns (job_id, created). Raises JobError / recipe2.RecipeError."""
     try:
         jsonschema.validate(request, _job_schema())
@@ -56,7 +56,7 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict,
     recipe_in = copy.deepcopy(request["recipe"])
     if "quality" in out:
         recipe_in["render"]["quality"] = out["quality"]
-    recipe = recipe2.normalize(recipe_in, bundle)
+    recipe = recipe2.normalize(recipe_in, bundle, wb_lookup)
     rhash = recipe2.recipe_hash(recipe)
     ids = [a["asset_id"] for a in src["assets"]]
     if len(set(ids)) != len(ids):

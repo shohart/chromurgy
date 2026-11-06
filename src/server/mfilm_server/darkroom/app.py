@@ -22,6 +22,7 @@ from .. import config as config_mod
 from .. import core, db
 from ..bundles import Bundles
 from ..store import Store, UnsafePath, safe_id
+from . import wb as wbmod
 from . import auth, catalog, cropping, engine, jobs, pp_sources, preview, recipe2, rolls, sources
 from . import photoprism as pp
 
@@ -60,6 +61,8 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
     except core.CoreError:
         pass
     app.state.store, app.state.cfg = store, cfg
+    wb_lookup = wbmod.lookup(store.root)
+    wb_users = wbmod.UserProfiles(store.root)
     def get_lane() -> preview.PreviewLane:          # started on first use: spawning costs a process
         if "l" not in lane:
             lane["l"] = preview.PreviewLane(workers=int(os.environ.get("MFILM_WEB_PREVIEW_WORKERS", "1")))
@@ -168,10 +171,36 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         except ValueError:
             raise ApiError(400, "BAD_REQUEST", "JSON body required") from None
         try:
-            r = recipe2.normalize(body, bundle())
+            r = recipe2.normalize(body, bundle(), wb_lookup)
         except recipe2.RecipeError as e:
             raise ApiError(422, e.code, e.detail) from None
         return {"recipe": r, "recipe_hash": recipe2.recipe_hash(r)}
+
+    # ---- white-balance profiles (built-in library + imports) ------------------------------------------
+    def wb_public(p: dict) -> dict:
+        return {k: p.get(k) for k in ("id", "name", "kelvin", "tint", "gains", "group", "source", "builtin")}
+
+    @app.get(f"{API}/wb-profiles")
+    def get_wb_profiles(_t: str = Depends(session)):
+        return {"builtin": [wb_public(p) for p in wbmod.builtins()], "imported": [wb_public(p) for p in wb_users.list()],
+                "formats": [".json", ".csv", ".xmp", ".lrtemplate", ".pp3"], "reference_kelvin": wbmod.REFERENCE_K,
+                "kelvin_range": list(wbmod.K_RANGE), "tint_range": list(wbmod.TINT_RANGE)}
+
+    @app.post(f"{API}/wb-profiles")
+    async def import_wb_profiles(request: Request, filename: str = "profile.json", _t: str = Depends(session)):
+        data = await request.body()
+        try:
+            found = wbmod.parse_import(sources.display_name(filename), data)
+            added = [wb_public(wb_users.add(p, sources.display_name(filename))) for p in found]
+        except wbmod.WBError as e:
+            raise ApiError(422, "INVALID_WB_PROFILE", str(e)) from None
+        return {"added": added}
+
+    @app.delete(f"{API}/wb-profiles/{{pid:path}}")
+    def delete_wb_profile(pid: str, _t: str = Depends(session)):
+        if not wb_users.delete(pid):
+            raise ApiError(404, "UNKNOWN_WB_PROFILE", pid)
+        return {"deleted": pid}
 
     # ---- RAW upload (resumable, chunked) -------------------------------------------------------
     def part(upload_id: str) -> Path:
@@ -345,7 +374,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         v2 = v1 = None
         if kind == "treated":
             try:
-                v2 = recipe2.normalize(body.get("recipe"), b)
+                v2 = recipe2.normalize(body.get("recipe"), b, wb_lookup)
             except recipe2.RecipeError as e:
                 raise ApiError(422, e.code, e.detail) from None
             v1 = recipe2.to_v1(v2)
@@ -556,7 +585,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         except ValueError:
             raise ApiError(400, "BAD_REQUEST", "JSON body required") from None
         try:
-            jid, created = jobs.create_job(c, bundle(), body, cfg.photoprism.web_folder)
+            jid, created = jobs.create_job(c, bundle(), body, cfg.photoprism.web_folder, wb_lookup)
         except recipe2.RecipeError as e:
             raise ApiError(422, e.code, e.detail) from None
         except jobs.JobError as e:
@@ -629,7 +658,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
                "output": {"format": "jpeg", "quality": recipe["render"]["quality"], "publish": True, **dest},
                "idempotency_key": "pub-" + hashlib.sha256(f"{render_id}{json.dumps(dest, sort_keys=True)}".encode()).hexdigest()[:40]}
         try:
-            jid, created = jobs.create_job(c, bundle(), req, cfg.photoprism.web_folder)
+            jid, created = jobs.create_job(c, bundle(), req, cfg.photoprism.web_folder, wb_lookup)
         except recipe2.RecipeError as e:
             raise ApiError(422, e.code, e.detail) from None
         except jobs.JobError as e:

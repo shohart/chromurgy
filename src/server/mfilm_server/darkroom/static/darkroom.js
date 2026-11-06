@@ -30,9 +30,21 @@ async function api(path, opts = {}) {
 const S = { catalog: null, assets: [], selected: new Set(), current: null,
   look: "neutral", film: null, strength: 1, grain: 1, halation: 1, softness: 1, quality: 92, seed: 0, wb: "daylight",
   width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film",
+  tone: { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, wbSel: "daylight", wbCustom: { k: 5500, t: 0 }, wbl: null, sliders: [],
   crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"), aspect: "free", cropMode: false, cropRect: null, cropImg: null };
 const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Preview · Develop"];
 
+function toneExt() {
+  const t = {}, k = S.tone;
+  if (k.brightness) t.brightness_ev = k.brightness; if (k.contrast) t.contrast = k.contrast; if (k.develop !== 1 && S.film !== "none") t.develop_strength = k.develop;
+  if (k.filter !== "none") { t.filter = k.filter; if (k.filterStrength !== 1) t.filter_strength = k.filterStrength; }
+  return t;
+}
+function wbExt() {
+  if (S.wbSel.startsWith("builtin:") || S.wbSel.startsWith("user:")) return S.wbSel;
+  if (S.wbSel === "custom") return { name: `Custom ${S.wbCustom.k} K`, kelvin: S.wbCustom.k, tint: S.wbCustom.t };
+  return null;
+}
 function opticalBlock() {
   if (S.fxPreset === "golden_haze") return { preset_id: "golden_haze", strength: S.fxStrength, halation_policy: S.policy, stack: [] };
   const on = [...S.fx];
@@ -45,7 +57,9 @@ function recipe(withCrop = true) {
     film: { id: S.film, grain_scale: S.grain, halation_scale: S.halation, softness_scale: S.softness },
     optical: opticalBlock(),
     render: { output_format: "jpeg", output_color_space: "srgb", quality: S.quality },
-    seed: S.seed, extensions: { white_balance: S.wb } };
+    seed: S.seed, extensions: { white_balance: S.wbSel === "as-shot" ? "as-shot" : "daylight" } };
+  const tn = toneExt(); if (Object.keys(tn).length) r.extensions.tone = tn;
+  const wp = wbExt(); if (wp) r.extensions.wb_profile = wp;
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
   if (withCrop && S.crops[S.current]) r.extensions.crop = S.crops[S.current];     // this frame's own framing
   return r;
@@ -70,6 +84,7 @@ function step(n, title, hint, ...body) {
 }
 async function boot() {
   try { S.catalog = await api("/catalog"); } catch (e) { if (e.status !== 401) toast(e.message); return; }
+  try { S.wbl = await api("/wb-profiles"); } catch (e) { S.wbl = { builtin: [], imported: [] }; }
   if (!S.film) S.film = S.catalog.films.find(f => f.id === "portra400") ? "portra400" : S.catalog.films[0].id;
   $("#logout").hidden = false;
   $("#steps").replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1) }, h("b", {}, i + 1), t)));
@@ -78,7 +93,7 @@ async function boot() {
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared M-Film engine`, filmPanel()),
     step(4, "Optical effects", "optional · applied before the look and film", opticsPanel()),
-    step(5, "Preview, develop", "", previewPanel(), developPanel()));
+    step(5, "Preview, develop", "", adjustPanel(), previewPanel(), developPanel()));
   await refreshAssets(); refreshJobs(); syncControls();
 }
 $("#logout").addEventListener("click", async () => { try { await api("/logout", { method: "POST" }); } finally { showLogin(); } });
@@ -328,14 +343,16 @@ function renderLooks() {
 function filmPanel() {
   const q = h("input", { type: "text", placeholder: "Search 72 film stocks…", "aria-label": "Search films", oninput: e => { S.filmQuery = e.target.value; renderFilms(); } });
   const sl = (label, key) => h("div", {}, h("label", {}, label, " ", h("span", { id: "v_" + key }, "1.00")),
-    h("input", { type: "range", min: 0, max: 200, value: 100, "aria-label": label, oninput: e => { S[key] = e.target.value / 100; $("#v_" + key).textContent = S[key].toFixed(2); schedulePreview(); } }));
+    h("input", { type: "range", id: "sl_" + key, min: 0, max: 200, value: 100, "aria-label": label, oninput: e => { S[key] = e.target.value / 100; $("#v_" + key).textContent = S[key].toFixed(2); schedulePreview(); } }));
   return h("div", {}, q, h("div", { class: "filmlist", id: "films", role: "listbox" }),
     h("div", { class: "row3", style: "margin-top:1rem" }, sl("Grain", "grain"), sl("Halation (film)", "halation"), sl("Softness", "softness")));
 }
 function renderFilms() {
   const q = S.filmQuery.toLowerCase();
-  $("#films").replaceChildren(...S.catalog.films.filter(f => !q || (f.name + f.id).toLowerCase().includes(q)).map(f =>
-    h("button", { role: "option", "aria-pressed": String(S.film === f.id), onclick: () => { S.film = f.id; renderFilms(); schedulePreview(); } },
+  const none = h("button", { role: "option", "aria-pressed": String(S.film === "none"), title: "No film emulation: just the developed RAW",
+    onclick: () => { S.film = "none"; syncControls(); schedulePreview(); } }, "None (no film emulation)", h("span", {}, "film stage off"));
+  $("#films").replaceChildren(none, ...S.catalog.films.filter(f => !q || (f.name + f.id).toLowerCase().includes(q)).map(f =>
+    h("button", { role: "option", "aria-pressed": String(S.film === f.id), onclick: () => { S.film = f.id; syncControls(); schedulePreview(); } },
       f.name, h("span", {}, [f.kind, f.iso && "ISO " + f.iso].filter(Boolean).join(" · ")))));
 }
 
@@ -377,10 +394,79 @@ function syncControls() {
   if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); }
   if ($("#fxstrength")) { $("#fxstrength").value = Math.round(S.fxStrength * 100); $("#fxv").textContent = S.fxStrength.toFixed(2); }
   if ($("#policy")) $("#policy").value = S.policy;
+  S.sliders.forEach(x => { x.inp.value = x.get(); x.out.textContent = x.fmt(x.get()); });
+  const none = S.film === "none";
+  ["#sl_grain", "#sl_halation", "#sl_softness", "#sl_develop"].forEach(q => { const i = $(q); if (i) i.disabled = none; });
+  if ($("#filterstr")) { $("#filterstr").disabled = S.tone.filter === "none"; $("#filter").value = S.tone.filter; }
+  if ($("#wbsel")) { renderWb(); }
 }
 
 /* ---------------- step 5: preview ---------------- */
 let pvSeq = 0, pvTimer = null, pvShown = null;
+/* ---------------- adjustments: brightness, contrast, development strength, filters, white balance, all-off ---------------- */
+function slider(id, label, min, max, step, get, set, fmt, def, title) {
+  const out = h("span", { class: "val" }, fmt(get()));
+  const inp = h("input", { type: "range", id, min, max, step, value: get(), "aria-label": label, title: (title || "") + " Double-click resets.",
+    oninput: e => { set(+e.target.value); out.textContent = fmt(get()); schedulePreview(); },
+    ondblclick: () => { set(def); inp.value = def; out.textContent = fmt(def); schedulePreview(); } });
+  S.sliders.push({ inp, out, get, fmt });
+  return h("div", {}, h("label", { for: id }, label, " ", out), inp);
+}
+function adjustPanel() {
+  S.sliders = [];
+  const T = S.tone, sg = v => (v > 0 ? "+" : "") + v.toFixed(2);
+  const filter = h("select", { id: "filter", "aria-label": "Tone filter", onchange: e => { T.filter = e.target.value; syncControls(); schedulePreview(); } },
+    h("option", { value: "none" }, "No filter"), h("option", { value: "grayscale" }, "Black & white (plain grayscale)"), h("option", { value: "silver" }, "Silver B&W film (grain, film curve)"), h("option", { value: "sepia" }, "Sepia"));
+  const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => { S.wbSel = e.target.value; S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight"; renderWb(); schedulePreview(true); } });
+  const file = h("input", { type: "file", id: "wbfile", multiple: true, hidden: true, accept: ".json,.csv,.xmp,.lrtemplate,.pp3", onchange: wbImport });
+  return h("div", { class: "adjust" },
+    h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Adjustments ", h("small", { class: "dim" }, "· shown in the preview and kept in every render")),
+    h("div", { class: "row3" },
+      slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => T.brightness, v => { T.brightness = v; }, sg, 0, "Exposure compensation in stops, the film engine's own control."),
+      slider("sl_contrast", "Contrast", -1, 1, 0.01, () => T.contrast, v => { T.contrast = v; }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones."),
+      slider("sl_develop", "Development strength", 0, 1, 0.01, () => T.develop, v => { T.develop = v; }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.")),
+    h("div", { class: "grid2", style: "margin-top:.8rem" },
+      h("div", {}, h("label", { for: "filter" }, "Filter"), filter,
+        h("div", { style: "margin-top:.4rem" }, slider("filterstr", "Filter strength", 0, 1, 0.01, () => T.filterStrength, v => { T.filterStrength = v; }, v => Math.round(v * 100) + "%", 1))),
+      h("div", {}, h("label", { for: "wbsel" }, "White balance"), wbsel,
+        h("div", { class: "bar", style: "margin-top:.4rem" }, h("button", { onclick: () => $("#wbfile").click(), title: "Import .json .csv .xmp .lrtemplate .pp3" }, "Import profile…"),
+          h("button", { id: "wbdel", hidden: true, onclick: wbDelete }, "Delete imported"), file),
+        h("div", { id: "wbcustom", hidden: true, style: "margin-top:.4rem" },
+          slider("sl_kelvin", "Light colour temperature", 2000, 12000, 50, () => S.wbCustom.k, v => { S.wbCustom.k = v; }, v => v + " K", 5500),
+          slider("sl_tint", "Tint (− green · + magenta)", -100, 100, 1, () => S.wbCustom.t, v => { S.wbCustom.t = v; }, v => (v > 0 ? "+" : "") + v, 0)),
+        h("p", { class: "dim", id: "wbnote", style: "font:.68rem var(--mono);margin:.3rem 0 0" }))),
+    h("div", { class: "bar" }, h("button", { onclick: resetAdjust }, "Reset adjustments"), h("button", { onclick: everythingOff, title: "Neutral look, no optics, no film, no filter, no adjustments: the plain developed RAW" }, "Everything off")));
+}
+function renderWb() {
+  const sel = $("#wbsel"); if (!sel) return;
+  const L = S.wbl || { builtin: [], imported: [] }, groups = {};
+  L.builtin.forEach(p => (groups[p.group] = groups[p.group] || []).push(p));
+  sel.replaceChildren(h("option", { value: "daylight" }, "Daylight (M-Film default, decoder)"), h("option", { value: "as-shot" }, "As shot (camera)"), h("option", { value: "custom" }, "Custom Kelvin / tint…"),
+    ...(L.imported.length ? [h("optgroup", { label: "Imported" }, L.imported.map(p => h("option", { value: p.id }, `${p.name}${p.kelvin ? " · " + p.kelvin + " K" : ""}`)))] : []),
+    ...Object.entries(groups).map(([g, ps]) => h("optgroup", { label: g }, ps.map(p => h("option", { value: p.id }, p.name)))));
+  sel.value = S.wbSel;
+  $("#wbcustom").hidden = S.wbSel !== "custom"; $("#wbdel").hidden = !S.wbSel.startsWith("user:");
+  const p = [...L.builtin, ...L.imported].find(x => x.id === S.wbSel);
+  $("#wbnote").textContent = p ? `${p.kelvin ? p.kelvin + " K" : "RGB gains"}${p.tint ? ", tint " + p.tint : ""} · gains ${p.gains.map(g => g.toFixed(2)).join(" / ")} · ${p.source}` : "";
+}
+async function wbImport(ev) {
+  const files = [...ev.target.files]; ev.target.value = ""; let last = null, n = 0;
+  for (const f of files) {
+    try { const r = await api("/wb-profiles?filename=" + encodeURIComponent(f.name), { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } }); n += r.added.length; last = r.added[0]; }
+    catch (e) { toast(`${f.name}: ${e.message}`); }
+  }
+  if (n) { S.wbl = await api("/wb-profiles"); S.wbSel = last.id; S.wb = "daylight"; renderWb(); schedulePreview(true); toast(`${n} white-balance profile(s) imported`); }
+}
+async function wbDelete() {
+  const id = S.wbSel; if (!id.startsWith("user:")) return;
+  try { await api("/wb-profiles/" + id, { method: "DELETE" }); S.wbl = await api("/wb-profiles"); S.wbSel = "daylight"; renderWb(); schedulePreview(true); toast("Profile deleted (renders already made keep their own copy)"); } catch (e) { toast(e.message); }
+}
+function resetAdjust() { S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }; S.wbSel = "daylight"; S.wb = "daylight"; S.wbCustom = { k: 5500, t: 0 }; syncControls(); schedulePreview(true); }
+function everythingOff() {
+  S.look = "neutral"; S.fx.clear(); S.fxPreset = "none"; S.policy = "film"; S.film = "none";
+  S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }; S.wbSel = "daylight"; S.wb = "daylight";
+  syncControls(); schedulePreview(true); toast("All effects off: the plain developed RAW");
+}
 function previewPanel() {
   const treated = h("img", { alt: "Treated preview", id: "pv_t", hidden: true });
   const before = h("img", { alt: "Original, neutral development", id: "pv_b", hidden: true });
@@ -565,8 +651,7 @@ function developPanel() {
   return h("div", { style: "margin-top:1.6rem" }, h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Develop (full size, from the original RAW)"),
     h("div", { class: "row3" }, h("div", {}, h("label", { for: "outsize" }, "Output size (never upscaled)"), sizeSel),
       h("div", {}, h("label", { for: "q" }, "JPEG quality"), h("input", { type: "number", id: "q", min: 1, max: 100, value: 92, onchange: e => { S.quality = Number(e.target.value); } })),
-      h("div", {}, h("label", { for: "wb" }, "White balance"), h("select", { id: "wb", onchange: e => { S.wb = e.target.value; schedulePreview(); } },
-        h("option", { value: "daylight" }, "Daylight (M-Film default)"), h("option", { value: "as-shot" }, "As shot")))),
+      h("div", {})),
     destPanel(),
     h("div", { class: "bar" }, h("button", { class: "primary", id: "develop", onclick: develop }, "Develop selected"), h("span", { class: "dim", id: "devinfo" })),
     h("h3", { style: "font-size:.95rem;margin:1.6rem 0 .6rem" }, "Jobs"), h("div", { class: "jobs", id: "jobs" }),
