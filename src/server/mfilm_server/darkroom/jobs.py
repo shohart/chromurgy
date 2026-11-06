@@ -26,7 +26,7 @@ MAX_ATTEMPTS = 3
 MAX_ITEMS = 500
 TERMINAL = {"BAD_DNG", "BAD_RAW", "UNSUPPORTED_PROFILE", "UNSUPPORTED_RECIPE", "PROFILE_BUNDLE_MISMATCH",
             "OUTPUT_LARGER_THAN_SOURCE", "UNSUPPORTED_DNG_FEATURE", "SOURCE_CHANGED", "SOURCE_MISSING"}
-SOURCE_KINDS = {"upload"}                      # implemented; the schema also allows photoprism_* and mfilm_roll
+SOURCE_KINDS = {"upload", "photoprism_album", "photoprism_folder"}   # mfilm_roll: not yet
 ACTIVE = ("QUEUED", "DECODING", "RENDERING", "VALIDATING")
 
 
@@ -71,7 +71,7 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict) -> 
             raise JobError("UNKNOWN_ASSET", aid, 404)
         if not r["eligible"]:
             raise JobError("ASSET_NOT_ELIGIBLE", f"{aid}: {r['reason']}")
-        if r["origin"] != "upload":
+        if r["origin"] not in ("upload", "photoprism"):
             raise JobError("SOURCE_KIND_UNAVAILABLE", f"{aid}: origin {r['origin']}")
         rows.append(r)
     body = json.dumps(request, sort_keys=True)
@@ -210,7 +210,7 @@ def _claim(conn: sqlite3.Connection, skip: set[int]) -> sqlite3.Row | None:
     return item
 
 
-def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[int] = frozenset()):
+def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[int] = frozenset(), cfg=None):
     """Develop one queued item. Returns (item_id, render_id|None, state, error_code, detail) or None."""
     item = _claim(conn, set(skip))
     if not item:
@@ -223,7 +223,14 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
         rd = recipe["render"]
         v1 = recipe2.to_v1(recipe, width=int(rd.get("width") or 0), height=int(rd.get("height") or 0))
         bundle = bundles.get(v1["profile_bundle_hash"])
-        path = store.root / src["path"]
+        from .. import config as config_mod
+        from .pp_sources import source_file
+        try:
+            path = source_file(store, (cfg or config_mod.load(None)).photoprism, src)     # MFILM_CONFIG is inherited by worker children
+        except (FileNotFoundError, OSError, ValueError) as e:
+            raise DevelopError("SOURCE_MISSING", str(e)) from None
+        except Exception as e:                                   # PPError: unsafe path / not configured
+            raise DevelopError("SOURCE_MISSING", getattr(e, "detail", str(e))) from None
         if not path.is_file():
             raise DevelopError("SOURCE_MISSING", src["path"])
         seed = recipe_seed(v1, "web", "web", src["sha256"])

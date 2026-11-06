@@ -21,7 +21,8 @@ from .. import config as config_mod
 from .. import core, db
 from ..bundles import Bundles
 from ..store import Store, UnsafePath, safe_id
-from . import auth, catalog, engine, jobs, preview, recipe2, sources
+from . import auth, catalog, engine, jobs, pp_sources, preview, recipe2, sources
+from . import photoprism as pp
 
 API = "/api/v1/darkroom"
 COOKIE = "mfilm_session"
@@ -349,7 +350,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         key = preview.preview_key(sha=row["sha256"], kind=kind, recipe_hash=rhash, max_edge=max_edge,
                                   bundle_hash=b.sha256, wb=wb)
         meta = json.loads(row["meta"])
-        job = {"root": str(store.root), "src_path": str(store.root / row["path"]), "sha": row["sha256"], "kind": kind,
+        job = {"root": str(store.root), "src_path": str(pp_sources.source_file(store, cfg.photoprism, row)), "sha": row["sha256"], "kind": kind,
                "v1": v1, "max_edge": max_edge, "key": key, "recipe_hash": rhash,
                "wb": wb, "captured_at": meta.get("captured_at"),
                "seed_ids": ("web", "web", row["sha256"])}
@@ -377,6 +378,131 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         if not f.is_file():
             raise ApiError(404, "PREVIEW_NOT_READY", key)
         return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+    # ---- PhotoPrism source browsing (docs/web/29) ----------------------------------------------------
+    INSTANCE = "default"                              # one configured instance; clients never supply a URL
+
+    def pp_client() -> pp.Client:
+        try:
+            return pp.Client(cfg.photoprism, transport=app.state.pp_transport) if getattr(app.state, "pp_transport", None) \
+                else pp.Client(cfg.photoprism)
+        except pp.PPError as e:
+            raise ApiError(e.status, e.code, e.detail) from None
+
+    def pp_call(fn, *args, **kw):
+        try:
+            return fn(*args, **kw)
+        except pp.PPError as e:
+            raise ApiError(e.status, e.code, e.detail) from None
+
+    def instance_ok(inst: str) -> None:
+        if inst != INSTANCE:
+            raise ApiError(404, "UNKNOWN_INSTANCE", inst)
+
+    @app.get(f"{API}/photoprism/instances")
+    def pp_instances(_t: str = Depends(session)):
+        p = cfg.photoprism
+        info = {"id": INSTANCE, "name": "PhotoPrism", "configured": bool(p.url and p.token_file) or
+                bool(getattr(app.state, "pp_transport", None)),
+                "read": {"api": None, "originals": None}, "write": {"folder": None, "index": bool(p.index_template or p.index_command),
+                                                                    "albums": None},
+                "output_folder": p.web_folder}
+        if not info["configured"]:
+            info["error"] = "PHOTOPRISM_NOT_CONFIGURED"
+            return {"items": [info]}
+        try:
+            c = pp_client().config()
+            info["version"], info["readonly"] = c.get("version"), bool(c.get("readonly"))
+            info["read"]["api"] = True
+        except (pp.PPError, ApiError) as e:
+            info["read"]["api"] = False
+            info["error"] = getattr(e, "code", "ERROR")
+        root = pp.originals_root(p)
+        info["read"]["originals"] = bool(root and root.is_dir())
+        info["write"]["folder"] = bool(p.export_dir and p.export_dir.is_dir())
+        return {"items": [info]}
+
+    @app.get(f"{API}/photoprism/{{inst}}/albums")
+    def pp_albums(inst: str, q: str = "", count: int = 100, offset: int = 0, _t: str = Depends(session)):
+        instance_ok(inst)
+        return {"items": pp_call(pp_client().albums, q, max(1, min(count, 500)), max(0, offset))}
+
+    @app.get(f"{API}/photoprism/{{inst}}/folders")
+    def pp_folders(inst: str, parent_id: str = "", _t: str = Depends(session)):
+        instance_ok(inst)
+        if parent_id.startswith("/") or ".." in parent_id.split("/") or "\0" in parent_id:
+            raise ApiError(400, "UNSAFE_PATH", parent_id)
+        return {"parent": parent_id, "items": pp_call(pp_client().folders, parent_id)}
+
+    def pp_page(client, source_kind: str, source_uid: str, count: int, offset: int) -> list[dict]:
+        if source_kind == "album":
+            return pp_call(client.photos, album_uid=source_uid, count=count, offset=offset)
+        if source_kind == "folder":
+            if source_uid.startswith("/") or ".." in source_uid.split("/"):
+                raise ApiError(400, "UNSAFE_PATH", source_uid)
+            return pp_call(client.photos, folder=source_uid, count=count, offset=offset)
+        raise ApiError(422, "INVALID_REQUEST", "source_kind: album|folder")
+
+    @app.get(f"{API}/photoprism/{{inst}}/photos")
+    def pp_photos(inst: str, source_kind: str, source_uid: str, count: int = 60, offset: int = 0,
+                  _t: str = Depends(session)):
+        instance_ok(inst)
+        client = pp_client()
+        page = pp_page(client, source_kind, source_uid, max(1, min(count, 200)), max(0, offset))
+        out = []
+        for ph in page:
+            item = {"photo_uid": ph["UID"], "name": ph.get("Name"), "type": ph.get("Type"), "taken_at": ph.get("TakenAt"),
+                    "folder": ph.get("Path")}
+            if ph.get("Type") == "raw" or ph.get("Type") in ("image", "live"):
+                f, why = pp_sources.classify(pp_call(client.photo, ph["UID"]))
+            else:
+                f, why = None, f"{ph.get('Type')} is not a photo with a RAW original"
+            item.update(eligible=bool(f), reason=why, raw={"name": f["Name"], "bytes": f["Size"]} if f else None)
+            out.append(item)
+        return {"count": len(out), "offset": offset, "next_offset": offset + len(page) if len(page) == count else None,
+                "eligible": sum(1 for i in out if i["eligible"]), "items": out}
+
+    @app.post(f"{API}/photoprism/{{inst}}/select")
+    async def pp_select(inst: str, request: Request, _t: str = Depends(session)):
+        """Snapshot the chosen photos' RAW originals (identity, hash, metadata) as sources."""
+        instance_ok(inst)
+        try:
+            body = json.loads(await request.body())
+            uids = [str(u) for u in body.get("photo_uids", [])]
+            kind, suid = body.get("source_kind"), str(body.get("source_uid", ""))
+            select_all = bool(body.get("all_eligible"))
+        except (ValueError, AttributeError, TypeError):
+            raise ApiError(400, "BAD_REQUEST", "JSON body required") from None
+
+        def work():
+            c = db.connect(store.db_path)
+            try:
+                client = pp_client()
+                todo = list(uids)
+                if select_all:
+                    off = 0
+                    while len(todo) < 2000:
+                        page = pp_page(client, kind, suid, 200, off)
+                        todo += [p["UID"] for p in page if p["UID"] not in todo]
+                        if len(page) < 200:
+                            break
+                        off += 200
+                if not todo or len(todo) > 2000:
+                    raise ApiError(422, "INVALID_REQUEST", "1..2000 photos")
+                assets, skipped = [], []
+                for uid in todo:
+                    try:
+                        row, why = pp_sources.snapshot(c, store, cfg.photoprism, client.photo(uid))
+                    except pp.PPError as e:
+                        row, why = None, f"{e.code}: {e.detail}"
+                    if row:
+                        assets.append(sources.row_public(row))
+                    else:
+                        skipped.append({"photo_uid": uid, "reason": why})
+                return {"assets": assets, "skipped": skipped, "source": {"kind": kind, "uid": suid}}
+            finally:
+                c.close()
+        return await run_in_threadpool(work)
 
     # ---- jobs and renders (docs/web/31) --------------------------------------------------------
     def job_id_ok(jid: str) -> str:

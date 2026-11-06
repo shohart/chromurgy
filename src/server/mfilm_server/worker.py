@@ -262,10 +262,10 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles,
         return JobResult(job["id"], r["id"], "FAILED_RETRYABLE", "IO_ERROR", str(e))
 
 
-def _drain_web(conn: sqlite3.Connection, store: Store, bundles: Bundles, tried: set[int]) -> JobResult | None:
+def _drain_web(conn: sqlite3.Connection, store: Store, bundles: Bundles, tried: set[int], cfg=None) -> JobResult | None:
     """Web Darkroom items share the camera queue's lock, memory budget and process model."""
     from .darkroom import jobs as web_jobs
-    res = web_jobs.run_one(conn, store, bundles, {-i for i in tried if i < 0})
+    res = web_jobs.run_one(conn, store, bundles, {-i for i in tried if i < 0}, cfg)
     if res is None:
         return None
     iid, rid, state, code, detail = res
