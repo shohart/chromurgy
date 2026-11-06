@@ -18,7 +18,7 @@ Real RAW fixtures are not in git. Without them the RAW tests skip (silently, `-r
     # from a worktree whose build/ is missing: MFILM_CORE_LIB=<main checkout>/build/src/shared/film_core/libmf_core.so PYTHONPATH=src/server:src/server/tests
 
 ## Deploy (octopusreborn, not done)
-Migrations 5 and 6 are taken by this branch (user_version 6): the camera branch must use 7+.
+Migrations 5, 6 and 7 are taken by this branch (user_version 7): the camera branch must use 7+.
 After merging: update the service checkout (`deploy/update-user.sh`, empty queue only), **reinstall the venv's
 package** so the `mfilm-web` entry point and `static/` exist (`uv pip install -e src/server`), `mfilmctl web-passwd`,
 install `deploy/systemd/user/mfilm-web.service`. The worker polls every 30 s, so a web job starts up to 30 s late;
@@ -31,7 +31,8 @@ lower `--interval` if that matters. Never point a dev run at /mnt/theVault/mfilm
 | W03 look / film / effect selection | PARTIAL | 72 films + recipe v2 validated against the contract. The 8 Camera Looks (only Neutral works) and all 6 optical effects are listed **disabled** and rejected with 422 UNSUPPORTED_*: the film core does not implement them yet (decided with the owner: web first, looks later). |
 | W04 preview | DONE | tests/test_darkroom_preview.py: real core on a cached <=2048 px normalization; ~0.6-1.1 s per preview after the first (~11 s); cache key source+recipe+engine+size; latest request wins; before/after wipe. |
 | W05 full-size render, history | DONE | tests/test_darkroom_jobs.py: durable jobs, per-item states, cancel/retry, ZIP, history, restart recovery (recover_stale), identical render reused (no new file), new recipe = new rendition, never upscaled, source EXIF (make/model/ISO/exposure) kept. |
-| W01 PhotoPrism doctor, W06 source picker + publishing | NOT STARTED | needs the PhotoPrism API token at doctor time. Job requests for `photoprism_*` sources or `publish: true` return 422 SOURCE_KIND_UNAVAILABLE / PUBLISH_UNAVAILABLE. |
+| W01 PhotoPrism doctor | DONE, live | `mfilmctl photoprism-doctor [--write-test]` on the real instance (260728 Plus): API auth, albums, folders, RAW detection, read an original from disk with SHA-1 == PhotoPrism's record, folder write, index command, album create+delete. Config: `[photoprism] url, token_file (0600), originals_dir, index_template, web_folder`. The API token is an app password for `admin`, in `~/.config/mfilm/photoprism.token` on octopus. |
+| W06 source picker + publishing | DONE in code and tests, live READ verified; live WRITE not run | Tests (fake PhotoPrism with the observed response shapes): albums vs folders, pagination, RAW eligibility (JPEG-only, RAW record missing, unverified RAW family all refused with a reason, never the sidecar JPEG), traversal / hash mismatch refused, original untouched, original replaced after selection -> SOURCE_CHANGED, publish to folder + new/existing album in idempotent stages (copy -> index -> UID by exact folder+name -> album), PhotoPrism outage keeps the render and recovers. Live through the browser UI: albums listed, folder `10.11.2015` opened, 2 real D5100 NEFs snapshotted. NOT yet run live: publishing into the real library. |
 | W07 security | PARTIAL | operator login (scrypt, 0600 file, HttpOnly SameSite=Strict cookie, CSRF header), device tokens are not accepted, strict CSP, upload limits. No HTTPS (deployment decision), no per-user roles, no upload quota/cleanup job for abandoned `.part` files yet. |
 
 ## Known limits
