@@ -82,3 +82,17 @@ def test_developed_frames_go_to_the_camera_viewer_once(store, conn, tmp_path, re
     assert all(f.read_bytes()[:4] == MAGIC and f.stat().st_size == 12 + HEIGHT * 1080 for f in frames)
     again = sync(store, conn, chdkptp=cmd, mirror=tmp_path / "m", develop=develop)
     assert again.viewer_rolls == [] and again.downloaded == []
+
+
+def test_a_roll_deleted_on_the_camera_is_not_asked_for(make_card, store, conn, tmp_path):
+    card = make_card(mutate=_hashless)
+    import json as _json
+    m = next(card.glob("CHDK/MFILM/ROLLS/*/MANIFEST.JSN"), None) or next(card.rglob("*.json"))
+    rid = _json.loads(m.read_text())["roll_id"]
+    # the owner deletes the roll: the app removes its DNGs and roll dir, records the id
+    for f in (card / "DCIM").rglob("*.DNG"):
+        f.unlink()
+    (card / "CHDK" / "MFILM" / "ROLLS" / "DELETED.CFG").write_text(f"roll={rid}|2026-11-06T02:00:00+02:00|2 DNG|0 developed\n")
+    r = sync(store, conn, chdkptp=f"{sys.executable} {FAKE} --card {card}", mirror=tmp_path / "m")
+    assert r.failed == [] and r.downloaded == [] and r.deleted == [rid]
+    assert not any(x.status == "INCOMPLETE" for x in r.rolls)

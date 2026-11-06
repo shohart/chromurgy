@@ -973,6 +973,7 @@ local function roll_card(r, v)
   if r and (not v or (partial and v.origin == "camera")) then
     items[#items + 1] = v and "Develop the rest" or "Develop"; acts[#acts + 1] = "develop"
   end
+  items[#items + 1] = "Delete roll"; acts[#acts + 1] = "delete"
   items[#items + 1] = "Back"; acts[#acts + 1] = "back"
   while true do
     local shown_lines = {}
@@ -983,7 +984,20 @@ local function roll_card(r, v)
     local i = choose("Roll " .. string.sub((r and r.roll_id) or v.roll_id, 1, 8), shown_lines, items, 1)
     if i == "shoot" then return "shoot" end
     if i == nil or acts[i] == "back" then return end
-    if acts[i] == "view" then
+    if acts[i] == "delete" then
+      local on_server = v and v.origin == "server"
+      local what = {mf.film_name(film) .. ", " .. ((r and #r.frames) or (v and v.frames) or 0) .. " frames",
+                    "Deletes its RAW files and developed frames."}
+      if not on_server then what[#what + 1] = {"NOT ON THE SERVER: the shots will be lost!", C.warn} end
+      if confirm("Delete roll", what)
+         and (on_server or confirm("Really delete?", {"The RAW files are not on the server.",
+                                                       {"This cannot be undone.", C.warn}})) then
+        if r and roll and roll.roll_id == r.roll_id then roll = nil end
+        local dngs, frames = mf.delete_roll(r, v)
+        say(string.format("Roll deleted: %d RAW, %d developed", dngs, frames), 6000, true)
+        return "deleted"
+      end
+    elseif acts[i] == "view" then
       if viewer(mf.film_short(film) .. " " .. (v.day or ""), have_frames) == "shoot" then return "shoot" end
     elseif acts[i] == "develop" then
       if not r then
@@ -1006,28 +1020,36 @@ local function roll_card(r, v)
 end
 
 local function show_rolls()
-  local rolls, dev = mf.list_rolls(), mf.view_index()
-  local seen, entries = {}, {}
-  for _, r in ipairs(rolls) do
-    entries[#entries + 1] = {r = r, v = dev[r.roll_id]}
-    seen[r.roll_id] = true
-  end
-  for id, v in pairs(dev) do                      -- developed but no longer on this card
-    if not seen[id] then entries[#entries + 1] = {v = v} end
-  end
-  local items, icons = {}, {}
-  for _, e in ipairs(entries) do
-    local film = e.r and e.r.film or e.v.film
-    local day = e.r and string.sub(e.r.created_at or "", 6, 10) or string.sub(e.v.day or "", 6, 10)
-    local n = e.r and string.format("%d/%d", #e.r.frames, e.r.length) or tostring(e.v.frames)
-    local st = e.v and "DEV" or (e.r.state == "SEALED" and "done" or "in cam")
-    items[#items + 1] = day .. " " .. lpad(mf.film_short(film) or film, 12) .. " " .. rpad(n, 5) .. " " .. st
-    icons[#icons + 1] = film
-  end
-  if #items == 0 then return choose("Rolls on this card", {"No rolls yet."}, {"Back"}, 1) end
   local sel = 1
-  while true do
-    local i = choose("Rolls (" .. #entries .. ")", {}, items, sel, icons)
+  while true do                                   -- rebuilt after a roll is deleted
+    local rolls, dev = mf.list_rolls(), mf.view_index()
+    local seen, entries = {}, {}
+    for _, r in ipairs(rolls) do
+      entries[#entries + 1] = {r = r, v = dev[r.roll_id]}
+      seen[r.roll_id] = true
+    end
+    for id, v in pairs(dev) do                    -- developed but no longer on this card
+      if not seen[id] then entries[#entries + 1] = {v = v} end
+    end
+    local items, icons = {}, {}
+    for _, e in ipairs(entries) do
+      local film = e.r and e.r.film or e.v.film
+      local day = e.r and string.sub(e.r.created_at or "", 6, 10) or string.sub(e.v.day or "", 6, 10)
+      local n = e.r and string.format("%d/%d", #e.r.frames, e.r.length) or tostring(e.v.frames)
+      local st = e.v and "DEV" or (e.r.state == "SEALED" and "done" or "in cam")
+      items[#items + 1] = day .. " " .. lpad(mf.film_short(film) or film, 12) .. " " .. rpad(n, 5) .. " " .. st
+      icons[#icons + 1] = film
+    end
+    local lines = {}
+    if notice and get_tick_count() < notice_until then
+      lines[#lines + 1] = {notice, notice_good and C.ok or C.warn}
+    end
+    if #items == 0 then
+      lines[#lines + 1] = "No rolls yet."
+      return choose("Rolls on this card", lines, {"Back"}, 1)
+    end
+    if sel > #items then sel = #items end
+    local i = choose("Rolls (" .. #entries .. ")", lines, items, sel, icons)
     if type(i) ~= "number" then return i end
     sel = i
     if roll_card(entries[i].r, entries[i].v) == "shoot" then return "shoot" end

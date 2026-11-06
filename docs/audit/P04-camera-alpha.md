@@ -414,3 +414,19 @@ Output vs before: mean colour within 0.5/255, MAE 1-4 (grain).
 Estimate for the camera: ~15 s a frame. HARDWARE-TEST REQUIRED: APP.LOG now
 has a per-frame split ("develop frame N timing ms: dng .. bin .. lens ..
 scan .. glow .. render .. tmp .. jpeg .. view .. yield").
+
+## 0.6.1: deleting a roll
+
+Owner: rolls must be deletable on the camera, RAW and developed frames.
+Roll card -> "Delete roll" (default "No"); a roll the server has not
+developed yet asks twice and says the shots will be lost. Deleted: the
+roll's DNGs, its developed frames (server's MFVIEW/<ROLL8>, camera's
+MFVIEW/C<7 hex> and MFDEV/C<7 hex>), its INDEX/CAMINDEX lines and its state
+folder; the roll id goes to A/CHDK/MFILM/ROLLS/DELETED.CFG (that folder is
+what every sync downloads). Canon's JPEGs are not deleted: CRW numbers can
+lag the JPEG counter, so the JPEG of a frame is not known for sure.
+Server (camera-sync): rolls in DELETED.CFG are dropped from the camera
+mirror, their DNGs are not asked for and their frames are not sent back;
+the archive, database and published photos are kept.
+Tests: both confirmations, declining, a server-developed roll; sync test;
+the fuzz deletes rolls among everything else (80 runs clean).

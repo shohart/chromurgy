@@ -105,6 +105,7 @@ def cmd_camera_sync(args) -> int:
     lines += [f"{x.status:10} {x.device_id or '-'}/{x.roll_id or '-'}" + (f"  ({x.detail})" if x.detail else "")
               for x in r.rolls]
     lines += [f"VIEWER     {rid}: developed frames sent to the camera" for rid in r.viewer_rolls]
+    lines += [f"DELETED    {rid}: deleted on the camera, dropped from the mirror (archive kept)" for rid in r.deleted]
     _out(args, {"ok": True, "connection": r.connection, "downloaded": r.downloaded,
                 "failed": [{"path": p, "detail": d} for p, d in r.failed], "log": r.log_path, "rolls": as_dict(r.rolls),
                 "viewer_rolls": r.viewer_rolls, "queued": queued}, "\n".join(lines))

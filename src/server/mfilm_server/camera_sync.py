@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import time
@@ -53,6 +54,7 @@ class SyncResult:
     failed: list[tuple[str, str]] = field(default_factory=list)   # (camera path, chdkptp's answer)
     log_path: str | None = None
     viewer_rolls: list[str] = field(default_factory=list)     # rolls whose developed frames went to the camera
+    deleted: list[str] = field(default_factory=list)          # rolls the owner deleted on the camera
     rolls: list[RollResult] = field(default_factory=list)
     log: str = ""
 
@@ -129,13 +131,43 @@ def _q(s: str) -> str:
     return f'"{s}"'
 
 
+def deleted_rolls(card: Path) -> set[str]:
+    """Roll ids the owner deleted on the camera (A/CHDK/MFILM/ROLLS/DELETED.CFG, app 0.6.1+)."""
+    p = card / MFILM_DIR / "DELETED.CFG"
+    try:
+        text = p.read_text(errors="replace")
+    except OSError:
+        return set()
+    return {ln[5:].split("|")[0] for ln in text.splitlines() if ln.startswith("roll=")}
+
+
+def forget_deleted(card: Path) -> list[str]:
+    """Drop deleted rolls from the camera mirror (mdl only adds files): their
+    manifests would otherwise ask for DNGs that are gone. The server's archive,
+    database and published photos are untouched."""
+    gone = deleted_rolls(card)
+    out = []
+    for m in find_manifests(card):
+        try:
+            rid = json.loads(m.read_text()).get("roll_id")
+        except (OSError, ValueError):
+            continue
+        if rid in gone:
+            shutil.rmtree(m.parent, ignore_errors=True)
+            out.append(rid)
+    return out
+
+
 def wanted_files(card: Path, conn: sqlite3.Connection) -> list[tuple[str, int]]:
     """(camera path, size) of the DNGs of sealed rolls not yet fully imported."""
     out = []
+    gone = deleted_rolls(card)
     for m in find_manifests(card):
         try:
             doc = json.loads(m.read_text())
         except (OSError, ValueError):
+            continue
+        if doc.get("roll_id") in gone:
             continue
         if doc.get("roll_state") not in IMPORTABLE_CAMERA_STATES:
             continue
@@ -177,7 +209,9 @@ def push_viewer(ses: _Session, store: Store, conn: sqlite3.Connection, card: Pat
     on_camera = cv.parse_index(part.read_text(errors="replace")) if part.is_file() else {}
     if part.exists():
         part.unlink()
-    rolls = [v for dev in sorted(_device_ids(card)) for v in cv.developed_rolls(conn, store, dev)]
+    gone = deleted_rolls(card)
+    rolls = [v for dev in sorted(_device_ids(card)) for v in cv.developed_rolls(conn, store, dev)
+             if v.roll_id not in gone]
     if not rolls:
         return
     ses.cmd(f"mkdir {_q('A/' + cv.VIEW_DIR)}")
@@ -227,6 +261,7 @@ def sync(store: Store, conn: sqlite3.Connection, *, host: str | None = None, mir
         out = ses.cmd(f"mdl -overwrite=y {_q('A/' + str(MFILM_DIR))} {_q(str(card / MFILM_DIR))}")
         if "ERROR" in out and "no matching files" not in out:
             raise SyncError("CHDKPTP_FAILED", out.strip()[-800:])
+        res.deleted = forget_deleted(card)
         # 2. originals the sealed rolls need
         # a failed file is tried once more at the end; what chdkptp said is
         # kept (camera session 2026-11-04: a first session got 3 of 18 files

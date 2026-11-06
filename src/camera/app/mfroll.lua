@@ -22,7 +22,7 @@
 
 local M = {}
 
-M.VERSION = "0.6.0-alpha"
+M.VERSION = "0.6.1-alpha"
 M.ROOT = "A/CHDK/MFILM"
 M.LENGTHS = {12, 24, 36}
 
@@ -468,6 +468,69 @@ end
 
 function M.view_frame(v, i)
   return string.format("%s/%s/F%02d.MFV", M.VIEW_ROOT, v.dir, i)
+end
+
+-- ------------------------------------------------------------------ deleting a roll
+-- Removes the roll's DNGs, its developed frames (from the server: MFVIEW/<ROLL8>,
+-- from the camera: MFVIEW/C<7 hex>, MFDEV/C<7 hex>), its index lines and its
+-- state directory, and records the roll id in ROLLS/DELETED.CFG (the folder
+-- which every sync downloads) so the server neither sends its frames back nor
+-- looks for its DNGs. Canon's JPEGs are left alone: CRW numbers can lag the
+-- JPEG counter, so which JPEG belongs to a frame is not known for sure.
+M.DELETED = M.ROOT .. "/ROLLS/DELETED.CFG"   -- inside ROLLS: every sync downloads that folder
+
+local function remove_dir(dir)
+  local n = 0
+  for _, name in ipairs(os.listdir(dir) or {}) do
+    if os.remove(dir .. "/" .. name) then n = n + 1 end
+  end
+  os.remove(dir)                                 -- an empty directory; may refuse, harmless
+  return n
+end
+
+local function drop_index_line(path, roll_id)
+  local s = M.read(path)
+  if not s then return end
+  local keep = {}
+  for line in string.gmatch(s, "[^\r\n]+") do
+    if not string.find(line, "roll=" .. roll_id, 1, true) then keep[#keep + 1] = line end
+  end
+  write_plain(path, #keep > 0 and (table.concat(keep, "\n") .. "\n") or "")
+end
+
+function M.deleted_ids()
+  local out = {}
+  for id in string.gmatch(M.read(M.DELETED) or "", "roll=([^|\r\n]+)") do out[id] = true end
+  return out
+end
+
+-- r: roll state (or nil if only developed frames are left), v: its view index entry (or nil)
+function M.delete_roll(r, v)
+  local id = (r and r.roll_id) or v.roll_id
+  local dngs, frames = 0, 0
+  if r then
+    for _, fr in ipairs(r.frames) do
+      if fr.path and stat(fr.path) and os.remove(fr.path) then dngs = dngs + 1 end
+    end
+  end
+  -- the server's folder as its index names it (the roll dir's name otherwise)
+  local dir8 = (v and v.origin == "server" and v.dir) or (r and r.dir) or nil
+  if dir8 then frames = frames + remove_dir(M.VIEW_ROOT .. "/" .. dir8) end
+  local cdir = r and M.cam_dir(r) or (v and v.origin == "camera" and v.dir) or nil
+  if cdir then
+    frames = frames + remove_dir(M.VIEW_ROOT .. "/" .. cdir)
+    remove_dir(M.DEV_ROOT .. "/" .. cdir)
+  end
+  drop_index_line(M.VIEW_ROOT .. "/INDEX.CFG", id)
+  drop_index_line(M.VIEW_ROOT .. "/CAMINDEX.CFG", id)
+  M.append(M.DELETED, string.format("roll=%s|%s|%d DNG|%d developed", id, M.now_iso(), dngs, frames))
+  if r then
+    local a = M.load(M.ROOT .. "/CONFIG", "ACTIVE")
+    if a and a.dir == r.dir then M.set_active(nil) end
+    remove_dir(M.roll_dir(r))
+  end
+  M.log(string.format("roll %s deleted: %d DNG, %d developed frame(s)", id, dngs, frames))
+  return dngs, frames
 end
 
 -- ------------------------------------------------------------------ frame detection

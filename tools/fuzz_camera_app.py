@@ -68,6 +68,8 @@ MACROS = {
     + K(*[rng.choice(["right", "left", "set", "down"]) for _ in range(rng.randrange(1, 6))]) + K("menu") + [("wait", 900)],
     "screen_test": lambda rng: TO_MENU + K("down", "down", "down", "down", "down", "set", "set") + [("wait", 900)]
     + K("menu") + [("wait", 900)],
+    "delete_roll": lambda rng: TO_MENU + K("down", "down", "down", "set") + K(*(["down"] * rng.randrange(0, 3)), "set")
+    + K(*(["down"] * rng.randrange(1, 3)), "set") + K("up", "set") + K(rng.choice(["up", "down"]), "set"),
     "finish_roll": lambda rng: TO_MENU + K("down", "down", "set", "up", "set") + [("wait", 600)],
 }
 

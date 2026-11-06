@@ -388,6 +388,42 @@ def test_four_autostarts_in_a_minute_switch_autostart_off(card):
     run(card, steps + [("expect_autostart", 0)])
 
 
+DELETE_FIRST = ROLLS + [("key", "set"), ("expect", "Delete roll"), ("key", "down"), ("key", "set"),
+                        ("expect", "Deletes its RAW files")]
+
+
+def test_delete_a_roll_not_on_the_server_asks_twice_and_removes_raw_and_developed(card):
+    _dev_files(card)
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)] + DEVELOP_LOADED
+        + [("wait", 8000), ("expect", "DEVELOPED: 2 frames")] + [("key", "down"), ("key", "set"),
+           ("expect", "NOT ON THE SERVER"), ("key", "up"), ("key", "set"), ("expect", "This cannot be undone"),
+           ("key", "up"), ("key", "set"), ("expect", "Roll deleted: 2 RAW, 2 developed")])
+    a = card / "A"
+    assert not list(a.glob("DCIM/*/*.DNG"))
+    assert len(list(a.glob("DCIM/*/*.JPG"))) == 2                       # Canon's JPEGs are kept
+    assert not rolls(card)
+    assert not list(a.glob("CHDK/MFVIEW/C*/*.MFV")) and not list(a.glob("CHDK/MFDEV/C*/*"))
+    assert "|2 DNG|2 developed" in (a / "CHDK" / "MFILM" / "ROLLS" / "DELETED.CFG").read_text()
+    assert not (a / "CHDK" / "MFVIEW" / "CAMINDEX.CFG").read_text().strip()
+
+
+def test_delete_can_be_declined(card):
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(1) + [("playback",), ("wait", 900)] + DELETE_FIRST
+        + [("key", "set"), ("wait", 300), ("expect", "Develop")])                # "No" is the default
+    assert len(rolls(card)) == 1 and list((card / "A").glob("DCIM/*/*.DNG"))
+
+
+def test_delete_a_roll_the_server_has_asks_once(card):
+    run(card, LOAD_PORTRA + LEN12 + [("wait", 600)] + shots(2) + [("playback",), ("wait", 900)])
+    (r,) = rolls(card)
+    _developed_on_card(card, n=2, rid=r["roll_id"])                          # the server developed it
+    run(card, ROLLS + [("key", "set"), ("expect", "DEVELOPED: 2 frames .server."), ("key", "down"), ("key", "set"),
+                       ("expect", "Deletes its RAW files"), ("key", "up"), ("key", "set"),
+                       ("expect", "Roll deleted: 2 RAW, 2 developed")])
+    assert not rolls(card) and not list((card / "A").glob("CHDK/MFVIEW/AAAAAAAA/*"))
+    assert r["roll_id"] not in (card / "A" / "CHDK" / "MFVIEW" / "INDEX.CFG").read_text()
+
+
 OSD_IDS = REPO / "src" / "camera" / "test" / "chdk-1.6.1-r6355-osd-conf-ids.txt"
 
 
