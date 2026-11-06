@@ -301,6 +301,86 @@ def cmd_web_passwd(args) -> int:
     return 0
 
 
+def cmd_photoprism_doctor(args) -> int:
+    """Separate checks for source reading and destination publishing (docs/web/34 W01). Exit 1 if any fails."""
+    from .darkroom import photoprism as pp
+    cfg = args.cfg.photoprism
+    results: list[dict] = []
+
+    def check(name: str, fn):
+        try:
+            detail = fn()
+            results.append({"check": name, "ok": True, "detail": detail})
+        except pp.PPError as e:
+            results.append({"check": name, "ok": False, "detail": f"{e.code}: {e.detail}"})
+        except Exception as e:      # noqa: BLE001 - a doctor reports, never crashes
+            results.append({"check": name, "ok": False, "detail": f"{type(e).__name__}: {e}"})
+
+    state: dict = {}
+
+    def connect():
+        state["c"] = pp.Client(cfg)
+        c = state["c"].config()
+        state["readonly"] = bool(c.get("readonly"))
+        return f"PhotoPrism {c.get('version')}, edition {c.get('edition')}, readonly={c.get('readonly')}"
+    check("connect+auth", connect)
+    if "c" in state:
+        c = state["c"]
+        check("source: albums", lambda: f"{len(c.albums(count=5))} album(s) listed")
+        check("source: folders", lambda: f"{len(c.folders())} top-level folder(s) listed")
+
+        def raws():
+            top = [f["path"] for f in c.folders()]
+            for folder in top:
+                for ph in c.photos(folder=folder, count=20):
+                    if ph.get("Type") == "raw":
+                        f, why = pp.raw_file_of(c.photo(ph["UID"]))
+                        if f:
+                            state["raw"] = f
+                            return f"RAW found: {f['Name']} ({f['Size']} bytes)"
+            raise pp.PPError("NO_RAW_FOUND", "no RAW-backed photo in the first folders")
+        check("source: RAW detection", raws)
+
+        def read_original():
+            root = pp.originals_root(cfg)
+            if not root or not root.is_dir():
+                raise pp.PPError("ORIGINALS_NOT_MOUNTED", f"{root}: set photoprism.originals_dir (or export_dir)")
+            f = state.get("raw")
+            if not f:
+                raise pp.PPError("SKIPPED", "no RAW to read")
+            path = pp.local_original(root, f["Name"])
+            if path.stat().st_size != f["Size"] or pp.sha1_file(path) != f["Hash"]:
+                raise pp.PPError("ORIGINAL_MISMATCH", f"{path} differs from PhotoPrism's record")
+            return f"read {path.name}, size and SHA-1 match PhotoPrism's record"
+        check("source: read original from disk", read_original)
+
+        def publish_dir():
+            if not cfg.export_dir:
+                raise pp.PPError("EXPORT_DIR_NOT_SET", "photoprism.export_dir")
+            why = pp.check_writable(cfg.export_dir, cfg.web_folder)
+            if why:
+                raise pp.PPError("NOT_WRITABLE", why)
+            return f"{cfg.export_dir / cfg.web_folder} is writable"
+        check("destination: folder write", publish_dir)
+        check("destination: index command", lambda: ("configured: " + " ".join(cfg.index_template or cfg.index_command))
+              if (cfg.index_template or cfg.index_command) else (_ for _ in ()).throw(
+                  pp.PPError("NO_INDEX_COMMAND", "PhotoPrism would index on its own schedule only")))
+        if args.write_test:
+            def album_roundtrip():
+                uid = c.create_album(f"mfilm-doctor-{os.getpid()}")
+                try:
+                    return f"album {uid} created"
+                finally:
+                    c.delete_album(uid)
+            check("destination: album create+delete", album_roundtrip)
+        else:
+            results.append({"check": "destination: album create", "ok": None,
+                            "detail": "not tested (use --write-test: creates and deletes a temporary album)"})
+    _out(args, results, "\n".join(f"{'OK  ' if r['ok'] else ('SKIP' if r['ok'] is None else 'FAIL')} {r['check']}: {r['detail']}"
+                                  for r in results))
+    return 0 if all(r["ok"] is not False for r in results) else 1
+
+
 def cmd_camera_card(args) -> int:
     from .camera_card import write_card
     for p in write_card(Path(args.out), utc_offset=args.utc_offset, bench=args.bench, chdk=args.chdk):
@@ -407,6 +487,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--mirror", help="local mirror of the card (default <data_dir>/camera-mirror/<host|usb>)")
     s.add_argument("--run", action="store_true", help="then develop and publish (like mfilmctl worker)")
     s.set_defaults(fn=cmd_camera_sync)
+    s = sub.add_parser("photoprism-doctor", parents=[common], help="test PhotoPrism source reading and publishing separately")
+    s.add_argument("--write-test", action="store_true", help="also create and delete a temporary album")
+    s.set_defaults(fn=cmd_photoprism_doctor)
     sub.add_parser("web-passwd", parents=[common],
                    help="set the operator password of the Web Darkroom (mfilm-web)").set_defaults(fn=cmd_web_passwd)
     s = sub.add_parser("camera-card", parents=[common], help="lay out the M-Film camera app files to copy onto a CHDK card")
