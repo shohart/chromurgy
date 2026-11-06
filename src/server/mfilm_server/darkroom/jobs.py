@@ -26,7 +26,7 @@ MAX_ATTEMPTS = 3
 MAX_ITEMS = 500
 TERMINAL = {"BAD_DNG", "BAD_RAW", "UNSUPPORTED_PROFILE", "UNSUPPORTED_RECIPE", "PROFILE_BUNDLE_MISMATCH",
             "OUTPUT_LARGER_THAN_SOURCE", "UNSUPPORTED_DNG_FEATURE", "SOURCE_CHANGED", "SOURCE_MISSING"}
-SOURCE_KINDS = {"upload", "photoprism_album", "photoprism_folder"}   # mfilm_roll: not yet
+SOURCE_KINDS = {"upload", "photoprism_album", "photoprism_folder", "mfilm_roll"}
 ACTIVE = ("QUEUED", "DECODING", "RENDERING", "VALIDATING")
 
 
@@ -70,8 +70,10 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict,
             raise JobError("UNKNOWN_ASSET", aid, 404)
         if not r["eligible"]:
             raise JobError("ASSET_NOT_ELIGIBLE", f"{aid}: {r['reason']}")
-        if r["origin"] not in ("upload", "photoprism"):
-            raise JobError("SOURCE_KIND_UNAVAILABLE", f"{aid}: origin {r['origin']}")
+        want = {"upload": "upload", "photoprism_album": "photoprism", "photoprism_folder": "photoprism",
+                "mfilm_roll": "camera_roll"}[src["kind"]]
+        if r["origin"] != want:
+            raise JobError("SOURCE_KIND_MISMATCH", f"{aid} comes from {r['origin']}, the job says {src['kind']}")
         rows.append(r)
     body = json.dumps(request, sort_keys=True)
     key = request.get("idempotency_key")

@@ -127,3 +127,15 @@ def test_creative_block_none_is_identity_and_full_block_runs_in_order():
     assert out.dtype == np.float32 and out.shape == x.shape and np.abs(out - x).max() > 0.01
     only_optics = creative.apply_optics(x, blk["optical"]["stack"], 0.45)
     assert np.array_equal(out, creative.apply_look(only_optics, "leica_m9_ccd", 0.8).astype(np.float32))   # optics, then look
+
+
+def test_comparison_sheet_tool_runs_on_the_synthetic_scene(tmp_path):
+    import importlib.util
+
+    from conftest import REPO
+    spec = importlib.util.spec_from_file_location("creative_sheet", REPO / "tools" / "creative_sheet.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.main(["--out", str(tmp_path)]) == 0
+    from PIL import Image
+    assert Image.open(tmp_path / "optics.png").size[0] == 600 * 4 and Image.open(tmp_path / "looks.png").size[1] > 400

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import sqlite3
@@ -21,7 +22,7 @@ from .. import config as config_mod
 from .. import core, db
 from ..bundles import Bundles
 from ..store import Store, UnsafePath, safe_id
-from . import auth, catalog, engine, jobs, pp_sources, preview, recipe2, sources
+from . import auth, catalog, engine, jobs, pp_sources, preview, recipe2, rolls, sources
 from . import photoprism as pp
 
 API = "/api/v1/darkroom"
@@ -504,6 +505,40 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
                 c.close()
         return await run_in_threadpool(work)
 
+    # ---- M-Film camera rolls as sources -------------------------------------------------------------
+    @app.get(f"{API}/rolls")
+    def get_rolls(_t: str = Depends(session), c=Depends(conn)):
+        return {"items": rolls.list_rolls(c)}
+
+    @app.post(f"{API}/rolls/select")
+    async def roll_select(request: Request, _t: str = Depends(session)):
+        try:
+            body = json.loads(await request.body())
+            device, roll = str(body["device_id"]), str(body["roll_id"])
+            only = [str(x) for x in body["frame_ids"]] if body.get("frame_ids") else None
+        except (ValueError, KeyError, TypeError):
+            raise ApiError(400, "BAD_REQUEST", "device_id and roll_id required") from None
+
+        def work():
+            c = db.connect(store.db_path)
+            try:
+                r = c.execute("SELECT * FROM rolls WHERE device_id=? AND id=?", (device, roll)).fetchone()
+                if not r:
+                    raise ApiError(404, "UNKNOWN_ROLL", roll)
+                assets, skipped = [], []
+                for f in rolls.roll_frames(c, device, roll):
+                    if only is not None and f["id"] not in only:
+                        continue
+                    row, why = rolls.snapshot(c, store, device, roll, f, r["film_profile_id"])
+                    if row:
+                        assets.append(sources.row_public(row))
+                    else:
+                        skipped.append({"frame_id": f["id"], "ordinal": f["ordinal"], "reason": why})
+                return {"assets": assets, "skipped": skipped, "source": {"kind": "mfilm_roll", "uid": roll}}
+            finally:
+                c.close()
+        return await run_in_threadpool(work)
+
     # ---- jobs and renders (docs/web/31) --------------------------------------------------------
     def job_id_ok(jid: str) -> str:
         if len(jid) != 32 or any(ch not in "0123456789abcdef" for ch in jid):
@@ -572,6 +607,30 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         return FileResponse(store.root / r["path"], media_type="image/jpeg",
                             filename=download_name(r["filename"], r["id"], film),
                             headers={"X-Asset-SHA256": r["sha256"], "Cache-Control": "private"})
+
+    @app.post(f"{API}/renders/{{render_id}}/publish", status_code=202)
+    async def publish_render(render_id: str, request: Request, _t: str = Depends(session), c=Depends(conn)):
+        """Publish a finished render later (docs/web/32): a job over the same source and recipe whose render
+        is reused byte for byte, so only the publication stages run. Repeating the same request is a no-op."""
+        r = render_row(c, render_id)
+        try:
+            out = json.loads(await request.body() or b"{}")
+        except ValueError:
+            raise ApiError(400, "BAD_REQUEST", "JSON body required") from None
+        src = c.execute("SELECT * FROM sources WHERE id=?", (r["source_id"],)).fetchone()
+        kind = {"upload": "upload", "photoprism": "photoprism_folder", "camera_roll": "mfilm_roll"}[src["origin"]]
+        dest = {k: out[k] for k in ("photoprism_folder", "photoprism_album_uid", "create_album_name") if out.get(k)}
+        recipe = json.loads(r["recipe"])
+        req = {"schema_version": 1, "source": {"kind": kind, "assets": [{"asset_id": src["id"]}]}, "recipe": recipe,
+               "output": {"format": "jpeg", "quality": recipe["render"]["quality"], "publish": True, **dest},
+               "idempotency_key": "pub-" + hashlib.sha256(f"{render_id}{json.dumps(dest, sort_keys=True)}".encode()).hexdigest()[:40]}
+        try:
+            jid, created = jobs.create_job(c, bundle(), req, cfg.photoprism.web_folder)
+        except recipe2.RecipeError as e:
+            raise ApiError(422, e.code, e.detail) from None
+        except jobs.JobError as e:
+            raise ApiError(e.status, e.code, e.detail) from None
+        return {**jobs.job_view(c, jid, items=False), "status_url": f"{API}/jobs/{jid}", "created": created}
 
     @app.get(f"{API}/jobs/{{job_id}}/zip")
     def job_zip(job_id: str, _t: str = Depends(session), c=Depends(conn)):

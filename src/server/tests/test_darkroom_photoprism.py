@@ -238,3 +238,75 @@ def test_unsafe_destination_is_refused_and_photoprism_outage_keeps_the_render(pp
     s, _ = run_publish(pp, store)
     assert pp.get(f"{dapp.API}/jobs/{jid}").json()["state"] == "COMPLETE"                      # recovered without re-rendering
     assert len(renders_on_disk(store)) == 1
+
+
+# ---- camera rolls as sources, publishing a finished render later --------------------------------------
+def archived_roll(store, frames=2, unverified=1):
+    """A roll the camera pipeline has received: real DNG bytes archived under originals/, catalog rows in place."""
+    import hashlib
+    c = db.connect(store.db_path)
+    c.execute("INSERT INTO devices(id) VALUES ('cam-1')")
+    c.execute("INSERT INTO rolls(id, device_id, film_profile_id, profile_bundle_hash, roll_length, expected_frames, camera_state,"
+              " manifest_sha256, created_at, state) VALUES ('roll-1','cam-1','portra400',?,12,?,'SEALED','m','2026-11-04T10:00:00Z','INPUTS_COMPLETE')",
+              ("b" * 64, frames + unverified))
+    data = DNG.read_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+    path = store.original_path("cam-1", "roll-1", "frame-01")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    c.execute("INSERT INTO assets(sha256, bytes, mime, kind, path) VALUES (?,?,?,?,?)",
+              (sha, len(data), "image/x-adobe-dng", "original_dng", str(path.relative_to(store.root))))
+    aid = c.execute("SELECT id FROM assets WHERE sha256=?", (sha,)).fetchone()[0]
+    for i in range(1, frames + unverified + 1):
+        ok = i <= frames
+        c.execute("INSERT INTO frames(id, device_id, roll_id, ordinal, capture_time, declared_sha256, declared_bytes, source_path,"
+                  " original_asset_id, original_state) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (f"frame-{i:02d}", "cam-1", "roll-1", i, "2026-11-04T10:00:00Z", sha, len(data), "A/DCIM/x.DNG",
+                   aid if ok else None, "VERIFIED" if ok else "DECLARED"))
+    c.close()
+    return sha, path
+
+
+def test_rolls_are_listed_and_their_verified_frames_become_sources(pp, store):
+    sha, path = archived_roll(store, frames=1, unverified=1)
+    rl = pp.get(f"{dapp.API}/rolls").json()["items"]
+    assert rl[0]["roll_id"] == "roll-1" and rl[0]["frames"] == 2 and rl[0]["verified"] == 1
+    r = pp.post(f"{dapp.API}/rolls/select", headers=H, json={"device_id": "cam-1", "roll_id": "roll-1"}).json()
+    assert [a["origin"] for a in r["assets"]] == ["camera_roll"] and r["assets"][0]["meta"]["model"] == "Canon PowerShot SX510 HS"
+    assert r["skipped"][0]["ordinal"] == 2 and "not on the server" in r["skipped"][0]["reason"]
+    assert pp.post(f"{dapp.API}/rolls/select", headers=H, json={"device_id": "cam-1", "roll_id": "nope"}).status_code == 404
+    aid = r["assets"][0]["asset_id"]
+    before = sha256_file(path)[0]
+    body = job_body([aid], recipe("cinestill800t", width=800, height=600),
+                    source={"kind": "mfilm_roll", "source_uid": "roll-1", "assets": [{"asset_id": aid}]})
+    jid = pp.post(f"{dapp.API}/jobs", headers=H, json=body).json()["job_id"]
+    drain(store)
+    v = pp.get(f"{dapp.API}/jobs/{jid}").json()
+    assert v["state"] == "COMPLETE" and sha256_file(path)[0] == before == sha      # the roll's own archive is untouched
+    assert pp.get(f"{dapp.API}/sources/{aid}/thumbnail").status_code == 200
+    bad = pp.post(f"{dapp.API}/jobs", headers=H, json=job_body([aid], recipe(), source={"kind": "upload", "assets": [{"asset_id": aid}]}))
+    assert bad.status_code == 422 and bad.json()["error_code"] == "SOURCE_KIND_MISMATCH"
+
+
+def test_publish_a_finished_render_later_reuses_it_and_is_idempotent(pp, store):
+    library(pp)
+    pp.post(f"{P}/select", headers=H, json={"photo_uids": ["p1"], "source_kind": "album", "source_uid": "al1"})
+    jid = pp.post(f"{dapp.API}/jobs", headers=H, json=job_body(["pp_fp1r"], recipe(width=800, height=600), source={
+        "kind": "photoprism_album", "source_uid": "al1", "assets": [{"asset_id": "pp_fp1r"}]})).json()["job_id"]
+    drain(store)
+    v = pp.get(f"{dapp.API}/jobs/{jid}").json()
+    rid = v["items"][0]["render"]["render_id"]
+    assert v["publish"] is None and not [p for p in pp.originals.rglob("*.jpg") if "IMG_1_" in p.name]       # rendered only
+    dest = {"photoprism_folder": "M-Film/Developed/later", "create_album_name": "Later"}
+    a = pp.post(f"{dapp.API}/renders/{rid}/publish", headers=H, json=dest)
+    assert a.status_code == 202 and a.json()["created"]
+    b = pp.post(f"{dapp.API}/renders/{rid}/publish", headers=H, json=dest)
+    assert b.json()["job_id"] == a.json()["job_id"] and not b.json()["created"]                              # repeat: same job
+    res = drain(store)
+    assert [x.detail for x in res] == ["reused"] and len(renders_on_disk(store)) == 1                        # no second render
+    run_publish(pp, store, index_into_fake(pp))
+    done = pp.get(f"{dapp.API}/jobs/{a.json()['job_id']}").json()
+    assert done["state"] == "COMPLETE" and done["items"][0]["published_path"].startswith("M-Film/Developed/later/")
+    assert [x["Title"] for x in pp.fake.albums.values()].count("Later") == 1
+    assert pp.post(f"{dapp.API}/renders/{'0' * 64}/publish", headers=H, json={}).status_code == 404
+    assert pp.post(f"{dapp.API}/renders/{rid}/publish", headers=H, json={"photoprism_folder": "../x"}).status_code == 422

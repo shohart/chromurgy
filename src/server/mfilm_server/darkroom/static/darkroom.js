@@ -83,15 +83,37 @@ $("#logout").addEventListener("click", async () => { try { await api("/logout", 
 
 /* ---------------- step 1: material ---------------- */
 function materialPanel() {
-  const upPane = uploadPane(), ppPane = ppPaneEl();
-  const mk = (id, label, pane, disabled, title) => h("button", { role: "tab", "aria-selected": String(id === "up"), disabled, title: title || "", onclick: ev => {
+  const upPane = uploadPane(), ppPane = ppPaneEl(), rollPane = rollPaneEl();
+  const panes = [upPane, ppPane, rollPane];
+  const mk = (label, pane, selected) => h("button", { role: "tab", "aria-selected": String(!!selected), onclick: ev => {
     for (const b of ev.target.parentNode.children) b.setAttribute("aria-selected", String(b === ev.target));
-    upPane.hidden = pane !== upPane; ppPane.hidden = pane !== ppPane; if (pane === ppPane) ppInit(); } }, label);
-  const tabs = h("div", { class: "tabs", role: "tablist" }, mk("up", "Upload RAW", upPane), mk("pp", "PhotoPrism", ppPane),
-    mk("roll", "M-Film rolls", null, true, "Camera rolls: not available yet"));
-  return h("div", {}, tabs, upPane, ppPane,
+    panes.forEach(x => { x.hidden = x !== pane; });
+    if (pane === ppPane) ppInit(); if (pane === rollPane) rollsInit(); } }, label);
+  const tabs = h("div", { class: "tabs", role: "tablist" }, mk("Upload RAW", upPane, true), mk("PhotoPrism", ppPane), mk("M-Film rolls", rollPane));
+  return h("div", {}, tabs, upPane, ppPane, rollPane,
     h("div", { class: "bar" }, h("button", { onclick: () => selectAll(true) }, "Select all"), h("button", { onclick: () => selectAll(false) }, "Clear"),
       h("span", { class: "dim", id: "selcount" })), h("div", { class: "assets", id: "assets" }));
+}
+/* ---- camera rolls received from the SX510: their archived originals can be developed again with any recipe ---- */
+function rollPaneEl() { return h("div", { id: "rolls", hidden: true }, h("p", { class: "dim", id: "rollmsg" }, "Loading rolls…"), h("div", { class: "cards", id: "rolllist" })); }
+async function rollsInit() {
+  try {
+    const r = await api("/rolls");
+    $("#rollmsg").textContent = r.items.length ? "Rolls received from the camera. The roll's own archive and history are never changed; renditions are new files." : "No rolls on the server yet.";
+    $("#rolllist").replaceChildren(...r.items.map(x => h("button", { class: "card", disabled: !x.verified, onclick: () => rollUse(x) },
+      h("strong", {}, `${x.roll_id.slice(0, 8)} · ${x.film_profile_id}`), h("small", {}, `${x.verified}/${x.frames} frames on the server · ${(x.created_at || "").slice(0, 10)}`),
+      h("br"), h("span", { class: "tag" }, `use ${x.verified} frame(s)`))));
+  } catch (e) { $("#rollmsg").textContent = e.message; }
+}
+async function rollUse(x) {
+  try {
+    toast("Reading the roll…");
+    const r = await api("/rolls/select", { method: "POST", json: { device_id: x.device_id, roll_id: x.roll_id } });
+    r.assets.forEach(a => S.selected.add(a.asset_id)); S.ppSource = r.source;
+    await refreshAssets();
+    if (r.assets.length) setCurrent(r.assets[0].asset_id);
+    toast(`${r.assets.length} frame(s) ready${r.skipped.length ? `, ${r.skipped.length} skipped: ${r.skipped[0].reason}` : ""}`);
+  } catch (e) { toast(e.message); }
 }
 function uploadPane() {
   const input = h("input", { type: "file", multiple: true, accept: ".dng,.nef,.DNG,.NEF", hidden: true, id: "file" });
@@ -185,6 +207,7 @@ async function ppSelect(body) {
     const r = await api(`/photoprism/${PP.inst.id}/select`, { method: "POST", json: body });
     r.assets.forEach(a => S.selected.add(a.asset_id)); S.ppSource = r.source;
     await refreshAssets();
+    if (r.assets.length) setCurrent(r.assets[r.assets.length - 1].asset_id);
     toast(`${r.assets.length} RAW source(s) ready${r.skipped.length ? `, ${r.skipped.length} skipped: ${r.skipped[0].reason}` : ""}`);
   } catch (e) { toast(e.message); }
 }
@@ -220,6 +243,7 @@ async function uploadFiles(files) {
       msg.textContent = init.duplicate ? "already on the server" : "ready"; msg.className = "okc";
       S.selected.add(src.asset_id);
       await refreshAssets();
+      setCurrent(src.asset_id);
     } catch (e) { msg.textContent = e.message; msg.className = "err"; }
   }
 }
@@ -228,6 +252,17 @@ async function refreshAssets() {
   S.assets = r.items;
   if (!S.current || !S.assets.find(a => a.asset_id === S.current)) S.current = S.assets.length ? S.assets[0].asset_id : null;
   renderAssets(); schedulePreview();
+}
+/* The preview always follows the frame the user last touched; the previous frame's picture is cleared, never left standing. */
+function setCurrent(id) {
+  if (!id) return;
+  const changed = S.current !== id;
+  S.current = id;
+  if (changed) {
+    ["#pv_t", "#pv_b"].forEach(q => { const i = $(q); if (i) { i.removeAttribute("src"); i.hidden = true; i.classList.remove("stale"); } });
+    const info = $("#pvinfo"); if (info) info.textContent = "Rendering the preview of the selected frame…";
+  }
+  renderAssets(); schedulePreview(true);
 }
 function selectAll(on) { S.selected = new Set(on ? S.assets.filter(a => a.eligible).map(a => a.asset_id) : []); renderAssets(); updateDevelop(); }
 const thumbs = {};
@@ -239,17 +274,16 @@ function renderAssets() {
     if (thumbs[a.asset_id]) th.style.backgroundImage = `url(${thumbs[a.asset_id]})`;
     else if (!(a.asset_id in thumbs)) loadThumb(a.asset_id);
     const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), role: "button", tabindex: "0", "aria-pressed": String(sel),
-      title: "Click: select · double-click: use for preview" },
-      th, h("span", { class: "tick" }, sel ? "✓" : ""),
+      title: "Click: show in the preview · tick: include in Develop" },
+      th, h("span", { class: "tick", title: "Include in Develop" }, sel ? "✓" : ""),
       h("div", { class: "meta" }, h("b", {}, a.filename), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
         (m.warnings || []).length ? h("span", { class: "err" }, " ⚠ " + m.warnings[0]) : null));
     const toggle = () => { sel ? S.selected.delete(a.asset_id) : S.selected.add(a.asset_id); renderAssets(); updateDevelop(); };
-    el.addEventListener("click", toggle);
-    el.addEventListener("dblclick", () => { S.current = a.asset_id; renderAssets(); schedulePreview(true); });
-    el.addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggle(); } if (e.key === "p") { S.current = a.asset_id; renderAssets(); schedulePreview(true); } });
+    el.addEventListener("click", ev => { if (ev.target.classList.contains("tick")) toggle(); else setCurrent(a.asset_id); });
+    el.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); toggle(); } if (e.key === "Enter") { e.preventDefault(); setCurrent(a.asset_id); } });
     return el;
   }));
-  $("#selcount").textContent = `${S.selected.size} of ${S.assets.length} selected · double-click a frame to preview it`;
+  $("#selcount").textContent = `${S.selected.size} of ${S.assets.length} selected for Develop · click a frame to preview it, tick to include it`;
   updateDevelop();
 }
 async function loadThumb(id) {
@@ -403,7 +437,10 @@ function developPanel() {
         h("option", { value: "daylight" }, "Daylight (M-Film default)"), h("option", { value: "as-shot" }, "As shot")))),
     destPanel(),
     h("div", { class: "bar" }, h("button", { class: "primary", id: "develop", onclick: develop }, "Develop selected"), h("span", { class: "dim", id: "devinfo" })),
-    h("h3", { style: "font-size:.95rem;margin:1.6rem 0 .6rem" }, "Jobs"), h("div", { class: "jobs", id: "jobs" }));
+    h("h3", { style: "font-size:.95rem;margin:1.6rem 0 .6rem" }, "Jobs"), h("div", { class: "jobs", id: "jobs" }),
+    h("h3", { style: "font-size:.95rem;margin:1.6rem 0 .6rem" }, "History of renditions"),
+    h("p", { class: "dim", style: "font:.72rem var(--mono)" }, "Every recipe gives its own file; nothing is overwritten. Publish uses the destination chosen above."),
+    h("div", { class: "jobs", id: "history" }));
 }
 function updateDevelop() { const b = $("#develop"); if (!b) return; b.disabled = S.selected.size === 0; $("#devinfo").textContent = S.selected.size ? `${S.selected.size} frame(s) → ${S.selected.size} JPEG` : "select at least one frame"; }
 function destPanel() {
@@ -432,10 +469,11 @@ function outputSpec() {
 async function develop() {
   try {
     const assets = [...S.selected].map(id => S.assets.find(a => a.asset_id === id)).filter(Boolean);
-    const pp = assets.length && assets.every(a => a.origin === "photoprism");
-    const source = pp && S.ppSource ? { kind: S.ppSource.kind === "folder" ? "photoprism_folder" : "photoprism_album", source_uid: S.ppSource.uid }
-      : pp ? { kind: "photoprism_folder" } : { kind: "upload" };
-    if (!pp && assets.some(a => a.origin === "photoprism")) return toast("Develop PhotoPrism frames and uploads as separate jobs");
+    const origins = new Set(assets.map(a => a.origin));
+    if (origins.size > 1) return toast("Develop frames from one kind of source per job (uploads, PhotoPrism or a roll)");
+    const o = [...origins][0];
+    const source = o === "photoprism" ? { kind: S.ppSource && S.ppSource.kind === "album" ? "photoprism_album" : "photoprism_folder", ...(S.ppSource ? { source_uid: S.ppSource.uid } : {}) }
+      : o === "camera_roll" ? { kind: "mfilm_roll", ...(S.ppSource ? { source_uid: S.ppSource.uid } : {}) } : { kind: "upload" };
     const j = await api("/jobs", { method: "POST", json: { schema_version: 1, source: { ...source, assets: assets.map(a => ({ asset_id: a.asset_id })) },
       recipe: recipe(), output: outputSpec() } });
     toast(`Job queued (${j.total} frame${j.total === 1 ? "" : "s"})`); refreshJobs();
@@ -448,8 +486,20 @@ async function refreshJobs() {
   const full = await Promise.all(list.items.map(j => api("/jobs/" + j.job_id)));
   const box = $("#jobs"); if (!box) return;
   box.replaceChildren(...full.map(jobCard));
+  refreshHistory();
   if (full.some(j => ["QUEUED", "RUNNING"].includes(j.state))) jobsTimer = setTimeout(refreshJobs, 2500);
   else jobsTimer = setTimeout(refreshJobs, 15000);
+}
+async function refreshHistory() {
+  const box = $("#history"); if (!box) return;
+  let r; try { r = await api("/history?count=30"); } catch (e) { return; }
+  box.replaceChildren(...(r.items.length ? r.items.map(x => h("div", { class: "job" }, h("header", {}, h("b", {}, x.filename), h("span", { class: "dim" },
+      `${x.film} · ${x.camera_look} · ${x.optical} · ${x.width}×${x.height} · ${(x.bytes / 1048576).toFixed(1)} MB · ${x.created_at.slice(0, 16).replace("T", " ")}`)),
+    h("div", { class: "acts" }, h("a", { class: "btn", href: `${API}/renders/${x.render_id}/file` }, "Download"),
+      h("button", { onclick: async () => {
+        const o = outputSpec(); if (!o.publish) return toast("Choose “Publish to PhotoPrism” in the destination above first");
+        try { const j = await api(`/renders/${x.render_id}/publish`, { method: "POST", json: { photoprism_folder: o.photoprism_folder, photoprism_album_uid: o.photoprism_album_uid, create_album_name: o.create_album_name } });
+          toast(j.created ? "Publishing…" : "Already queued or published"); refreshJobs(); } catch (e) { toast(e.message); } } }, "Publish")))) : [h("p", { class: "dim" }, "Nothing developed yet.")]));
 }
 const COLOR = { PUBLISHING: "var(--safe2)", COMPLETE: "var(--ok)", FAILED: "var(--bad)", PARTIAL: "var(--safe2)", RUNNING: "var(--safe)", QUEUED: "var(--dim)", CANCELLED: "var(--dim)" };
 function jobCard(j) {
