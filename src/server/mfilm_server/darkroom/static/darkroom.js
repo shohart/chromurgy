@@ -29,7 +29,8 @@ async function api(path, opts = {}) {
 /* ---------------- state ---------------- */
 const S = { catalog: null, assets: [], selected: new Set(), current: null,
   look: "neutral", film: null, strength: 1, grain: 1, halation: 1, softness: 1, quality: 92, seed: 0, wb: "daylight",
-  width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film" };
+  width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film",
+  crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"), aspect: "free", cropMode: false, cropRect: null, cropImg: null };
 const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Preview · Develop"];
 
 function opticalBlock() {
@@ -38,7 +39,7 @@ function opticalBlock() {
   if (!on.length) return { preset_id: "none", strength: 0, halation_policy: S.policy === "disabled" ? "disabled" : "film", stack: [] };
   return { preset_id: on[0], strength: S.fxStrength, halation_policy: S.policy, stack: on.map(id => ({ id, enabled: true, parameters: {} })) };
 }
-function recipe() {
+function recipe(withCrop = true) {
   const r = { schema_version: 2,
     camera_look: { id: S.look, version: "1.0.0", strength: S.look === "neutral" ? 1 : S.strength },
     film: { id: S.film, grain_scale: S.grain, halation_scale: S.halation, softness_scale: S.softness },
@@ -46,6 +47,7 @@ function recipe() {
     render: { output_format: "jpeg", output_color_space: "srgb", quality: S.quality },
     seed: S.seed, extensions: { white_balance: S.wb } };
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
+  if (withCrop && S.crops[S.current]) r.extensions.crop = S.crops[S.current];     // this frame's own framing
   return r;
 }
 
@@ -276,10 +278,10 @@ function renderAssets() {
     const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), role: "button", tabindex: "0", "aria-pressed": String(sel),
       title: "Click: show in the preview · tick: include in Develop" },
       th, h("span", { class: "tick", title: "Include in Develop" }, sel ? "✓" : ""),
-      h("div", { class: "meta" }, h("b", {}, a.filename), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
+      h("div", { class: "meta" }, h("b", {}, a.filename, S.crops[a.asset_id] ? " ✂" : ""), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
         (m.warnings || []).length ? h("span", { class: "err" }, " ⚠ " + m.warnings[0]) : null));
     const toggle = () => { sel ? S.selected.delete(a.asset_id) : S.selected.add(a.asset_id); renderAssets(); updateDevelop(); };
-    el.addEventListener("click", ev => { if (ev.target.classList.contains("tick")) toggle(); else setCurrent(a.asset_id); });
+    el.addEventListener("click", ev => { if (ev.target.classList.contains("tick")) toggle(); else { if (S.cropMode && a.asset_id !== S.current) endCrop(false); setCurrent(a.asset_id); } });
     el.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); toggle(); } if (e.key === "Enter") { e.preventDefault(); setCurrent(a.asset_id); } });
     return el;
   }));
@@ -384,7 +386,7 @@ function previewPanel() {
   const before = h("img", { alt: "Original, neutral development", id: "pv_b", hidden: true });
   const cut = h("div", { class: "cut", id: "cut", tabindex: "0", role: "slider", "aria-label": "Before / after", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": 50 });
   const stage = h("div", { class: "stage", id: "stage" }, h("div", { class: "layer" }, treated), h("div", { class: "layer", id: "beforeLayer" }, before), cut,
-    h("span", { class: "busy", id: "busy" }), h("span", { class: "dim", id: "empty" }, "Upload a RAW to see a preview"));
+    h("div", { class: "layer", id: "cropLayer", hidden: true }), h("span", { class: "busy", id: "busy" }), h("span", { class: "dim", id: "empty" }, "Upload a RAW to see a preview"));
   let pos = 50;
   const setCut = p => { pos = Math.max(0, Math.min(100, p)); cut.style.left = pos + "%"; $("#beforeLayer").style.clipPath = `inset(0 ${100 - pos}% 0 0)`; cut.setAttribute("aria-valuenow", Math.round(pos)); };
   setTimeout(() => setCut(50));
@@ -395,7 +397,15 @@ function previewPanel() {
   return h("div", {}, h("div", { class: "bar", style: "margin:0 0 .7rem" },
     h("label", { for: "pvsize", style: "margin:0" }, "Preview size"), h("select", { id: "pvsize", style: "width:auto", onchange: () => schedulePreview(true) },
       h("option", { value: 1280 }, "1280 px (default)"), h("option", { value: 720 }, "720 px"), h("option", { value: 2048 }, "2048 px")),
-    h("button", { onclick: () => schedulePreview(true) }, "Refresh preview"), h("span", { class: "dim", id: "wipelabel" }, "left of the line: original (neutral) · right: treated")),
+    h("button", { onclick: () => schedulePreview(true) }, "Refresh preview"),
+    h("button", { id: "cropbtn", "aria-pressed": "false", onclick: toggleCrop, title: "Frame this photograph" }, "✂ Crop"),
+    h("span", { id: "cropctl", hidden: true, class: "bar", style: "margin:0;gap:.4rem" },
+      h("select", { id: "aspect", "aria-label": "Crop proportions", style: "width:auto", onchange: e => { S.aspect = e.target.value; refit(); } },
+        ["free", "original", "1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"].map(a => h("option", { value: a }, a === "free" ? "Free" : a === "original" ? "Original ratio" : a))),
+      h("button", { onclick: flipCrop, title: "Swap landscape / portrait" }, "⟲ Rotate ratio"), h("button", { class: "primary", onclick: () => endCrop(true) }, "Done"),
+      h("button", { onclick: () => endCrop(false) }, "Cancel"), h("button", { onclick: resetCrop }, "Reset"),
+      h("button", { onclick: cropAll, title: "Give every selected frame this framing" }, "Apply to all selected")),
+    h("span", { class: "dim", id: "wipelabel" }, "left of the line: original (neutral) · right: treated")),
     stage, h("div", { class: "pvinfo", id: "pvinfo" }, "Previews are real renders at reduced size and are not export quality."));
 }
 function schedulePreview(now) {
@@ -406,24 +416,146 @@ function schedulePreview(now) {
 }
 async function runPreview() {
   if (!S.current) { $("#empty").hidden = false; return; }
+  if (S.cropMode) return;                                  // the cropper shows the whole frame, not a render
   const seq = ++pvSeq, edge = Number($("#pvsize").value), busy = $("#busy");
   busy.textContent = "rendering…"; $("#empty").hidden = true;
   try {
     const [pt, pb] = await Promise.all([
       api("/previews", { method: "POST", json: { asset_id: S.current, recipe: recipe(), max_edge: edge, stream: "main" } }),
-      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main", white_balance: S.wb } })]);
+      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main", white_balance: S.wb, ...(S.crops[S.current] ? { crop: S.crops[S.current] } : {}) } })]);
     const [st, sb] = await Promise.all([pollPreview(pt.preview_id), pollPreview(pb.preview_id)]);
     if (seq !== pvSeq) return;                         // a newer edit superseded this one: never show it as current
     if (st.status !== "DONE") { busy.textContent = ""; $("#pvinfo").textContent = `Preview failed: ${st.error_code || st.status} ${st.detail || ""}`; return; }
     const [u1, u2] = await Promise.all([imgUrl(pt.preview_id), sb.status === "DONE" ? imgUrl(pb.preview_id) : null]);
     if (seq !== pvSeq) return;
     const t = $("#pv_t"), b = $("#pv_b");
+    $("#stage").style.height = "";
+    t.onload = () => fitStage(t);
     t.src = u1; t.hidden = false; t.classList.remove("stale");
     if (u2) { b.src = u2; b.hidden = false; }
     busy.textContent = "";
     $("#pvinfo").replaceChildren(h("span", {}, "recipe ", pt.recipe_hash.slice(0, 12)), h("span", {}, `${st.width}×${st.height}px preview`),
       h("span", {}, `${st.elapsed_s}s${st.cached ? " (cached)" : ""}`), h("span", {}, "not export quality"));
   } catch (e) { if (seq === pvSeq) { busy.textContent = ""; $("#pvinfo").textContent = "Preview: " + e.message; } }
+}
+
+/* The stage must be as tall as the picture in it (the layers are absolutely positioned, so they cannot size it). */
+function fitStage(img) {
+  const st = $("#stage"); if (!st || !img) return;
+  requestAnimationFrame(() => { const h = img.getBoundingClientRect().height; if (h > 40) st.style.height = Math.round(h + (S.cropMode ? 24 : 0)) + "px"; });
+}
+window.addEventListener("resize", () => { const i = S.cropMode ? S.cropImg : $("#pv_t"); if (i && i.getAttribute("src")) { $("#stage").style.height = ""; fitStage(i); } });
+
+/* ---------------- crop tool ----------------
+   The rectangle is kept in normalized coordinates of the upright frame, the same numbers the server uses for the
+   preview and the full-size render. While cropping, the stage shows the whole uncropped frame. */
+const ASPECT = { "1:1": 1, "5:4": 5 / 4, "4:5": 4 / 5, "4:3": 4 / 3, "3:4": 3 / 4, "3:2": 3 / 2, "2:3": 2 / 3, "16:9": 16 / 9, "9:16": 9 / 16 };
+const MINC = 0.04;
+function pxRatio() {                         // crop width/height in PIXELS the lock asks for, or null for free
+  if (S.aspect === "free") return null;
+  const i = S.cropImg; if (!i || !i.naturalWidth) return null;
+  return S.aspect === "original" ? i.naturalWidth / i.naturalHeight : ASPECT[S.aspect];
+}
+function normRatio() { const a = pxRatio(), i = S.cropImg; return a ? a * i.naturalHeight / i.naturalWidth : null; }   // w_n / h_n
+function clampRect(r) {
+  r.w = Math.min(Math.max(r.w, MINC), 1); r.h = Math.min(Math.max(r.h, MINC), 1);
+  r.x = Math.min(Math.max(r.x, 0), 1 - r.w); r.y = Math.min(Math.max(r.y, 0), 1 - r.h); return r;
+}
+function fitRatio(r, nr, anchor = "center") {   // largest rectangle of ratio nr inside r
+  let w = r.w, h = r.h;
+  if (w / h > nr) w = h * nr; else h = w / nr;
+  const out = anchor === "center" ? { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h } : { x: r.x, y: r.y, w, h };
+  return clampRect(out);
+}
+function refit() { const nr = normRatio(); if (nr && S.cropRect) S.cropRect = fitRatio(S.cropRect, nr); drawCrop(); }
+function flipCrop() {
+  const m = { "4:3": "3:4", "3:4": "4:3", "3:2": "2:3", "2:3": "3:2", "16:9": "9:16", "9:16": "16:9", "5:4": "4:5", "4:5": "5:4" };
+  if (m[S.aspect]) { S.aspect = m[S.aspect]; $("#aspect").value = S.aspect; refit(); }
+}
+async function toggleCrop() { S.cropMode ? endCrop(false) : startCrop(); }
+async function startCrop() {
+  if (!S.current) return toast("Choose a frame first");
+  S.cropMode = true; $("#cropbtn").setAttribute("aria-pressed", "true"); $("#cropctl").hidden = false;
+  const stage = $("#stage"), lay = $("#cropLayer");
+  stage.querySelectorAll(".layer:not(#cropLayer), .cut").forEach(e => { e.style.visibility = "hidden"; });
+  lay.hidden = false; lay.replaceChildren(h("span", { class: "dim" }, "loading the whole frame…")); $("#busy").textContent = "";
+  try {
+    const edge = Math.max(Number($("#pvsize").value), 1280);
+    const p = await api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: Math.min(edge, 2048), stream: "crop", white_balance: S.wb } });
+    const st = await pollPreview(p.preview_id);
+    if (st.status !== "DONE") throw new Error(st.error_code || st.status);
+    const url = await imgUrl(p.preview_id); if (!S.cropMode) return;
+    const img = h("img", { alt: "Whole frame, for cropping", draggable: "false" }); img.onload = () => { fitStage(img); S.cropRect = S.crops[S.current] ? { ...S.crops[S.current] } : { x: 0.05, y: 0.05, w: 0.9, h: 0.9 }; refit(); drawCrop(); };
+    S.cropImg = img; img.src = url;
+    const box = h("div", { class: "cropbox", id: "cropbox", tabindex: "0", role: "group", "aria-label": "Crop rectangle. Arrow keys move it, Shift+arrows resize it." },
+      ["nw", "n", "ne", "e", "se", "s", "sw", "w"].map(d => h("i", { class: "hd hd-" + d, "data-h": d })));
+    lay.replaceChildren(h("div", { class: "cropwrap", id: "cropwrap" }, img, box));
+    wireCrop(box);
+  } catch (e) { toast("Crop: " + e.message); endCrop(false); }
+}
+function endCrop(apply) {
+  if (!S.cropMode) return;
+  if (apply && S.cropRect) {
+    const r = S.cropRect, full = r.x < 0.001 && r.y < 0.001 && r.w > 0.998 && r.h > 0.998;
+    if (full) delete S.crops[S.current]; else S.crops[S.current] = { x: +r.x.toFixed(4), y: +r.y.toFixed(4), w: +r.w.toFixed(4), h: +r.h.toFixed(4) };
+    saveCrops();
+  }
+  S.cropMode = false; S.cropRect = null; $("#cropbtn").setAttribute("aria-pressed", "false"); $("#cropctl").hidden = true;
+  const lay = $("#cropLayer"); lay.hidden = true; lay.replaceChildren();
+  $("#stage").querySelectorAll(".layer:not(#cropLayer), .cut").forEach(e => { e.style.visibility = ""; });
+  ["#pv_t", "#pv_b"].forEach(q => { const i = $(q); i.removeAttribute("src"); i.hidden = true; });
+  renderAssets(); schedulePreview(true);
+}
+function saveCrops() { try { localStorage.setItem("mfilm.crops", JSON.stringify(S.crops)); } catch (e) { /* private mode: crops last for this page only */ } }
+function resetCrop() { S.cropRect = { x: 0, y: 0, w: 1, h: 1 }; S.aspect = "free"; $("#aspect").value = "free"; drawCrop(); }
+function cropAll() {
+  const r = S.cropRect; if (!r) return;
+  const c = { x: +r.x.toFixed(4), y: +r.y.toFixed(4), w: +r.w.toFixed(4), h: +r.h.toFixed(4) };
+  [...S.selected].forEach(id => { S.crops[id] = { ...c }; }); S.crops[S.current] = { ...c }; saveCrops();
+  toast(`Framing set on ${S.selected.size} selected frame(s). Same fractions of each frame, so frames of other proportions are cropped accordingly.`);
+}
+function drawCrop() {
+  const box = $("#cropbox"), r = S.cropRect; if (!box || !r) return;
+  Object.assign(box.style, { left: r.x * 100 + "%", top: r.y * 100 + "%", width: r.w * 100 + "%", height: r.h * 100 + "%" });
+  const i = S.cropImg; const px = i && i.naturalWidth ? `${Math.round(r.w * i.naturalWidth)}×${Math.round(r.h * i.naturalHeight)} of the preview` : "";
+  $("#pvinfo").textContent = `Crop ${(r.w * 100).toFixed(1)}% × ${(r.h * 100).toFixed(1)}% of the frame, ${px}. The full-size render keeps the matching native pixels.`;
+}
+function wireCrop(box) {
+  let drag = null;
+  const wrap = () => $("#cropwrap").getBoundingClientRect();
+  box.addEventListener("pointerdown", e => {
+    const hd = e.target.dataset.h || "move"; const w = wrap();
+    drag = { hd, sx: e.clientX, sy: e.clientY, r: { ...S.cropRect }, w }; box.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  box.addEventListener("pointermove", e => {
+    if (!drag) return;
+    const dx = (e.clientX - drag.sx) / drag.w.width, dy = (e.clientY - drag.sy) / drag.w.height, o = drag.r, hd = drag.hd, nr = normRatio();
+    let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h;
+    if (hd === "move") { const w = o.w, h = o.h; x0 = Math.min(Math.max(o.x + dx, 0), 1 - w); y0 = Math.min(Math.max(o.y + dy, 0), 1 - h); x1 = x0 + w; y1 = y0 + h; }
+    else {
+      if (hd.includes("w")) x0 = Math.min(Math.max(o.x + dx, 0), x1 - MINC);
+      if (hd.includes("e")) x1 = Math.max(Math.min(o.x + o.w + dx, 1), x0 + MINC);
+      if (hd.includes("n")) y0 = Math.min(Math.max(o.y + dy, 0), y1 - MINC);
+      if (hd.includes("s")) y1 = Math.max(Math.min(o.y + o.h + dy, 1), y0 + MINC);
+      if (nr) {                                           // keep the chosen proportions, anchored at the opposite side
+        let w = x1 - x0, h = y1 - y0;
+        const horiz = hd === "e" || hd === "w", vert = hd === "n" || hd === "s";
+        if (vert) w = h * nr; else if (horiz) h = w / nr; else if (w / h > nr) w = h * nr; else h = w / nr;
+        const ax = hd.includes("w") ? x1 : hd.includes("e") ? x0 : (x0 + x1) / 2, ay = hd.includes("n") ? y1 : hd.includes("s") ? y0 : (y0 + y1) / 2;
+        const maxW = hd.includes("w") ? ax : hd.includes("e") ? 1 - ax : 2 * Math.min(ax, 1 - ax), maxH = hd.includes("n") ? ay : hd.includes("s") ? 1 - ay : 2 * Math.min(ay, 1 - ay);
+        const k = Math.min(1, maxW / w, maxH / h); w *= k; h *= k;
+        x0 = hd.includes("w") ? ax - w : hd.includes("e") ? ax : ax - w / 2; y0 = hd.includes("n") ? ay - h : hd.includes("s") ? ay : ay - h / 2; x1 = x0 + w; y1 = y0 + h;
+      }
+    }
+    S.cropRect = clampRect({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }); drawCrop();
+  });
+  box.addEventListener("pointerup", () => { drag = null; });
+  box.addEventListener("keydown", e => {
+    const st = e.shiftKey ? 0.02 : 0.01, r = { ...S.cropRect }; const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]; if (!dir) return; e.preventDefault();
+    if (e.shiftKey) { r.w += dir[0] * st; r.h += dir[1] * st; const nr = normRatio(); S.cropRect = clampRect(nr ? { ...r, h: r.w / nr } : r); }
+    else { r.x += dir[0] * st; r.y += dir[1] * st; S.cropRect = clampRect(r); }
+    drawCrop();
+  });
 }
 
 /* ---------------- develop + jobs ---------------- */
@@ -474,8 +606,8 @@ async function develop() {
     const o = [...origins][0];
     const source = o === "photoprism" ? { kind: S.ppSource && S.ppSource.kind === "album" ? "photoprism_album" : "photoprism_folder", ...(S.ppSource ? { source_uid: S.ppSource.uid } : {}) }
       : o === "camera_roll" ? { kind: "mfilm_roll", ...(S.ppSource ? { source_uid: S.ppSource.uid } : {}) } : { kind: "upload" };
-    const j = await api("/jobs", { method: "POST", json: { schema_version: 1, source: { ...source, assets: assets.map(a => ({ asset_id: a.asset_id })) },
-      recipe: recipe(), output: outputSpec() } });
+    const j = await api("/jobs", { method: "POST", json: { schema_version: 1, source: { ...source, assets: assets.map(a => ({ asset_id: a.asset_id, ...(S.crops[a.asset_id] ? { crop: S.crops[a.asset_id] } : {}) })) },
+      recipe: recipe(false), output: outputSpec() } });
     toast(`Job queued (${j.total} frame${j.total === 1 ? "" : "s"})`); refreshJobs();
   } catch (e) { toast(e.message); }
 }
@@ -509,7 +641,7 @@ function jobCard(j) {
   if (j.counts.FAILED || j.counts.CANCELLED) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/retry`, { method: "POST" }); refreshJobs(); } }, "Retry failed / cancelled"));
   if (j.counts.COMPLETE) acts.append(h("a", { class: "btn", href: `${API}/jobs/${j.job_id}/zip`, download: "" }, `Download ZIP (${j.counts.COMPLETE})`));
   return h("div", { class: "job" }, h("header", {}, st, h("b", {}, j.film), h("span", { class: "dim" }, `${j.camera_look} · recipe ${j.recipe_hash.slice(0, 10)} · ${j.created_at.slice(0, 19).replace("T", " ")}`)),
-    h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename),
+    h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename, i.crop ? " ✂" : ""),
       i.published_path ? h("span", { class: i.state === "COMPLETE" ? "okc" : "dim", title: i.publish_note || i.published_path }, i.state === "COMPLETE" ? "in PhotoPrism ✓" : i.state.toLowerCase()) : null,
       i.render ? h("a", { href: `${API}/renders/${i.render.render_id}/file`, style: "color:var(--ok)" }, `${i.render.width}×${i.render.height} ↓`)
         : h("span", { class: i.state === "FAILED" ? "err" : "dim", title: i.error_detail || "" }, i.error_code || i.state)))), acts);

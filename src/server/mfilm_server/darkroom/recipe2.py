@@ -16,7 +16,7 @@ import jsonschema
 
 from .. import core
 from ..ids import canonical_json
-from . import catalog
+from . import catalog, cropping
 
 
 class RecipeError(Exception):
@@ -79,6 +79,19 @@ def normalize(recipe: dict, bundle: core.Bundle) -> dict:
     rd = r["render"]
     if rd["output_format"] != "jpeg" or rd["output_color_space"] != "srgb":
         raise RecipeError("UNSUPPORTED_OUTPUT", f"{rd['output_format']}/{rd['output_color_space']}: only jpeg/srgb")
+    ext = r.get("extensions") or {}
+    if "crop" in ext:
+        try:
+            canon = cropping.normalize_crop(ext["crop"])
+        except cropping.CropError as e:
+            raise RecipeError("INVALID_CROP", str(e)) from None
+        if canon:
+            ext["crop"] = canon
+        else:
+            ext.pop("crop")                                  # the whole frame is no crop: one identity for it
+        r["extensions"] = ext
+        if not ext:
+            r.pop("extensions")
     if bool(rd.get("width")) != bool(rd.get("height")):
         raise RecipeError("INVALID_RECIPE", "render.width and render.height go together")
     return r
@@ -156,9 +169,27 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
             "output_spec": {"format": "image/jpeg", "colorspace": "sRGB", "width": width, "height": height,
                             "jpeg_quality": quality if quality is not None else rd["quality"],
                             "orientation_policy": "normalize-pixels"}}
+    crop = (r.get("extensions") or {}).get("crop")
+    if crop:
+        v1["crop"] = crop                         # absent when uncropped: those render ids stay as before
     if creative:                                  # absent for neutral/no-effect: those render ids stay as before
         v1["creative"] = {"version": VERSION, **creative}
     return v1
+
+
+def with_crop(r: dict, crop: dict | None) -> dict:
+    """Copy of a normalized recipe carrying this frame's crop (None/whole frame = no crop)."""
+    out = copy.deepcopy(r)
+    ext = dict(out.get("extensions") or {})
+    ext.pop("crop", None)
+    c = cropping.normalize_crop(crop) if crop else None
+    if c:
+        ext["crop"] = c
+    if ext:
+        out["extensions"] = ext
+    else:
+        out.pop("extensions", None)
+    return out
 
 
 def default(film_id: str, bundle: core.Bundle) -> dict:

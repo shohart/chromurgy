@@ -19,12 +19,12 @@ from ..bundles import Bundles, BundleUnavailable
 from ..develop import DevelopError, develop, recipe_render_id, recipe_seed
 from ..ids import sha256_file
 from ..store import Store
-from . import recipe2
+from . import cropping, recipe2
 
 NOW = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
 MAX_ATTEMPTS = 3
 MAX_ITEMS = 500
-TERMINAL = {"BAD_DNG", "BAD_RAW", "UNSUPPORTED_PROFILE", "UNSUPPORTED_RECIPE", "PROFILE_BUNDLE_MISMATCH",
+TERMINAL = {"INVALID_CROP", "BAD_DNG", "BAD_RAW", "UNSUPPORTED_PROFILE", "UNSUPPORTED_RECIPE", "PROFILE_BUNDLE_MISMATCH",
             "OUTPUT_LARGER_THAN_SOURCE", "UNSUPPORTED_DNG_FEATURE", "SOURCE_CHANGED", "SOURCE_MISSING"}
 SOURCE_KINDS = {"upload", "photoprism_album", "photoprism_folder", "mfilm_roll"}
 ACTIVE = ("QUEUED", "DECODING", "RENDERING", "VALIDATING")
@@ -63,6 +63,12 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict,
         raise JobError("DUPLICATE_ASSET", "an asset appears twice in the job")
     if len(ids) > MAX_ITEMS:
         raise JobError("TOO_MANY_ASSETS", f"{len(ids)} > {MAX_ITEMS}", 413)
+    crops: dict[str, dict | None] = {}
+    for a in src["assets"]:
+        try:
+            crops[a["asset_id"]] = cropping.normalize_crop(a.get("crop"))
+        except cropping.CropError as e:
+            raise JobError("INVALID_CROP", f"{a['asset_id']}: {e}") from None
     rows = []
     for aid in ids:
         r = conn.execute("SELECT * FROM sources WHERE id=?", (aid,)).fetchone()
@@ -154,7 +160,9 @@ def job_view(conn: sqlite3.Connection, job_id: str, *, items: bool = True) -> di
             "album_uid": j["album_uid"]}
     if items:
         view["recipe"] = recipe
-        view["items"] = [{
+        req_assets = {a["asset_id"]: a.get("crop") for a in json.loads(j["request"])["source"]["assets"]}
+        view["items"] = [{"crop": req_assets.get(r["source_id"]),
+            
             "item_id": r["id"], "asset_id": r["source_id"], "filename": r["filename"], "ordinal": r["ordinal"],
             "state": r["state"], "attempt": r["attempt"], "error_code": r["error_code"],
             "error_detail": r["error_detail"], "published_path": r["pub_path"], "photoprism_photo_uid": r["pp_photo_uid"],
@@ -248,7 +256,10 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
     job = conn.execute("SELECT * FROM darkroom_jobs WHERE id=?", (item["job_id"],)).fetchone()
     src = conn.execute("SELECT * FROM sources WHERE id=?", (item["source_id"],)).fetchone()
     try:
-        recipe = json.loads(job["recipe"])
+        base = json.loads(job["recipe"])
+        crop = next((a.get("crop") for a in json.loads(job["request"])["source"]["assets"] if a["asset_id"] == src["id"]), None)
+        recipe = recipe2.with_crop(base, crop) if crop else base  # this frame's own framing (else the job-level one, if any)
+        rhash = recipe2.recipe_hash(recipe)
         rd = recipe["render"]
         v1 = recipe2.to_v1(recipe, width=int(rd.get("width") or 0), height=int(rd.get("height") or 0))
         bundle = bundles.get(v1["profile_bundle_hash"])
@@ -284,7 +295,7 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
         conn.execute("UPDATE darkroom_items SET state='VALIDATING' WHERE id=?", (iid,))
         prov.update({"source": {"origin": src["origin"], "asset_id": src["id"], "sha256": src["sha256"],
                                 "filename": src["filename"], "meta": meta},
-                     "recipe_v2": recipe, "recipe_v2_hash": job["recipe_hash"], "job_id": job["id"]})
+                     "recipe_v2": recipe, "recipe_v2_hash": rhash, "job_id": job["id"]})
         dest = store.root / "web-renders" / rid[:2] / f"{rid}.jpg"
         prov["output"] = str(dest.relative_to(store.root))
         (work / f"{rid}.jpg.json").write_text(json.dumps(prov, indent=2, ensure_ascii=False) + "\n")
@@ -300,7 +311,7 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("INSERT OR IGNORE INTO web_renders(id, source_id, recipe_hash, recipe, path, sha256, bytes, width,"
                      " height) VALUES (?,?,?,?,?,?,?,?,?)",
-                     (rid, src["id"], job["recipe_hash"], job["recipe"], str(dest.relative_to(store.root)), sha, nbytes,
+                     (rid, src["id"], rhash, json.dumps(recipe, sort_keys=True), str(dest.relative_to(store.root)), sha, nbytes,
                       prov["output_width"], prov["output_height"]))
         done = "STAGED" if job["publish"] else "COMPLETE"
         _set(conn, iid, done, render_id=rid)
@@ -311,6 +322,8 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
         return _fail(conn, iid, item["attempt"] + 1, e.code, str(e), terminal=True)
     except (DevelopError, core.CoreError) as e:
         return _fail(conn, iid, item["attempt"] + 1, e.code, e.detail, terminal=e.code in TERMINAL)
+    except cropping.CropError as e:
+        return _fail(conn, iid, item["attempt"] + 1, "INVALID_CROP", str(e), terminal=True)
     except OSError as e:
         return _fail(conn, iid, item["attempt"] + 1, "IO_ERROR", str(e), terminal=False)
 

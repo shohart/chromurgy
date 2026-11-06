@@ -49,6 +49,18 @@ PhotoPrism credentials: app password for `admin` in `~/.config/mfilm/photoprism.
 - `tools/creative_sheet.py`: none/25/50/100 % comparison sheets for every effect and look (synthetic scene or `--image`).
 - Job kind and source origin must agree (`SOURCE_KIND_MISMATCH`).
 
+## Crop (third pass)
+Per-frame crop: `crop {x,y,w,h}` in NORMALIZED coordinates of the upright, lens-corrected frame, so a 1280 px preview and the full-size
+render show the same framing. Applied right after normalization and BEFORE optical effects, Camera Look and film (radii, scanner
+exposure and grain scale refer to the kept picture); the RAW is never touched; the crop is part of the render id (another crop = another file
+next to the old one; no crop keeps the old ids). Job assets carry their own `crop` (extension of web-darkroom-job.schema.json, flagged in the
+contract copy); a job-level `recipe.extensions.crop` also works and is what "publish later" reuses. UI: **Crop** on the preview stage shows the whole frame with a
+rule-of-thirds rectangle, 8 handles, proportions (free / original / 1:1 / 5:4 / 4:3 / 3:2 / 16:9 and portrait), rotate ratio, arrow keys (Shift = resize),
+Reset, Cancel, Done, "Apply to all selected" (same fractions per frame); crops persist across a page reload (localStorage). `Output size` after a crop still means "not
+larger than the kept pixels" (never upscaled). Tested: normalization rules, same fractions at every resolution, preview before/treated line up, native-pixel full-size
+output (73.3 % x 65.1 % of 4000x3000 -> 2931x1954), dedup of equal crops, publish-later keeps the framing; driven with a real mouse in the browser.
+Not included: straighten/rotate by an angle, lens-perspective correction.
+
 ## Known limits
 - Preview demosaic is LibRaw's fast linear one (documented in preview.py); final renders use the recipe's demosaic.
 - A job's `GET` is polled by the UI (2.5 s); SSE is not implemented.

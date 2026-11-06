@@ -26,7 +26,7 @@ import numpy as np
 
 from .. import core, develop
 from ..ids import canonical_json
-from . import creative, engine
+from . import creative, cropping, engine
 
 NORM_EDGE = 2048
 PREVIEW_DEMOSAIC = "fast"
@@ -37,12 +37,13 @@ def wb_mode(v2: dict) -> str:
     return (v2.get("extensions") or {}).get("white_balance", "daylight")
 
 
-def preview_key(*, sha: str, kind: str, recipe_hash: str, max_edge: int, bundle_hash: str, wb: str = "daylight") -> str:
+def preview_key(*, sha: str, kind: str, recipe_hash: str, max_edge: int, bundle_hash: str, wb: str = "daylight",
+                crop: dict | None = None) -> str:
     """Cache identity: source + recipe + engine versions + size (never a file name)."""
     return hashlib.sha256(canonical_json({
         "v": "mfilm-preview-v1", "kind": kind, "source": sha, "recipe": recipe_hash, "edge": max_edge,
         "core": core.core_version(), "bundle": bundle_hash, "norm": develop.INPUT_NORMALIZATION,
-        "demosaic": PREVIEW_DEMOSAIC, "wb": wb})).hexdigest()
+        "demosaic": PREVIEW_DEMOSAIC, "wb": wb, "crop": crop})).hexdigest()
 
 
 def _shrink(img: np.ndarray, edge: int) -> np.ndarray:
@@ -79,6 +80,8 @@ def render(job: dict) -> dict:
     """Never raises (exceptions with custom constructors do not survive the process boundary)."""
     try:
         return _render(job)
+    except cropping.CropError as e:
+        return {"failed": True, "error_code": "INVALID_CROP", "detail": str(e)}
     except (develop.DevelopError, core.CoreError) as e:
         return {"failed": True, "error_code": e.code, "detail": e.detail[:300]}
     except (OSError, ValueError, MemoryError) as e:
@@ -94,6 +97,7 @@ def _render(job: dict) -> dict:
         return {"cached": True, **json.loads(out.with_suffix(".json").read_text())}
     out.parent.mkdir(parents=True, exist_ok=True)
     lin = normalized_small(root, Path(job["src_path"]), job["sha"], job["wb"])
+    lin = cropping.apply_crop(lin, job.get("crop"))          # same fractions as the full render
     lin = _shrink(lin, job["max_edge"])
     if job["kind"] == "before":
         img = _srgb_oetf(lin)

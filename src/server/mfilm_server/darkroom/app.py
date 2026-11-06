@@ -22,7 +22,7 @@ from .. import config as config_mod
 from .. import core, db
 from ..bundles import Bundles
 from ..store import Store, UnsafePath, safe_id
-from . import auth, catalog, engine, jobs, pp_sources, preview, recipe2, rolls, sources
+from . import auth, catalog, cropping, engine, jobs, pp_sources, preview, recipe2, rolls, sources
 from . import photoprism as pp
 
 API = "/api/v1/darkroom"
@@ -331,6 +331,9 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             max_edge = int(body.get("max_edge", 1280))
             stream = str(body.get("stream") or "default")[:64]
             wb_req = body.get("white_balance", "daylight")
+            crop_req = cropping.normalize_crop(body.get("crop"))
+        except cropping.CropError as e:
+            raise ApiError(422, "INVALID_CROP", str(e)) from None
         except (ValueError, KeyError, TypeError):
             raise ApiError(400, "BAD_REQUEST", "asset_id and recipe required") from None
         if wb_req not in ("daylight", "as-shot"):
@@ -348,12 +351,13 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             v1 = recipe2.to_v1(v2)
         rhash = recipe2.recipe_hash(v2) if v2 else "before"
         wb = preview.wb_mode(v2) if v2 else wb_req       # the wipe's two sides share one baseline white balance
+        crop = (v2.get("extensions") or {}).get("crop") if v2 else crop_req   # a treated preview crops as its recipe says
         key = preview.preview_key(sha=row["sha256"], kind=kind, recipe_hash=rhash, max_edge=max_edge,
-                                  bundle_hash=b.sha256, wb=wb)
+                                  bundle_hash=b.sha256, wb=wb, crop=crop)
         meta = json.loads(row["meta"])
         job = {"root": str(store.root), "src_path": str(pp_sources.source_file(store, cfg.photoprism, row)), "sha": row["sha256"], "kind": kind,
                "v1": v1, "max_edge": max_edge, "key": key, "recipe_hash": rhash,
-               "wb": wb, "captured_at": meta.get("captured_at"),
+               "wb": wb, "crop": crop, "captured_at": meta.get("captured_at"),
                "seed_ids": ("web", "web", row["sha256"])}
         get_lane().submit(job, f"{stream}:{kind}")
         return {"preview_id": key, "recipe_hash": rhash, "status_url": f"{API}/previews/{key}",
@@ -668,7 +672,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             rc = json.loads(r["recipe"])
             out.append({"render_id": r["id"], "asset_id": r["source_id"], "filename": r["filename"],
                         "film": rc["film"]["id"], "camera_look": rc["camera_look"]["id"],
-                        "optical": rc["optical"]["preset_id"], "recipe_hash": r["recipe_hash"], "width": r["width"],
+                        "optical": rc["optical"]["preset_id"], "crop": (rc.get("extensions") or {}).get("crop"), "recipe_hash": r["recipe_hash"], "width": r["width"],
                         "height": r["height"], "bytes": r["bytes"], "sha256": r["sha256"], "created_at": r["created_at"]})
         return {"items": out}
 
