@@ -126,19 +126,24 @@ def test_halation_policy_has_one_owner(bundle):
     assert recipe2.to_v1(recipe2.normalize(d, bundle))["look_controls"]["halation_scale"] == 0.0
 
 
-def test_camera_look_and_optical_strength_up_to_two(bundle):
+def test_camera_look_and_optical_strength_up_to_four(bundle):
     r = neutral()
-    r["camera_look"] = {"id": "leica_m9_ccd", "version": "1.0.0", "strength": 1.75}
-    r["optical"] = {"preset_id": "soft_sun_glow", "strength": 2.0, "stack": []}
+    r["camera_look"] = {"id": "leica_m9_ccd", "version": "1.0.0", "strength": 3.5}
+    r["optical"] = {"preset_id": "soft_sun_glow", "strength": 4.0, "stack": []}
+    r["film"]["grain_scale"] = 4.0
+    r["film"]["halation_scale"] = 4.0
+    r["film"]["softness_scale"] = 4.0
     n = recipe2.normalize(r, bundle)
-    assert n["camera_look"]["strength"] == 1.75
-    assert n["optical"]["strength"] == 2.0
+    assert n["camera_look"]["strength"] == 3.5
+    assert n["optical"]["strength"] == 4.0
+    assert n["film"]["grain_scale"] == 4.0
     v1 = recipe2.to_v1(n)
-    assert v1["creative"]["camera_look"]["strength"] == 1.75
-    assert v1["creative"]["optical"]["strength"] == 2.0
+    assert v1["creative"]["camera_look"]["strength"] == 3.5
+    assert v1["creative"]["optical"]["strength"] == 4.0
+    assert v1["look_controls"]["grain_scale"] == 4.0
 
     r_bad = neutral()
-    r_bad["camera_look"]["strength"] = 2.01
+    r_bad["camera_look"]["strength"] = 4.01
     with pytest.raises(recipe2.RecipeError):
         recipe2.normalize(r_bad, bundle)
 

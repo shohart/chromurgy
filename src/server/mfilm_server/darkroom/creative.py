@@ -107,24 +107,25 @@ def apply_effect(x: np.ndarray, eid: str, p: dict, k: float, diag: float) -> np.
         out = out + k * p.get("veil", 0.08) * blur(x, 8 * r) * warm      # warm low-frequency lift
         return out
     if eid == "ricoh_hdf_diffusion":
-        near, far = blur(hi, r), blur(hi, p.get("broad_radius_fraction", 0.02) * diag)
-        veil = p.get("veil", 0.045)
+        near, far = blur(hi, r), blur(hi, p.get("broad_radius_fraction", 0.025) * diag)
+        veil = p.get("veil", 0.08)
         soft = 0.5 * near + 0.5 * far
-        return x * (1 - 0.5 * veil * k) + k * (soft * 0.8 + veil * blur(x, p.get("broad_radius_fraction", 0.02) * diag))
+        return np.maximum(x * (1 - 0.5 * veil * k) + k * (soft * 0.8 + veil * blur(x, p.get("broad_radius_fraction", 0.025) * diag)), 0.0)
     if eid == "black_pro_mist_like":
         glow = blur(hi, r)
-        veil = p.get("veil", 0.035)
+        veil = p.get("veil", 0.06)
         out = x + k * glow * 0.9
         gray = luma(out)[..., None]
-        return out * (1 - 0.25 * k * m[..., None]) + 0.25 * k * m[..., None] * gray + k * veil * blur(x, 2 * r)   # highlight desaturation + black lift
+        cf = np.maximum(1 - 0.25 * k * m[..., None], 0.0)
+        return np.maximum(out * cf + (1 - cf) * gray + k * veil * blur(x, 2 * r), 0.0)   # highlight desaturation + black lift
     if eid == "vintage_veiling_flare":
-        veil = p.get("veil", 0.13)
+        veil = p.get("veil", 0.18)
         scatter = blur(x, r) * np.array([1.0, 0.97, 0.88], np.float32)    # warm, wide, scene-weighted scatter
         wbright = blur(hi, 2 * r)
-        return x * (1 - veil * k * 0.5) + k * veil * (0.6 * scatter + 0.8 * wbright)
+        return np.maximum(x * (1 - veil * k * 0.5) + k * veil * (0.6 * scatter + 0.8 * wbright), 0.0)
     if eid == "film_halation_extra":
         edge = np.maximum(blur(m[..., None] * lum[..., None], r) - m[..., None] * lum[..., None] * 0.6, 0)  # rim outside the highlight
-        g = p.get("red_gain", 0.12)
+        g = p.get("red_gain", 0.2)
         return x + k * edge * np.array([g * 3, g * 0.9, 0.0], np.float32)
     if eid == "orton_glow":
         wgt = smoothstep(lum, p.get("threshold", 0.5) - p.get("knee", 0.4), p.get("threshold", 0.5) + p.get("knee", 0.4))[..., None]

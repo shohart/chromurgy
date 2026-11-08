@@ -42,7 +42,7 @@
         "strength": {
           "type": "number",
           "minimum": 0,
-          "maximum": 2
+          "maximum": 4
         },
         "bundle_hash": {
           "type": "string",
@@ -68,17 +68,17 @@
         "grain_scale": {
           "type": "number",
           "minimum": 0,
-          "maximum": 2
+          "maximum": 4
         },
         "halation_scale": {
           "type": "number",
           "minimum": 0,
-          "maximum": 2
+          "maximum": 4
         },
         "softness_scale": {
           "type": "number",
           "minimum": 0,
-          "maximum": 2
+          "maximum": 4
         }
       }
     },
@@ -98,7 +98,7 @@
         "strength": {
           "type": "number",
           "minimum": 0,
-          "maximum": 2
+          "maximum": 4
         },
         "halation_policy": {
           "enum": [

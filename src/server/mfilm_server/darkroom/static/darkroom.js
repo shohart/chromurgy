@@ -669,7 +669,7 @@ async function pollPreview(pid, tries = 400) {
 function looksPanel() { return h("div", {}, h("div", { class: "cards", id: "looks" }),
   h("div", { class: "grid2", style: "margin-top:1rem" }, h("div", {},
     h("label", { for: "strength" }, "Look intensity ", h("span", { id: "lookv", class: "val" }, "100%")),
-    h("input", { type: "range", id: "strength", min: 0, max: 200, value: 100, disabled: true, title: "Double-click resets to 100%",
+    h("input", { type: "range", id: "strength", min: 0, max: 400, value: 100, disabled: true, title: "Double-click resets to 100%",
       ondblclick: e => { e.target.value = 100; S.strength = 1.0; if ($("#lookv")) $("#lookv").textContent = "100%"; scheduleLiveTone(); schedulePreview(); },
       oninput: e => { S.strength = e.target.value / 100; if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; scheduleLiveTone(); schedulePreview(); } })))); }
 function renderLooks() {
@@ -687,7 +687,9 @@ function renderLooks() {
 function filmPanel() {
   const q = h("input", { type: "text", placeholder: "Search 72 film stocks…", "aria-label": "Search films", oninput: e => { S.filmQuery = e.target.value; renderFilms(); } });
   const sl = (label, key) => h("div", {}, h("label", {}, label, " ", h("span", { id: "v_" + key }, "1.00")),
-    h("input", { type: "range", id: "sl_" + key, min: 0, max: 200, value: 100, "aria-label": label, oninput: e => { S[key] = e.target.value / 100; $("#v_" + key).textContent = S[key].toFixed(2); schedulePreview(); } }));
+    h("input", { type: "range", id: "sl_" + key, min: 0, max: 400, value: 100, "aria-label": label, title: "Double-click resets to 1.00",
+      ondblclick: e => { e.target.value = 100; S[key] = 1.0; $("#v_" + key).textContent = "1.00"; schedulePreview(); },
+      oninput: e => { S[key] = e.target.value / 100; $("#v_" + key).textContent = S[key].toFixed(2); schedulePreview(); } }));
   return h("div", {}, q, h("div", { class: "filmlist", id: "films", role: "listbox" }),
     h("div", { class: "row3", style: "margin-top:1rem" }, sl("Grain", "grain"), sl("Halation (film)", "halation"), sl("Softness", "softness")));
 }
@@ -729,7 +731,7 @@ function opticsPanel() {
       h("span", {}, "Individual optical effects"),
       h("small", {}, "combinable · effects included in an active bundle are also highlighted")),
     h("div", { class: "cards", id: "fxcards" }));
-  const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 200, value: 50, "aria-label": "Optical effects strength", title: "Double-click resets to 0.50",
+  const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 400, value: 50, "aria-label": "Optical effects strength", title: "Double-click resets to 0.50",
     ondblclick: e => { e.target.value = 50; S.fxStrength = 0.5; $("#fxv").textContent = "0.50"; scheduleLiveTone(); schedulePreview(); },
     oninput: e => { S.fxStrength = e.target.value / 100; $("#fxv").textContent = S.fxStrength.toFixed(2); scheduleLiveTone(); schedulePreview(); } });
   const policy = h("select", { id: "policy", onchange: e => { S.policy = e.target.value; schedulePreview(); } },
@@ -816,6 +818,11 @@ function syncControls() {
   renderLooks(); renderFilms(); renderFx();
   if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; }
   if ($("#fxstrength")) { $("#fxstrength").value = Math.round(S.fxStrength * 100); $("#fxv").textContent = S.fxStrength.toFixed(2); }
+  ["grain", "halation", "softness"].forEach(k => {
+    const el = $("#sl_" + k), val = $("#v_" + k);
+    if (el) el.value = Math.round((S[k] !== undefined ? S[k] : 1) * 100);
+    if (val) val.textContent = (S[k] !== undefined ? S[k] : 1).toFixed(2);
+  });
   if ($("#policy")) $("#policy").value = S.policy;
   S.sliders.forEach(x => { x.inp.value = x.get(); x.out.textContent = x.fmt(x.get()); });
   const none = S.film === "none";

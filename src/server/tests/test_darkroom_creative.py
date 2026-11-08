@@ -34,6 +34,8 @@ def test_effect_is_finite_nonnegative_and_deterministic(eid):
     assert np.isfinite(a).all() and a.min() >= -1e-6
     assert np.array_equal(a, creative.apply_optics(x, stack(eid), 0.8))
     assert np.abs(a - x).max() > 1e-3                           # it does something
+    extreme = creative.apply_optics(x, stack(eid), 4.0)
+    assert np.isfinite(extreme).all() and extreme.min() >= -1e-6
 
 
 @pytest.mark.parametrize("eid", ["soft_sun_glow", "ricoh_hdf_diffusion", "black_pro_mist_like", "orton_glow"])
@@ -48,7 +50,7 @@ def test_bright_pixels_spill_into_neighbours_and_far_dark_stays_put(eid):
 
 def test_effect_strength_is_monotonic():
     x = scene()
-    d = [np.abs(creative.apply_optics(x, stack("soft_sun_glow"), k) - x).mean() for k in (0.25, 0.5, 0.75, 1.0, 1.5, 2.0)]
+    d = [np.abs(creative.apply_optics(x, stack("soft_sun_glow"), k) - x).mean() for k in (0.25, 0.5, 0.75, 1.0, 2.0, 4.0)]
     assert d == sorted(d) and d[0] > 0
 
 
@@ -99,6 +101,9 @@ def test_every_look_is_finite_distinct_and_blends_linearly(lid):
     double = creative.apply_look(x, lid, 2.0)
     assert np.isfinite(double).all() and double.min() >= 0
     assert np.abs(double - x).max() > np.abs(full - x).max()     # 200% strength is noticeably punchier than 100%
+    quad = creative.apply_look(x, lid, 4.0)
+    assert np.isfinite(quad).all() and quad.min() >= 0
+    assert np.abs(quad - x).max() >= np.abs(double - x).max()    # 400% maximum strength continues scaling
     for other in LOOKS:
         if other not in ("neutral", lid):
             assert np.abs(creative.apply_look(x, other, 1.0) - full).max() > 1e-4, f"{lid} == {other}"
