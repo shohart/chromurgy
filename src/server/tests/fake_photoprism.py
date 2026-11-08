@@ -16,12 +16,14 @@ class FakePhotoPrism:
         self.calls: list[tuple] = []
         self.deny_albums = False
         self.offline = False
+        self.thumb_rev: dict[str, int] = {}
 
     def add_photo(self, uid: str, folder: str, name: str, *, kind="raw", ext=".DNG", src: Path | None = None,
                   raw_missing=False):
         d = self.root / folder
         d.mkdir(parents=True, exist_ok=True)
         files = []
+        jhash = hashlib.sha1(f"jpg:{uid}:v1".encode()).hexdigest()
         if kind == "raw":
             raw = d / f"{name}{ext}"
             if src:
@@ -29,20 +31,35 @@ class FakePhotoPrism:
             if not raw_missing:
                 files.append({"UID": f"f{uid}r", "Name": f"{folder}/{name}{ext}", "Root": "/", "Hash": sha1(raw),
                               "Primary": False, "FileType": "raw", "MediaType": "raw", "Size": raw.stat().st_size,
-                              "Sidecar": None, "Missing": None})
-            files.append({"UID": f"f{uid}j", "Name": f"{folder}/{name}{ext}.jpg", "Root": "sidecar", "Hash": "j" * 40,
-                          "Primary": True, "FileType": "jpg", "MediaType": "image", "Size": 1, "Sidecar": None})
+                              "Sidecar": None, "Missing": None, "UpdatedAt": "2026-11-08T18:00:00Z"})
+            files.append({"UID": f"f{uid}j", "Name": f"{folder}/{name}{ext}.jpg", "Root": "sidecar", "Hash": jhash,
+                          "Primary": True, "FileType": "jpg", "MediaType": "image", "Size": 1, "Sidecar": None,
+                          "UpdatedAt": "2026-11-08T18:00:00Z"})
         else:                                           # JPEG-only photo
             jpg = d / f"{name}.jpg"
             jpg.write_bytes(b"\xff\xd8\xff" + b"0" * 100)
-            files.append({"UID": f"f{uid}j", "Name": f"{folder}/{name}.jpg", "Root": "/", "Hash": sha1(jpg),
-                          "Primary": True, "FileType": "jpg", "MediaType": "image", "Size": jpg.stat().st_size})
+            jhash = sha1(jpg)
+            files.append({"UID": f"f{uid}j", "Name": f"{folder}/{name}.jpg", "Root": "/", "Hash": jhash,
+                          "Primary": True, "FileType": "jpg", "MediaType": "image", "Size": jpg.stat().st_size,
+                          "UpdatedAt": "2026-11-08T18:00:00Z"})
         self.photos[uid] = {"UID": uid, "Type": "raw" if kind == "raw" else "image", "Path": folder, "Name": name,
+                            "Hash": jhash, "UpdatedAt": "2026-11-08T18:00:00Z",
                             "TakenAt": "2015-11-10T23:42:23Z", "Files": files, "Albums": []}
 
+    def update_preview(self, uid: str, *, updated_at: str = "2026-11-08T19:30:00Z", new_hash: str | None = None):
+        ph = self.photos[uid]
+        prim = next(f for f in ph["Files"] if f.get("Primary"))
+        th = new_hash or prim["Hash"]
+        prim["Hash"] = th
+        prim["UpdatedAt"] = updated_at
+        ph["Hash"] = th
+        ph["UpdatedAt"] = updated_at
+        self.thumb_rev[th] = self.thumb_rev.get(th, 1) + 1
+
     def add_album(self, uid: str, title: str, members: list[str]):
+        th = self.photos[members[0]]["Hash"] if members and members[0] in self.photos else ""
         self.albums[uid] = {"UID": uid, "Title": title, "Type": "album", "Filter": "", "PhotoCount": len(members),
-                            "members": list(members)}
+                            "Thumb": th, "members": list(members)}
 
     def __call__(self, method, path, params, body):
         self.calls.append((method, path, params, body))
@@ -74,6 +91,12 @@ class FakePhotoPrism:
         if method == "GET" and path.startswith("photos/"):
             uid = path.split("/", 1)[1]
             return (200, self.photos[uid]) if uid in self.photos else (404, {"error": "not found"})
+        if method == "GET" and path.startswith("t/"):
+            parts = path.split("/")
+            th = parts[1] if len(parts) > 1 else ""
+            sz = parts[3] if len(parts) > 3 else "tile_500"
+            rev = self.thumb_rev.get(th, 1)
+            return 200, b"\xff\xd8\xff\xe0PPTHUMB:" + f"{th}:{sz}:v{rev}".encode() + b"\xff\xd9"
         if method == "POST" and path == "albums":
             uid = f"a{len(self.albums) + 1}"
             self.add_album(uid, body["Title"], [])

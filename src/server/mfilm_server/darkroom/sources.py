@@ -7,6 +7,7 @@ deleted); PhotoPrism- and roll-backed sources are added by their own modules and
 point at the file where it already lives."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -59,9 +60,12 @@ def source_id(sha: str) -> str:
 
 
 def row_public(r: sqlite3.Row) -> dict:
+    prov = json.loads(r["provenance"] or "{}") if "provenance" in r.keys() else {}
+    tv = hashlib.sha1(f"{r['sha256']}:{prov.get('pp_thumb_hash', '')}:{prov.get('pp_updated_at', '')}".encode(),
+                      usedforsecurity=False).hexdigest()[:16]
     return {"asset_id": r["id"], "sha256": r["sha256"], "origin": r["origin"], "filename": r["filename"],
             "format": r["format"], "bytes": r["bytes"], "eligible": bool(r["eligible"]), "reason": r["reason"],
-            "meta": json.loads(r["meta"]), "created_at": r["created_at"]}
+            "meta": json.loads(r["meta"]), "thumb_v": tv, "created_at": r["created_at"]}
 
 
 def commit_upload(conn: sqlite3.Connection, store: Store, part: Path, filename: str) -> tuple[sqlite3.Row, bool]:

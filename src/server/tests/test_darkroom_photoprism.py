@@ -65,6 +65,9 @@ def test_browse_albums_folders_and_eligibility(pp):
     assert not by["p3"]["eligible"] and "RAW unavailable" in by["p3"]["reason"]    # never the sidecar JPEG
     assert not by["p4"]["eligible"] and "unsupported RAW" in by["p4"]["reason"]
     assert ph["eligible"] == 1
+    assert by["p1"]["thumb_url"] and by["p1"]["thumb_hash"]
+    tr = pp.get(by["p1"]["thumb_url"])
+    assert tr.status_code == 200 and b"PPTHUMB:" in tr.content
     alb = pp.get(f"{P}/photos", params={"source_kind": "album", "source_uid": "al1"}).json()
     assert {i["photo_uid"] for i in alb["items"]} == {"p1", "p2"}
     assert pp.get(f"{P}/photos", params={"source_kind": "x", "source_uid": "y"}).status_code == 422
@@ -310,3 +313,30 @@ def test_publish_a_finished_render_later_reuses_it_and_is_idempotent(pp, store):
     assert [x["Title"] for x in pp.fake.albums.values()].count("Later") == 1
     assert pp.post(f"{dapp.API}/renders/{'0' * 64}/publish", headers=H, json={}).status_code == 404
     assert pp.post(f"{dapp.API}/renders/{rid}/publish", headers=H, json={"photoprism_folder": "../x"}).status_code == 422
+
+
+def test_photoprism_thumbnails_are_reused_and_synced_on_change(pp):
+    library(pp)
+    # 1. Select p1 from PhotoPrism and verify its source thumbnail reuses PhotoPrism's preview
+    sel = pp.post(f"{P}/select", headers=H, json={"photo_uids": ["p1"], "source_kind": "folder", "source_uid": "trip"}).json()
+    v1 = sel["assets"][0]["thumb_v"]
+    t1 = pp.get(f"{dapp.API}/sources/pp_fp1r/thumbnail")
+    assert t1.status_code == 200 and b":v1" in t1.content
+    # 2. Simulate PhotoPrism updating the photo preview (e.g., rotation/sidecar update -> UpdatedAt advances)
+    pp.fake.update_preview("p1", updated_at="2026-11-08T20:15:00Z")
+    ph = pp.get(f"{P}/photos", params={"source_kind": "folder", "source_uid": "trip"}).json()
+    p1_item = next(i for i in ph["items"] if i["photo_uid"] == "p1")
+    assert "2026-11-08T20%3A15%3A00Z" in p1_item["thumb_url"]
+    tb = pp.get(p1_item["thumb_url"])
+    assert tb.status_code == 200 and b":v2" in tb.content
+    # 3. Syncing workspace thumbnails or requesting the source thumbnail with sync=1 updates the cached source preview
+    sync_res = pp.post(f"{P}/sync-thumbs", headers=H, json={"force": True}).json()
+    assert sync_res["synced"] == 1
+    v2 = sync_res["items"][0]["thumb_v"]
+    assert v2 != v1
+    t2 = pp.get(f"{dapp.API}/sources/pp_fp1r/thumbnail")
+    assert t2.status_code == 200 and b":v2" in t2.content
+    # 4. If PhotoPrism goes offline, the last synced thumbnail remains available from local cache
+    pp.fake.offline = True
+    t_off = pp.get(f"{dapp.API}/sources/pp_fp1r/thumbnail")
+    assert t_off.status_code == 200 and b":v2" in t_off.content

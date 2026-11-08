@@ -18,6 +18,7 @@ from ..config import PhotoPrism as Cfg
 from ..store import UnsafePath, confine
 
 RAW_EXT = {".nef", ".dng"}                    # what the decoder is verified for (docs/web/30)
+THUMB_SIZES = {"tile_224", "tile_500", "fit_720"}
 
 
 class PPError(Exception):
@@ -33,13 +34,18 @@ def urllib_transport(base: str, token: str, timeout: float = 30.0) -> Transport:
     base = base.rstrip("/")
 
     def call(method: str, path: str, params: dict | None = None, body: dict | None = None):
-        url = f"{base}/api/v1/{path.lstrip('/')}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
+        clean = path.lstrip("/")
+        is_bin = clean.startswith("t/")
+        url = f"{base}/api/v1/{clean}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
         req = urllib.request.Request(url, method=method, data=None if body is None else json.dumps(body).encode(),
-                                     headers={"Authorization": f"Bearer {token}", "Accept": "application/json",
+                                     headers={"Authorization": f"Bearer {token}",
+                                              "Accept": "image/jpeg, */*" if is_bin else "application/json",
                                               **({"Content-Type": "application/json"} if body is not None else {})})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:      # noqa: S310 (fixed, configured base)
                 raw = r.read()
+                if is_bin:
+                    return r.status, raw
                 return r.status, (json.loads(raw) if raw else None)
         except urllib.error.HTTPError as e:
             try:
@@ -54,6 +60,7 @@ def urllib_transport(base: str, token: str, timeout: float = 30.0) -> Transport:
 class Client:
     def __init__(self, cfg: Cfg, transport: Transport | None = None):
         self.cfg = cfg
+        self._preview_token: str | None = None
         if transport is None:
             if not cfg.url or not cfg.token_file:
                 raise PPError("PHOTOPRISM_NOT_CONFIGURED", "set [photoprism] url and token_file", 503)
@@ -80,6 +87,22 @@ class Client:
     # ---- read ----------------------------------------------------------------------------------
     def config(self) -> dict:
         return self._get("config")
+
+    def preview_token(self) -> str:
+        if not self._preview_token:
+            pt = (self.config() or {}).get("previewToken")
+            self._preview_token = str(pt) if pt else "public"
+        return self._preview_token
+
+    def thumb(self, thumb_hash: str, size: str = "tile_500") -> bytes:
+        if not isinstance(thumb_hash, str) or len(thumb_hash) != 40 or not thumb_hash.isalnum():
+            raise PPError("BAD_THUMB_HASH", str(thumb_hash), 400)
+        if size not in THUMB_SIZES:
+            raise PPError("BAD_THUMB_SIZE", size, 400)
+        data = self._get(f"t/{thumb_hash}/{self.preview_token()}/{size}")
+        if not isinstance(data, (bytes, bytearray)) or not data:
+            raise PPError("THUMB_EMPTY", thumb_hash, 502)
+        return bytes(data)
 
     def albums(self, q: str = "", count: int = 100, offset: int = 0) -> list[dict]:
         rows = self._get("albums", type="album", q=q, count=count, offset=offset, order="name")
@@ -121,7 +144,24 @@ class Client:
             raise PPError("ALBUM_DELETE_FAILED", f"HTTP {status} {data}", 502)
 
 
-# ---- RAW resolution -------------------------------------------------------------------------------
+# ---- RAW & thumbnail resolution -------------------------------------------------------------------
+def thumb_info(photo: dict | None = None, detail: dict | None = None) -> tuple[str | None, str]:
+    """Return (thumb_hash, updated_at) for a PhotoPrism photo, using the primary file's SHA-1 hash
+    and latest modification timestamp so preview changes in PhotoPrism are detected automatically."""
+    files = (detail or photo or {}).get("Files") or []
+    prim = (next((f for f in files if f.get("Primary") and f.get("Hash") and not f.get("Missing")), None)
+            or next((f for f in files if f.get("Hash") and not f.get("Missing")), None))
+    th = ((prim and prim.get("Hash")) or (photo or {}).get("Hash") or (detail or {}).get("Hash")
+          or (photo or {}).get("Thumb") or (detail or {}).get("Thumb"))
+    th = th if isinstance(th, str) and len(th) == 40 and th.isalnum() else None
+    ts = [t for t in (
+        prim.get("UpdatedAt") if prim else None,
+        (detail or {}).get("EditedAt"), (detail or {}).get("UpdatedAt"), (detail or {}).get("CheckedAt"),
+        (photo or {}).get("EditedAt"), (photo or {}).get("UpdatedAt"), (photo or {}).get("CheckedAt"),
+    ) if isinstance(t, str) and t and not t.startswith("0001-")]
+    return th, max(ts, default="")
+
+
 def raw_file_of(detail: dict) -> tuple[dict | None, str | None]:
     """The RAW file of a photo's Files list, or (None, reason). Never assumes the primary file is RAW,
     never substitutes a sidecar or camera JPEG (docs/web/29)."""

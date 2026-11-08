@@ -185,6 +185,7 @@ function materialPanel() {
       h("button", { onclick: () => selectAll(true) }, "Select all"),
       h("button", { id: "deselectbtn", onclick: () => selectAll(false), title: "Uncheck all frames without removing them from the tray" }, "Deselect"),
       h("button", { id: "clearbtn", onclick: clearAssets, title: "Clear loaded photos from the workspace tray and reset the preview" }, "Clear"),
+      h("button", { id: "ppsyncbtn", hidden: true, onclick: () => syncPpPreviews(true), title: "Synchronize thumbnails with PhotoPrism" }, "↻ Sync previews"),
       h("button", { id: "restorebtn", hidden: true, onclick: restoreAssets, title: "Restore previously loaded photos from archive" }, "Restore archived"),
       h("span", { class: "dim", id: "selcount" })),
     h("div", { class: "assets", id: "assets" }));
@@ -231,8 +232,19 @@ function uploadPane() {
 
 /* ---- PhotoPrism source browser: albums and folders are different things; selection survives paging ---- */
 const PP = { inst: null, mode: "albums", src: null, page: [], offset: 0, next: null, stack: [], q: "", chosen: new Map(), sourceKind: null, sourceUid: null };
+const ppThumbs = {};
+function loadPpThumb(url, onReady) {
+  if (!url) return;
+  if (url in ppThumbs) return;
+  ppThumbs[url] = "";
+  fetch(url, { credentials: "same-origin" }).then(async r => {
+    if (r.ok) { ppThumbs[url] = URL.createObjectURL(await r.blob()); if (onReady) onReady(); }
+    else delete ppThumbs[url];
+  }).catch(() => { delete ppThumbs[url]; });
+}
 function ppPaneEl() { return h("div", { id: "pp", hidden: true }, h("div", { class: "bar", style: "margin-top:0" },
   h("button", { id: "pp_albums", onclick: () => ppMode("albums") }, "Albums"), h("button", { id: "pp_folders", onclick: () => ppMode("folders") }, "Originals folders"),
+  h("button", { id: "pp_resync", onclick: () => syncPpPreviews(true), title: "Synchronize and refresh previews from PhotoPrism" }, "↻ Sync previews"),
   h("input", { type: "text", id: "pp_q", placeholder: "Search albums…", style: "max-width:16rem", oninput: e => { PP.q = e.target.value; clearTimeout(PP.t); PP.t = setTimeout(ppList, 300); } }),
   h("span", { class: "dim", id: "pp_state" })), h("div", { id: "pp_crumb", class: "dim", style: "font:.75rem var(--mono);margin:.5rem 0" }),
   h("div", { class: "cards", id: "pp_list" }), h("div", { id: "pp_photos" })); }
@@ -255,7 +267,15 @@ async function ppList() {
       if (PP.mode === "albums") {
         $("#pp_crumb").textContent = "Albums are virtual collections, not folders";
         const r = await api(`/photoprism/${PP.inst.id}/albums?count=200&q=${encodeURIComponent(PP.q)}`);
-        box.replaceChildren(...r.items.map(a => h("button", { class: "card", onclick: () => ppOpen("album", a.uid, a.title) }, h("strong", {}, a.title), h("small", {}, `${a.photo_count} photos${a.manual ? "" : " · smart album"}`))));
+        box.replaceChildren(...r.items.map(a => {
+          const thEl = a.thumb_url ? h("span", { class: "alb-th" }) : null;
+          if (thEl) {
+            if (ppThumbs[a.thumb_url]) thEl.style.backgroundImage = `url(${ppThumbs[a.thumb_url]})`;
+            else loadPpThumb(a.thumb_url, () => { if (ppThumbs[a.thumb_url]) thEl.style.backgroundImage = `url(${ppThumbs[a.thumb_url]})`; });
+          }
+          return h("button", { class: "card" + (thEl ? " alb-card" : ""), onclick: () => ppOpen("album", a.uid, a.title) },
+            thEl, h("span", {}, h("strong", {}, a.title), h("small", {}, `${a.photo_count} photos${a.manual ? "" : " · smart album"}`)));
+        }));
         if (!r.items.length) box.append(h("p", { class: "dim" }, "No albums"));
       } else {
         const parent = PP.stack.join("/");
@@ -267,23 +287,37 @@ async function ppList() {
     } catch (e) { box.append(h("p", { class: "err" }, e.message)); }
   });
 }
-async function ppOpen(kind, uid, title, offset = 0) {
+async function ppOpen(kind, uid, title, offset = 0, forceSync = false) {
   PP.sourceKind = kind; PP.sourceUid = uid; PP.title = title;
   const box = $("#pp_photos"); box.replaceChildren(h("p", { class: "dim" }, "loading…"));
-  await withLoading(`Loading "${title}"…`, "Checking RAW originals in PhotoPrism…", async () => {
+  await withLoading(`Loading "${title}"…`, "Synchronizing previews and checking RAW originals in PhotoPrism…", async () => {
     try {
       const r = await api(`/photoprism/${PP.inst.id}/photos?source_kind=${kind}&source_uid=${encodeURIComponent(uid)}&count=60&offset=${offset}`);
+      if (forceSync) {
+        r.items.forEach(p => {
+          if (p.thumb_url) {
+            delete ppThumbs[p.thumb_url];
+            p.thumb_url += (p.thumb_url.includes("?") ? "&" : "?") + "sync=1&t=" + Date.now();
+          }
+        });
+      }
       PP.page = r.items; PP.offset = offset; PP.next = r.next_offset; ppRender();
     } catch (e) { box.replaceChildren(h("p", { class: "err" }, e.message)); }
   });
 }
 function ppRender() {
-  const box = $("#pp_photos");
+  const box = $("#pp_photos"); if (!box) return;
   const grid = h("div", { class: "assets" }, PP.page.map(p => {
     const sel = PP.chosen.has(p.photo_uid);
+    const turl = p.thumb_url ? ppThumbs[p.thumb_url] : null;
+    const th = h("div", { class: "th" },
+      turl ? null : (p.thumb_url ? "…" : (p.eligible ? "RAW" : "no RAW")),
+      h("span", { class: "rawtag" + (p.eligible ? "" : " dim") }, p.eligible ? "RAW" : "no RAW"));
+    if (turl) th.style.backgroundImage = `url(${turl})`;
+    else if (p.thumb_url && !(p.thumb_url in ppThumbs)) loadPpThumb(p.thumb_url, ppRender);
     const el = h("div", { class: "asset", role: "button", tabindex: p.eligible ? "0" : "-1", "aria-pressed": String(sel), "aria-disabled": String(!p.eligible),
       title: p.eligible ? "" : p.reason, style: p.eligible ? "" : "opacity:.5;cursor:not-allowed" },
-      h("div", { class: "th" }, p.eligible ? "RAW" : "no RAW"), h("span", { class: "tick" }, sel ? "✓" : ""),
+      th, h("span", { class: "tick" }, sel ? "✓" : ""),
       h("div", { class: "meta" }, h("b", {}, p.name || p.photo_uid), p.eligible ? `${(p.raw.bytes / 1048576).toFixed(1)} MB` : p.reason));
     const tog = () => { if (!p.eligible) return toast(p.reason); sel ? PP.chosen.delete(p.photo_uid) : PP.chosen.set(p.photo_uid, { kind: PP.sourceKind, uid: PP.sourceUid }); ppRender(); };
     el.addEventListener("click", tog); el.addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); tog(); } });
@@ -295,9 +329,28 @@ function ppRender() {
       h("button", { onclick: () => { elig.forEach(p => PP.chosen.set(p.photo_uid, { kind: PP.sourceKind, uid: PP.sourceUid })); ppRender(); } }, "Select visible"),
       h("button", { disabled: !PP.chosen.size, onclick: () => { PP.chosen.clear(); ppRender(); } }, "Clear selection"),
       h("button", { onclick: ppSelectAll }, "Select all eligible in this " + PP.sourceKind),
+      h("button", { onclick: () => syncPpPreviews(true) }, "↻ Sync previews"),
       h("button", { disabled: PP.offset === 0, onclick: () => ppOpen(PP.sourceKind, PP.sourceUid, PP.title, Math.max(0, PP.offset - 60)) }, "← Prev"),
       h("button", { disabled: PP.next == null, onclick: () => ppOpen(PP.sourceKind, PP.sourceUid, PP.title, PP.next) }, "Next →"),
       h("button", { class: "primary", disabled: !PP.chosen.size, onclick: ppUse }, `Use ${PP.chosen.size} selected`)));
+}
+async function syncPpPreviews(manual = false) {
+  const instId = (PP.inst && PP.inst.id) || "default";
+  const run = async () => {
+    try {
+      const r = await api(`/photoprism/${instId}/sync-thumbs`, { method: "POST", json: { force: manual } });
+      if (manual) {
+        for (const a of (r.items || [])) delete thumbs[a.asset_id];
+      }
+      await refreshAssets();
+      if (manual && PP.sourceKind && PP.sourceUid) {
+        await ppOpen(PP.sourceKind, PP.sourceUid, PP.title, PP.offset, true);
+      }
+      if (manual) toast(`Synced ${r.synced || 0} preview(s) from PhotoPrism${r.updated ? ` (${r.updated} updated)` : ""}`);
+    } catch (e) { if (manual) toast(e.message); }
+  };
+  if (manual) await withLoading("Syncing previews with PhotoPrism…", "Refreshing thumbnails and checking for changes…", run);
+  else await run();
 }
 async function ppSelectAll() {
   await withLoading("Importing all eligible RAWs…", "Hashing and snapshotting every RAW in this collection…", async () => {
@@ -432,9 +485,12 @@ function renderAssets() {
   const box = $("#assets"); if (!box) return;
   box.replaceChildren(...S.assets.map(a => {
     const m = a.meta || {}, sel = S.selected.has(a.asset_id), rot = S.rotates[a.asset_id] ? normDeg(S.rotates[a.asset_id]) : 0;
-    const th = h("div", { class: "th" }, thumbs[a.asset_id] ? null : "…");
-    if (thumbs[a.asset_id]) th.style.backgroundImage = `url(${thumbs[a.asset_id]})`;
-    else if (!(a.asset_id in thumbs)) loadThumb(a.asset_id);
+    const tv = a.thumb_v || a.sha256 || "0";
+    const entry = thumbs[a.asset_id];
+    const hasImg = entry && entry.v === tv && entry.url;
+    const th = h("div", { class: "th" }, hasImg ? null : "…");
+    if (hasImg) th.style.backgroundImage = `url(${entry.url})`;
+    else if (!entry || entry.v !== tv) loadThumb(a.asset_id, tv);
     const rmBtn = h("button", { type: "button", class: "rm", title: "Remove from workspace",
       onclick: ev => { ev.stopPropagation(); removeAsset(a.asset_id); } }, "×");
     const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), role: "button", tabindex: "0", "aria-pressed": String(sel),
@@ -447,22 +503,33 @@ function renderAssets() {
     el.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); toggle(); } if (e.key === "Enter") { e.preventDefault(); setCurrent(a.asset_id); } });
     return el;
   }));
-  const desel = $("#deselectbtn"), clr = $("#clearbtn"), rest = $("#restorebtn");
+  const desel = $("#deselectbtn"), clr = $("#clearbtn"), rest = $("#restorebtn"), ppsync = $("#ppsyncbtn");
   if (desel) desel.disabled = S.selected.size === 0;
   if (clr) clr.disabled = S.assets.length === 0 && S.selected.size === 0 && PP.chosen.size === 0;
+  if (ppsync) ppsync.hidden = !S.assets.some(a => a.origin === "photoprism");
   if (rest) { rest.hidden = !(S.assets.length === 0 && S.allSourceCount > 0); rest.textContent = `Restore ${S.allSourceCount} archived`; }
   $("#selcount").textContent = S.assets.length
     ? `${S.selected.size} of ${S.assets.length} selected for Develop · click a frame to preview it, tick to include it`
     : "Workspace empty · choose RAWs from Upload, PhotoPrism or M-Film rolls";
   updateDevelop();
 }
-async function loadThumb(id) {
-  thumbs[id] = thumbs[id] || "";   // mark in flight
-  try {                            // the RAW's own embedded preview: instant, and never competes with real previews
-    const r = await fetch(`${API}/sources/${id}/thumbnail`, { credentials: "same-origin" });
-    if (r.ok) { thumbs[id] = URL.createObjectURL(await r.blob()); renderAssets(); }
+async function loadThumb(id, v = "0") {
+  thumbs[id] = { v, url: "" };   // mark in flight for this version
+  try {
+    const r = await fetch(`${API}/sources/${id}/thumbnail?v=${encodeURIComponent(v)}`, { credentials: "same-origin" });
+    if (r.ok) {
+      const url = URL.createObjectURL(await r.blob());
+      thumbs[id] = { v, url };
+      renderAssets();
+    }
   } catch (e) { /* thumbnails are best effort */ }
 }
+setInterval(() => {
+  if (!document.hidden && S.assets.some(a => a.origin === "photoprism")) syncPpPreviews(false);
+}, 30000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && S.assets.some(a => a.origin === "photoprism")) syncPpPreviews(false);
+});
 async function imgUrl(pid) {
   const r = await fetch(`${API}/previews/${pid}/image`, { credentials: "same-origin" });
   if (!r.ok) throw new Error("image " + r.status);

@@ -6,11 +6,14 @@ different credential (operator login, not device tokens), same store/catalog."""
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import hashlib
 import json
 import os
 import sqlite3
+import time
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -345,8 +348,19 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         return sources.row_public(row)
 
     @app.get(f"{API}/sources/{{asset_id}}/thumbnail")
-    def source_thumbnail(asset_id: str, _t: str = Depends(session), c=Depends(conn)):
+    def source_thumbnail(asset_id: str, sync: int = 0, _t: str = Depends(session), c=Depends(conn)):
         row = source_row(c, asset_id)
+        if row["origin"] == "photoprism":
+            try:
+                client = pp_client()
+            except ApiError:
+                client = None
+            f = pp_sources.sync_source_thumb(c, store, row, client, force=bool(sync))
+            if f and f.is_file():
+                row = c.execute("SELECT * FROM sources WHERE id=?", (asset_id,)).fetchone() or row
+                tv = sources.row_public(row)["thumb_v"]
+                return FileResponse(f, media_type="image/jpeg",
+                                    headers={"Cache-Control": "private, no-cache", "ETag": f'"{tv}"'})
         f = sources.thumb_path(store, row["sha256"])
         if not f.is_file():
             raise ApiError(404, "NO_THUMBNAIL", "this RAW has no embedded preview")
@@ -461,7 +475,12 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
     @app.get(f"{API}/photoprism/{{inst}}/albums")
     def pp_albums(inst: str, q: str = "", count: int = 100, offset: int = 0, _t: str = Depends(session)):
         instance_ok(inst)
-        return {"items": pp_call(pp_client().albums, q, max(1, min(count, 500)), max(0, offset))}
+        items = pp_call(pp_client().albums, q, max(1, min(count, 500)), max(0, offset))
+        for a in items:
+            th = a.get("thumb")
+            a["thumb_url"] = (f"{API}/photoprism/{inst}/thumb/{th}?size=tile_224"
+                              if isinstance(th, str) and len(th) == 40 and th.isalnum() else None)
+        return {"items": items}
 
     @app.get(f"{API}/photoprism/{{inst}}/folders")
     def pp_folders(inst: str, parent_id: str = "", _t: str = Depends(session)):
@@ -481,22 +500,91 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
 
     @app.get(f"{API}/photoprism/{{inst}}/photos")
     def pp_photos(inst: str, source_kind: str, source_uid: str, count: int = 60, offset: int = 0,
-                  _t: str = Depends(session)):
+                  _t: str = Depends(session), c=Depends(conn)):
         instance_ok(inst)
         client = pp_client()
         page = pp_page(client, source_kind, source_uid, max(1, min(count, 200)), max(0, offset))
+        candidates = [ph["UID"] for ph in page if ph.get("Type") in ("raw", "image", "live")]
+        details: dict[str, dict] = {}
+        if candidates:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates))) as ex:
+                for uid, det in zip(candidates, ex.map(lambda u: pp_call(client.photo, u), candidates), strict=False):
+                    details[uid] = det
         out = []
         for ph in page:
-            item = {"photo_uid": ph["UID"], "name": ph.get("Name"), "type": ph.get("Type"), "taken_at": ph.get("TakenAt"),
+            uid = ph["UID"]
+            det = details.get(uid)
+            item = {"photo_uid": uid, "name": ph.get("Name"), "type": ph.get("Type"), "taken_at": ph.get("TakenAt"),
                     "folder": ph.get("Path")}
-            if ph.get("Type") == "raw" or ph.get("Type") in ("image", "live"):
-                f, why = pp_sources.classify(pp_call(client.photo, ph["UID"]))
+            if det is not None:
+                f, why = pp_sources.classify(det)
             else:
                 f, why = None, f"{ph.get('Type')} is not a photo with a RAW original"
-            item.update(eligible=bool(f), reason=why, raw={"name": f["Name"], "bytes": f["Size"]} if f else None)
+            th, upd = pp.thumb_info(ph, det)
+            thumb_url = (f"{API}/photoprism/{inst}/thumb/{th}"
+                         + (f"?u={urllib.parse.quote(upd)}" if upd else "")) if th else None
+            if f and th:
+                aid = pp_sources.asset_id(f["UID"])
+                have = c.execute("SELECT id, provenance FROM sources WHERE id=?", (aid,)).fetchone()
+                if have:
+                    prov = json.loads(have["provenance"] or "{}")
+                    if prov.get("pp_thumb_hash") != th or prov.get("pp_updated_at") != upd:
+                        prov["pp_thumb_hash"] = th
+                        prov["pp_updated_at"] = upd
+                        prov["pp_checked_at"] = time.time()
+                        c.execute("UPDATE sources SET provenance=? WHERE id=?",
+                                  (json.dumps(prov, sort_keys=True), aid))
+            item.update(eligible=bool(f), reason=why, raw={"name": f["Name"], "bytes": f["Size"]} if f else None,
+                        thumb_hash=th, updated_at=upd, thumb_url=thumb_url)
             out.append(item)
         return {"count": len(out), "offset": offset, "next_offset": offset + len(page) if len(page) == count else None,
                 "eligible": sum(1 for i in out if i["eligible"]), "items": out}
+
+    @app.get(f"{API}/photoprism/{{inst}}/thumb/{{thumb_hash}}")
+    def pp_thumb(inst: str, thumb_hash: str, u: str = "", size: str = "tile_500", sync: int = 0,
+                 _t: str = Depends(session)):
+        instance_ok(inst)
+        try:
+            client = pp_client()
+        except ApiError:
+            client = None
+        try:
+            path, ver = pp_sources.sync_thumb_file(store, client, thumb_hash, updated_at=u, size=size, force=bool(sync))
+        except pp.PPError as e:
+            raise ApiError(e.status, e.code, e.detail) from None
+        return FileResponse(path, media_type="image/jpeg",
+                            headers={"Cache-Control": "private, no-cache", "ETag": f'"{ver}"'})
+
+    @app.post(f"{API}/photoprism/{{inst}}/sync-thumbs")
+    async def pp_sync_thumbs(inst: str, request: Request, _t: str = Depends(session)):
+        instance_ok(inst)
+        try:
+            body = json.loads(await request.body() or b"{}")
+        except ValueError:
+            body = {}
+        force = bool(body.get("force", True))
+
+        def work():
+            c = db.connect(store.db_path)
+            try:
+                client = pp_client()
+                rows = c.execute("SELECT * FROM sources WHERE origin='photoprism'").fetchall()
+                synced = 0
+                updated = 0
+                for r in rows:
+                    old_v = sources.row_public(r)["thumb_v"]
+                    p = pp_sources.sync_source_thumb(c, store, r, client, force=force)
+                    if p is not None:
+                        synced += 1
+                    r_new = c.execute("SELECT * FROM sources WHERE id=?", (r["id"],)).fetchone()
+                    if r_new and sources.row_public(r_new)["thumb_v"] != old_v:
+                        updated += 1
+                items = [sources.row_public(r) for r in c.execute(
+                    "SELECT * FROM sources WHERE origin='photoprism' ORDER BY created_at DESC, id").fetchall()]
+                return {"synced": synced, "updated": updated, "items": items}
+            finally:
+                c.close()
+        return await run_in_threadpool(work)
 
     @app.post(f"{API}/photoprism/{{inst}}/select")
     async def pp_select(inst: str, request: Request, _t: str = Depends(session)):
@@ -528,7 +616,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
                 assets, skipped = [], []
                 for uid in todo:
                     try:
-                        row, why = pp_sources.snapshot(c, store, cfg.photoprism, client.photo(uid))
+                        row, why = pp_sources.snapshot(c, store, cfg.photoprism, client.photo(uid), client=client)
                     except pp.PPError as e:
                         row, why = None, f"{e.code}: {e.detail}"
                     if row:
