@@ -498,22 +498,35 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             return pp_call(client.photos, folder=source_uid, count=count, offset=offset)
         raise ApiError(422, "INVALID_REQUEST", "source_kind: album|folder")
 
+    def pp_step_and_more(page: list[dict], req_count: int) -> tuple[int, bool]:
+        """PhotoPrism /photos?merged=true applies count/offset to unmerged file rows in SQL,
+        so 60 file rows of RAW+JPEG stacks return 30 merged photos whose Files sum to 60."""
+        if not page:
+            return 0, False
+        if any("Files" in ph for ph in page):
+            rows = sum(max(1, len(ph.get("Files") or [])) for ph in page)
+            return rows, rows >= req_count
+        return len(page), len(page) >= req_count
+
     @app.get(f"{API}/photoprism/{{inst}}/photos")
     def pp_photos(inst: str, source_kind: str, source_uid: str, count: int = 60, offset: int = 0,
                   _t: str = Depends(session), c=Depends(conn)):
         instance_ok(inst)
         client = pp_client()
-        page = pp_page(client, source_kind, source_uid, max(1, min(count, 200)), max(0, offset))
-        candidates = [ph["UID"] for ph in page if ph.get("Type") in ("raw", "image", "live")]
+        req_count = max(1, min(count, 200))
+        req_offset = max(0, offset)
+        page = pp_page(client, source_kind, source_uid, req_count, req_offset)
+        need_detail = [ph["UID"] for ph in page
+                       if ph.get("Type") in ("raw", "image", "live") and "Files" not in ph]
         details: dict[str, dict] = {}
-        if candidates:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates))) as ex:
-                for uid, det in zip(candidates, ex.map(lambda u: pp_call(client.photo, u), candidates), strict=False):
+        if need_detail:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(need_detail))) as ex:
+                for uid, det in zip(need_detail, ex.map(lambda u: pp_call(client.photo, u), need_detail), strict=False):
                     details[uid] = det
         out = []
         for ph in page:
             uid = ph["UID"]
-            det = details.get(uid)
+            det = ph if ("Files" in ph and ph.get("Type") in ("raw", "image", "live")) else details.get(uid)
             item = {"photo_uid": uid, "name": ph.get("Name"), "type": ph.get("Type"), "taken_at": ph.get("TakenAt"),
                     "folder": ph.get("Path")}
             if det is not None:
@@ -537,7 +550,10 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             item.update(eligible=bool(f), reason=why, raw={"name": f["Name"], "bytes": f["Size"]} if f else None,
                         thumb_hash=th, updated_at=upd, thumb_url=thumb_url)
             out.append(item)
-        return {"count": len(out), "offset": offset, "next_offset": offset + len(page) if len(page) == count else None,
+        step, has_more = pp_step_and_more(page, req_count)
+        if has_more:
+            has_more = bool(pp_page(client, source_kind, source_uid, 1, req_offset + step))
+        return {"count": len(out), "offset": req_offset, "next_offset": req_offset + step if has_more else None,
                 "eligible": sum(1 for i in out if i["eligible"]), "items": out}
 
     @app.get(f"{API}/photoprism/{{inst}}/thumb/{{thumb_hash}}")
@@ -608,9 +624,10 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
                     while len(todo) < 2000:
                         page = pp_page(client, kind, suid, 200, off)
                         todo += [p["UID"] for p in page if p["UID"] not in todo]
-                        if len(page) < 200:
+                        step, more = pp_step_and_more(page, 200)
+                        if not more:
                             break
-                        off += 200
+                        off += step
                 if not todo or len(todo) > 2000:
                     raise ApiError(422, "INVALID_REQUEST", "1..2000 photos")
                 assets, skipped = [], []

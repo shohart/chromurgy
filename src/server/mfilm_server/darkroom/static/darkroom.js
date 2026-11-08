@@ -231,16 +231,23 @@ function uploadPane() {
 }
 
 /* ---- PhotoPrism source browser: albums and folders are different things; selection survives paging ---- */
-const PP = { inst: null, mode: "albums", src: null, page: [], offset: 0, next: null, stack: [], q: "", chosen: new Map(), sourceKind: null, sourceUid: null };
+const PP = { inst: null, mode: "albums", src: null, page: [], offset: 0, next: null, prevOffsets: [], stack: [], q: "", chosen: new Map(), sourceKind: null, sourceUid: null };
 const ppThumbs = {};
+const ppWaiters = {};
 function loadPpThumb(url, onReady) {
   if (!url) return;
+  if (ppThumbs[url]) { if (onReady) onReady(ppThumbs[url]); return; }
+  if (onReady) (ppWaiters[url] = ppWaiters[url] || []).push(onReady);
   if (url in ppThumbs) return;
   ppThumbs[url] = "";
   fetch(url, { credentials: "same-origin" }).then(async r => {
-    if (r.ok) { ppThumbs[url] = URL.createObjectURL(await r.blob()); if (onReady) onReady(); }
-    else delete ppThumbs[url];
-  }).catch(() => { delete ppThumbs[url]; });
+    if (r.ok) {
+      const objUrl = URL.createObjectURL(await r.blob());
+      ppThumbs[url] = objUrl;
+      const cbs = ppWaiters[url] || []; delete ppWaiters[url];
+      cbs.forEach(fn => { try { fn(objUrl); } catch (_) {} });
+    } else { delete ppThumbs[url]; delete ppWaiters[url]; }
+  }).catch(() => { delete ppThumbs[url]; delete ppWaiters[url]; });
 }
 function ppPaneEl() { return h("div", { id: "pp", hidden: true }, h("div", { class: "bar", style: "margin-top:0" },
   h("button", { id: "pp_albums", onclick: () => ppMode("albums") }, "Albums"), h("button", { id: "pp_folders", onclick: () => ppMode("folders") }, "Originals folders"),
@@ -260,8 +267,8 @@ async function ppInit() {
   });
 }
 async function ppMode(m) { PP.mode = m; PP.stack = []; PP.src = null; $("#pp_photos").replaceChildren(); $("#pp_q").hidden = m !== "albums"; await ppList(); }
-async function ppList() {
-  const box = $("#pp_list"); box.replaceChildren(); $("#pp_photos").replaceChildren();
+async function ppList(keepPhotos = false) {
+  const box = $("#pp_list"); box.replaceChildren(); if (!keepPhotos) $("#pp_photos").replaceChildren();
   await withLoading("Loading PhotoPrism catalog…", PP.mode === "albums" ? "Fetching albums…" : "Fetching folders…", async () => {
     try {
       if (PP.mode === "albums") {
@@ -271,9 +278,9 @@ async function ppList() {
           const thEl = a.thumb_url ? h("span", { class: "alb-th" }) : null;
           if (thEl) {
             if (ppThumbs[a.thumb_url]) thEl.style.backgroundImage = `url(${ppThumbs[a.thumb_url]})`;
-            else loadPpThumb(a.thumb_url, () => { if (ppThumbs[a.thumb_url]) thEl.style.backgroundImage = `url(${ppThumbs[a.thumb_url]})`; });
+            else loadPpThumb(a.thumb_url, u => { thEl.style.backgroundImage = `url(${u})`; });
           }
-          return h("button", { class: "card" + (thEl ? " alb-card" : ""), onclick: () => ppOpen("album", a.uid, a.title) },
+          return h("button", { type: "button", class: "card" + (thEl ? " alb-card" : ""), onclick: () => ppOpen("album", a.uid, a.title, 0) },
             thEl, h("span", {}, h("strong", {}, a.title), h("small", {}, `${a.photo_count} photos${a.manual ? "" : " · smart album"}`)));
         }));
         if (!r.items.length) box.append(h("p", { class: "dim" }, "No albums"));
@@ -281,13 +288,14 @@ async function ppList() {
         const parent = PP.stack.join("/");
         $("#pp_crumb").textContent = "Folder under originals: /" + parent;
         const r = await api(`/photoprism/${PP.inst.id}/folders?parent_id=${encodeURIComponent(parent)}`);
-        if (PP.stack.length) box.append(h("button", { class: "card", onclick: () => { PP.stack.pop(); ppList(); } }, h("strong", {}, "↑ up")));
-        box.append(...r.items.map(f => h("button", { class: "card", onclick: () => { PP.stack = f.path.split("/"); ppList(); ppOpen("folder", f.path, f.path); } }, h("strong", {}, f.title), h("small", {}, f.path))));
+        if (PP.stack.length) box.append(h("button", { type: "button", class: "card", onclick: () => { PP.stack.pop(); ppList(); } }, h("strong", {}, "↑ up")));
+        box.append(...r.items.map(f => h("button", { type: "button", class: "card", onclick: async () => { PP.stack = f.path.split("/"); await ppList(true); await ppOpen("folder", f.path, f.path, 0); } }, h("strong", {}, f.title), h("small", {}, f.path))));
       }
     } catch (e) { box.append(h("p", { class: "err" }, e.message)); }
   });
 }
-async function ppOpen(kind, uid, title, offset = 0, forceSync = false) {
+async function ppOpen(kind, uid, title, offset = 0, forceSync = false, keepHistory = false) {
+  if (!keepHistory || kind !== PP.sourceKind || uid !== PP.sourceUid || offset === 0) PP.prevOffsets = [];
   PP.sourceKind = kind; PP.sourceUid = uid; PP.title = title;
   const box = $("#pp_photos"); box.replaceChildren(h("p", { class: "dim" }, "loading…"));
   await withLoading(`Loading "${title}"…`, "Synchronizing previews and checking RAW originals in PhotoPrism…", async () => {
@@ -302,37 +310,59 @@ async function ppOpen(kind, uid, title, offset = 0, forceSync = false) {
         });
       }
       PP.page = r.items; PP.offset = offset; PP.next = r.next_offset; ppRender();
+      if (keepHistory && box) box.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (e) { box.replaceChildren(h("p", { class: "err" }, e.message)); }
   });
 }
+function ppPrevPage() {
+  if (PP.offset <= 0) return;
+  const prev = PP.prevOffsets.length ? PP.prevOffsets.pop() : Math.max(0, PP.offset - 60);
+  ppOpen(PP.sourceKind, PP.sourceUid, PP.title, prev, false, true);
+}
+function ppNextPage() {
+  if (PP.next == null) return;
+  PP.prevOffsets.push(PP.offset);
+  ppOpen(PP.sourceKind, PP.sourceUid, PP.title, PP.next, false, true);
+}
 function ppRender() {
   const box = $("#pp_photos"); if (!box) return;
+  const pageNum = PP.prevOffsets.length + 1;
   const grid = h("div", { class: "assets" }, PP.page.map(p => {
     const sel = PP.chosen.has(p.photo_uid);
     const turl = p.thumb_url ? ppThumbs[p.thumb_url] : null;
+    const statusTxt = h("span", { class: "th-wait" }, turl ? "" : (p.thumb_url ? "…" : (p.eligible ? "RAW" : "no RAW")));
     const th = h("div", { class: "th" },
-      turl ? null : (p.thumb_url ? "…" : (p.eligible ? "RAW" : "no RAW")),
+      statusTxt,
       h("span", { class: "rawtag" + (p.eligible ? "" : " dim") }, p.eligible ? "RAW" : "no RAW"));
     if (turl) th.style.backgroundImage = `url(${turl})`;
-    else if (p.thumb_url && !(p.thumb_url in ppThumbs)) loadPpThumb(p.thumb_url, ppRender);
+    else if (p.thumb_url) loadPpThumb(p.thumb_url, u => { th.style.backgroundImage = `url(${u})`; statusTxt.textContent = ""; });
+    const tick = h("span", { class: "tick" }, sel ? "✓" : "");
     const el = h("div", { class: "asset", role: "button", tabindex: p.eligible ? "0" : "-1", "aria-pressed": String(sel), "aria-disabled": String(!p.eligible),
       title: p.eligible ? "" : p.reason, style: p.eligible ? "" : "opacity:.5;cursor:not-allowed" },
-      th, h("span", { class: "tick" }, sel ? "✓" : ""),
+      th, tick,
       h("div", { class: "meta" }, h("b", {}, p.name || p.photo_uid), p.eligible ? `${(p.raw.bytes / 1048576).toFixed(1)} MB` : p.reason));
-    const tog = () => { if (!p.eligible) return toast(p.reason); sel ? PP.chosen.delete(p.photo_uid) : PP.chosen.set(p.photo_uid, { kind: PP.sourceKind, uid: PP.sourceUid }); ppRender(); };
+    const tog = () => { if (!p.eligible) return toast(p.reason); PP.chosen.has(p.photo_uid) ? PP.chosen.delete(p.photo_uid) : PP.chosen.set(p.photo_uid, { kind: PP.sourceKind, uid: PP.sourceUid }); ppRender(); };
     el.addEventListener("click", tog); el.addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); tog(); } });
     return el; }));
   const elig = PP.page.filter(p => p.eligible);
-  box.replaceChildren(h("h3", { style: "font-size:.9rem;margin:1rem 0 .3rem" }, PP.title), h("div", { class: "pvinfo", style: "margin:0 0 .5rem" },
-    h("span", {}, `${PP.page.length} on this page`), h("span", {}, `${elig.length} with a supported RAW`), h("span", {}, `${PP.page.length - elig.length} not usable (hover for the reason)`)), grid,
+  const pager = () => h("span", { class: "pager" },
+    h("button", { type: "button", disabled: PP.offset === 0, onclick: ppPrevPage }, "← Prev"),
+    h("span", { class: "dim", style: "font:.74rem var(--mono);padding:0 .3rem" }, `Page ${pageNum}`),
+    h("button", { type: "button", disabled: PP.next == null, onclick: ppNextPage }, "Next →"));
+  box.replaceChildren(
+    h("div", { class: "bar", style: "justify-content:space-between;margin:.8rem 0 .35rem" },
+      h("h3", { style: "font-size:.9rem;margin:0" }, PP.title),
+      pager()),
+    h("div", { class: "pvinfo", style: "margin:0 0 .5rem" },
+      h("span", {}, `${PP.page.length} on this page`), h("span", {}, `${elig.length} with a supported RAW`), h("span", {}, `${PP.page.length - elig.length} not usable (hover for the reason)`)),
+    grid,
     h("div", { class: "bar" },
-      h("button", { onclick: () => { elig.forEach(p => PP.chosen.set(p.photo_uid, { kind: PP.sourceKind, uid: PP.sourceUid })); ppRender(); } }, "Select visible"),
-      h("button", { disabled: !PP.chosen.size, onclick: () => { PP.chosen.clear(); ppRender(); } }, "Clear selection"),
-      h("button", { onclick: ppSelectAll }, "Select all eligible in this " + PP.sourceKind),
-      h("button", { onclick: () => syncPpPreviews(true) }, "↻ Sync previews"),
-      h("button", { disabled: PP.offset === 0, onclick: () => ppOpen(PP.sourceKind, PP.sourceUid, PP.title, Math.max(0, PP.offset - 60)) }, "← Prev"),
-      h("button", { disabled: PP.next == null, onclick: () => ppOpen(PP.sourceKind, PP.sourceUid, PP.title, PP.next) }, "Next →"),
-      h("button", { class: "primary", disabled: !PP.chosen.size, onclick: ppUse }, `Use ${PP.chosen.size} selected`)));
+      h("button", { type: "button", onclick: () => { elig.forEach(p => PP.chosen.set(p.photo_uid, { kind: PP.sourceKind, uid: PP.sourceUid })); ppRender(); } }, "Select visible"),
+      h("button", { type: "button", disabled: !PP.chosen.size, onclick: () => { PP.chosen.clear(); ppRender(); } }, "Clear selection"),
+      h("button", { type: "button", onclick: ppSelectAll }, "Select all eligible in this " + PP.sourceKind),
+      h("button", { type: "button", onclick: () => syncPpPreviews(true) }, "↻ Sync previews"),
+      pager(),
+      h("button", { type: "button", class: "primary", disabled: !PP.chosen.size, onclick: ppUse }, `Use ${PP.chosen.size} selected`)));
 }
 async function syncPpPreviews(manual = false) {
   const instId = (PP.inst && PP.inst.id) || "default";
@@ -344,7 +374,7 @@ async function syncPpPreviews(manual = false) {
       }
       await refreshAssets();
       if (manual && PP.sourceKind && PP.sourceUid) {
-        await ppOpen(PP.sourceKind, PP.sourceUid, PP.title, PP.offset, true);
+        await ppOpen(PP.sourceKind, PP.sourceUid, PP.title, PP.offset, true, true);
       }
       if (manual) toast(`Synced ${r.synced || 0} preview(s) from PhotoPrism${r.updated ? ` (${r.updated} updated)` : ""}`);
     } catch (e) { if (manual) toast(e.message); }

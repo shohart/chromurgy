@@ -87,6 +87,16 @@ class FakePhotoPrism:
             else:
                 sel = [p for p in self.photos.values() if p["Path"] == params.get("path", "")]
             off, cnt = int(params.get("offset", 0)), int(params.get("count", 100))
+            if params.get("merged") == "true":
+                rows = [(p, f) for p in sel for f in (p.get("Files") or [None])]
+                sliced = rows[off:off + cnt]
+                merged: dict[str, dict] = {}
+                for p, f in sliced:
+                    if p["UID"] not in merged:
+                        merged[p["UID"]] = {**p, "Files": [f] if f else []}
+                    elif f:
+                        merged[p["UID"]]["Files"].append(f)
+                return 200, list(merged.values())
             return 200, [{k: v for k, v in p.items() if k != "Files"} for p in sel[off:off + cnt]]
         if method == "GET" and path.startswith("photos/"):
             uid = path.split("/", 1)[1]

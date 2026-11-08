@@ -65,6 +65,7 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .asset .th .rawtag.dim{border-color:var(--line);color:var(--dim)}
 .card.alb-card{display:flex;align-items:center;gap:.65rem}
 .card .alb-th{width:2.7rem;height:2.7rem;flex:0 0 2.7rem;border-radius:2px;background:#0b0807 center/cover no-repeat;border:1px solid var(--line)}
+.pager{display:inline-flex;align-items:center;gap:.35rem}
 .asset .meta{padding:.45rem .55rem;font:.68rem/1.35 var(--mono);color:var(--dim);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .asset .meta b{color:var(--ink);font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis}
 .asset .tick{position:absolute;top:.35rem;left:.35rem;width:1.1rem;height:1.1rem;border:1px solid var(--ink);background:rgba(0,0,0,.5);border-radius:2px;display:grid;place-items:center;font-size:.75rem}

@@ -340,3 +340,17 @@ def test_photoprism_thumbnails_are_reused_and_synced_on_change(pp):
     pp.fake.offline = True
     t_off = pp.get(f"{dapp.API}/sources/pp_fp1r/thumbnail")
     assert t_off.status_code == 200 and b":v2" in t_off.content
+
+
+def test_photoprism_merged_pagination(pp):
+    library(pp)
+    # trip has p1 (2 files), p2 (1 file), p3 (1 file), p4 (2 files) = 6 file rows across 4 photos
+    # With count=3 (file rows):
+    # - page 1 (offset=0): p1 (2 files) + p2 (1 file) -> 2 photos, 3 file rows -> next_offset=3
+    # - page 2 (offset=3): p3 (1 file) + p4 (2 files) -> 2 photos, 3 file rows -> peek at offset=6 is empty -> next_offset=None
+    p1 = pp.get(f"{P}/photos", params={"source_kind": "folder", "source_uid": "trip", "count": 3, "offset": 0}).json()
+    assert [i["photo_uid"] for i in p1["items"]] == ["p1", "p2"]
+    assert p1["next_offset"] == 3
+    p2 = pp.get(f"{P}/photos", params={"source_kind": "folder", "source_uid": "trip", "count": 3, "offset": p1["next_offset"]}).json()
+    assert [i["photo_uid"] for i in p2["items"]] == ["p3", "p4"]
+    assert p2["next_offset"] is None
