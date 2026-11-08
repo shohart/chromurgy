@@ -78,11 +78,11 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .drop{border:1px dashed var(--dim);border-radius:3px;padding:1.4rem;text-align:center;color:var(--dim);transition:.15s}
 .drop.over{border-color:var(--safe);color:var(--ink);background:rgba(255,74,43,.06)}
 .drop p{margin:.2rem 0}.drop small{font:.72rem var(--mono)}
-.assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:.7rem;margin-top:1rem}
-.asset{background:var(--panel2);border:1px solid var(--line);border-radius:2px;position:relative;cursor:pointer}
+.assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.8rem;margin-top:1rem}
+.asset{background:var(--panel2);border:1px solid var(--line);border-radius:2px;position:relative;cursor:pointer;overflow:hidden}
 .asset[aria-pressed=true]{border-color:var(--safe2)}
 .asset.cur{outline:2px solid var(--safe);outline-offset:1px}
-.asset .th{aspect-ratio:4/3;background:#0b0807 center/cover no-repeat;display:grid;place-items:center;font:.7rem var(--mono);color:var(--dim);position:relative}
+.asset .th{aspect-ratio:3/2;background:#0b0807 center/contain no-repeat;display:grid;place-items:center;font:.7rem var(--mono);color:var(--dim);position:relative}
 .asset .th .rawtag{position:absolute;bottom:.32rem;right:.35rem;font:.6rem var(--mono);background:rgba(14,11,10,.82);border:1px solid var(--safe2);color:var(--safe2);padding:.04rem .34rem;border-radius:2px;letter-spacing:.03em;pointer-events:none}
 .asset .th .rawtag.dim{border-color:var(--line);color:var(--dim)}
 .card.alb-card{display:flex;align-items:center;gap:.65rem}
@@ -123,7 +123,7 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .filmlist button[aria-pressed=true]{border-color:var(--safe);background:var(--panel2)}
 .filmlist button span{color:var(--dim);margin-left:auto}
 .stage{position:relative;background:#050403;border:1px solid var(--line);min-height:15rem;display:grid;place-items:center;overflow:hidden;touch-action:none}
-.stage img,.stage canvas{max-width:100%;max-height:46vh;display:block;user-select:none;-webkit-user-drag:none}
+.stage img,.stage canvas{max-width:100%;max-height:52vh;display:block;user-select:none;-webkit-user-drag:none}
 .stage .layer{position:absolute;inset:0;display:grid;place-items:center}
 .stage .stale{opacity:.96}
 .stage .busy{position:absolute;right:.6rem;top:.6rem;font:.7rem var(--mono);color:var(--safe2);background:rgba(14,11,10,.78);padding:.15rem .45rem;border-radius:2px;z-index:4}
