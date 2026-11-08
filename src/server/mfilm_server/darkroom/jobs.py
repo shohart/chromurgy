@@ -192,7 +192,7 @@ def cancel(conn: sqlite3.Connection, job_id: str) -> int:
 def retry(conn: sqlite3.Connection, job_id: str) -> int:
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("UPDATE darkroom_jobs SET cancel_requested=0 WHERE id=?", (job_id,))
-    n = conn.execute("UPDATE darkroom_items SET state='QUEUED', attempt=0, error_code=NULL, error_detail=NULL, "
+    n = conn.execute("UPDATE darkroom_items SET state='QUEUED', attempt=0, pub_attempts=0, pub_note=NULL, error_code=NULL, error_detail=NULL, "
                      "finished_at=NULL WHERE job_id=? AND state IN ('FAILED','CANCELLED')", (job_id,)).rowcount
     conn.execute("COMMIT")
     return n

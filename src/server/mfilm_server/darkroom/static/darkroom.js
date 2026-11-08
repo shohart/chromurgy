@@ -1633,16 +1633,21 @@ function jobCard(j) {
   if (["QUEUED", "RUNNING"].includes(j.state)) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/cancel`, { method: "POST" }); refreshJobs(); } }, "Cancel"));
   if (j.counts.FAILED || j.counts.CANCELLED) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/retry`, { method: "POST" }); refreshJobs(); } }, "Retry failed / cancelled"));
   if (j.counts.COMPLETE) acts.append(h("a", { class: "btn", href: `${API}/jobs/${j.job_id}/zip`, download: "" }, `Download ZIP (${j.counts.COMPLETE})`));
-  const albumBox = (j.counts.COMPLETE && !j.publish) ? albumCreator(j) : null;
+  const albumBox = (j.counts.COMPLETE && (!j.publish || (!j.album_uid && j.state !== "PUBLISHING" && j.state !== "RUNNING"))) ? albumCreator(j) : null;
   const pubInfo = j.publish ? h("div", { class: "pubinfo" }, "→ PhotoPrism ",
     h("b", {}, j.publish.create_album_name ? `album “${j.publish.create_album_name}”` : j.publish.album_uid ? "existing album" : "folder only"),
-    h("span", { class: "dim" }, ` · ${j.publish.folder}`), j.album_uid ? h("span", { class: "okc" }, " · album ✓") : null) : null;
+    h("span", { class: "dim" }, ` · ${j.publish.folder}`),
+    j.album_uid ? h("span", { class: "okc" }, " · album ✓")
+      : (j.state === "FAILED" || (j.counts.FAILED && !j.counts.RUNNING && !j.counts.QUEUED && !j.counts.PUBLISHING))
+        ? h("span", { class: "err", title: "Publication failed" }, " · album/publish failed ✗")
+        : (j.counts.PUBLISHING || j.state === "PUBLISHING") ? h("span", { class: "dim" }, " · publishing…") : null) : null;
   return h("div", { class: "job" }, h("header", {}, st, h("b", {}, j.film), h("span", { class: "dim" }, `${j.camera_look} · recipe ${j.recipe_hash.slice(0, 10)} · ${j.created_at.slice(0, 19).replace("T", " ")}`)),
     pubInfo,
     h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename, i.crop ? " ✂" : "", i.rotate ? ` ⟳${i.rotate}°` : ""),
       i.published_path ? h("span", { class: i.state === "COMPLETE" ? "okc" : "dim", title: i.publish_note || i.published_path }, i.state === "COMPLETE" ? "in PhotoPrism ✓" : i.state.toLowerCase()) : null,
+      i.state === "FAILED" ? h("span", { class: "err", title: i.error_detail || i.publish_note || "" }, ` ✗ ${i.error_code || "failed"}${i.error_detail ? ": " + i.error_detail : ""}`) : null,
       i.render ? h("a", { href: `${API}/renders/${i.render.render_id}/file`, style: "color:var(--ok)" }, `${i.render.width}×${i.render.height} ↓`)
-        : h("span", { class: i.state === "FAILED" ? "err" : "dim", title: i.error_detail || "" }, i.error_code || i.state)))), acts, albumBox);
+        : (i.state !== "FAILED" ? h("span", { class: "dim", title: i.error_detail || "" }, i.state) : null)))), acts, albumBox);
 }
 const albumNames = {};
 function defaultAlbumName(j) {
