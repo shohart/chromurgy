@@ -6,6 +6,28 @@
   --mono:ui-monospace,"SF Mono","Cascadia Mono","DejaVu Sans Mono",Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box}
+html, * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--safe2) #140e0c;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: #120d0b;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--safe2);
+  border-radius: 4px;
+  border: 2px solid #120d0b;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--safe);
+}
+::-webkit-scrollbar-corner {
+  background: #120d0b;
+}
 [hidden]{display:none!important}      /* author display rules (grid, flex) must never beat the hidden attribute */
 html{background:var(--bg);color:var(--ink);font:16px/1.45 var(--serif);scroll-behavior:smooth}
 body{margin:0;min-height:100vh;

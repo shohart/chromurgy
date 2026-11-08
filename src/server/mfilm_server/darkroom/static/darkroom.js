@@ -1398,7 +1398,7 @@ async function startCrop() {
     const url = await imgUrl(p.preview_id); if (!S.cropMode) return;
     const img = h("img", { alt: "Whole frame, for cropping", draggable: "false" }); img.onload = () => { fitStage(img); S.cropRect = S.crops[S.current] ? { ...S.crops[S.current] } : { x: 0.05, y: 0.05, w: 0.9, h: 0.9 }; refit(); drawCrop(); };
     S.cropImg = img; img.src = url;
-    const box = h("div", { class: "cropbox", id: "cropbox", tabindex: "0", role: "group", "aria-label": "Crop rectangle. Arrow keys move it, Shift+arrows resize it." },
+    const box = h("div", { class: "cropbox", id: "cropbox", tabindex: "0", role: "group", "aria-label": "Crop rectangle. Shift+drag: resize symmetrically from center. Arrow keys move it, Shift+arrows resize it." },
       ["nw", "n", "ne", "e", "se", "s", "sw", "w"].map(d => h("i", { class: "hd hd-" + d, "data-h": d })));
     lay.replaceChildren(h("div", { class: "cropwrap", id: "cropwrap" }, img, box));
     wireCrop(box);
@@ -1444,8 +1444,54 @@ function wireCrop(box) {
     if (!drag) return;
     const dx = (e.clientX - drag.sx) / drag.w.width, dy = (e.clientY - drag.sy) / drag.w.height, o = drag.r, hd = drag.hd, nr = normRatio();
     let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h;
-    if (hd === "move") { const w = o.w, h = o.h; x0 = Math.min(Math.max(o.x + dx, 0), 1 - w); y0 = Math.min(Math.max(o.y + dy, 0), 1 - h); x1 = x0 + w; y1 = y0 + h; }
-    else {
+    if (hd === "move") {
+      const w = o.w, h = o.h;
+      x0 = Math.min(Math.max(o.x + dx, 0), 1 - w);
+      y0 = Math.min(Math.max(o.y + dy, 0), 1 - h);
+      x1 = x0 + w;
+      y1 = y0 + h;
+    } else if (e.shiftKey) {
+      // Симметричное масштабирование относительно центра рамки
+      const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
+      let hw = o.w / 2, hh = o.h / 2;
+      const hasE = hd.includes("e"), hasW = hd.includes("w");
+      const hasS = hd.includes("s"), hasN = hd.includes("n");
+
+      if (hasE) hw += dx;
+      else if (hasW) hw -= dx;
+
+      if (hasS) hh += dy;
+      else if (hasN) hh -= dy;
+
+      hw = Math.max(MINC / 2, hw);
+      hh = Math.max(MINC / 2, hh);
+
+      if (nr) {
+        if (hasE || hasW) {
+          if (hasS || hasN) {
+            if (hw / hh > nr) hh = hw / nr;
+            else hw = hh * nr;
+          } else {
+            hh = hw / nr;
+          }
+        } else if (hasS || hasN) {
+          hw = hh * nr;
+        }
+      }
+
+      const maxHw = Math.min(cx, 1 - cx);
+      const maxHh = Math.min(cy, 1 - cy);
+      let k = 1;
+      if (hw > maxHw && maxHw > 0) k = Math.min(k, maxHw / hw);
+      if (hh > maxHh && maxHh > 0) k = Math.min(k, maxHh / hh);
+      hw = Math.max(MINC / 2, hw * k);
+      hh = Math.max(MINC / 2, hh * k);
+
+      x0 = cx - hw;
+      x1 = cx + hw;
+      y0 = cy - hh;
+      y1 = cy + hh;
+    } else {
       if (hd.includes("w")) x0 = Math.min(Math.max(o.x + dx, 0), x1 - MINC);
       if (hd.includes("e")) x1 = Math.max(Math.min(o.x + o.w + dx, 1), x0 + MINC);
       if (hd.includes("n")) y0 = Math.min(Math.max(o.y + dy, 0), y1 - MINC);
@@ -1464,9 +1510,33 @@ function wireCrop(box) {
   });
   box.addEventListener("pointerup", () => { drag = null; });
   box.addEventListener("keydown", e => {
-    const st = e.shiftKey ? 0.02 : 0.01, r = { ...S.cropRect }; const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]; if (!dir) return; e.preventDefault();
-    if (e.shiftKey) { r.w += dir[0] * st; r.h += dir[1] * st; const nr = normRatio(); S.cropRect = clampRect(nr ? { ...r, h: r.w / nr } : r); }
-    else { r.x += dir[0] * st; r.y += dir[1] * st; S.cropRect = clampRect(r); }
+    const st = 0.01, r = { ...S.cropRect };
+    const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (!dir) return;
+    e.preventDefault();
+    if (e.shiftKey) {
+      const nr = normRatio();
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      let w = r.w + dir[0] * st * 2;
+      let h = r.h + dir[1] * st * 2;
+      w = Math.max(MINC, w);
+      h = Math.max(MINC, h);
+      if (nr) {
+        if (dir[0] !== 0) h = w / nr;
+        else if (dir[1] !== 0) w = h * nr;
+      }
+      const maxW = 2 * Math.min(cx, 1 - cx), maxH = 2 * Math.min(cy, 1 - cy);
+      w = Math.min(w, maxW);
+      h = Math.min(h, maxH);
+      if (nr) {
+        if (w / h > nr) w = h * nr;
+        else h = w / nr;
+      }
+      S.cropRect = clampRect({ x: cx - w / 2, y: cy - h / 2, w, h });
+    } else {
+      r.x += dir[0] * st; r.y += dir[1] * st;
+      S.cropRect = clampRect(r);
+    }
     drawCrop();
   });
 }
@@ -1591,5 +1661,28 @@ function albumCreator(j) {
     } }, `★ Create album in PhotoPrism (${j.counts.COMPLETE})`);
   return h("div", { class: "album-create" }, h("label", {}, "Developed frames → new PhotoPrism album"), h("div", { class: "bar", style: "margin-top:.3rem" }, inp, btn));
 }
+
+/* Range sliders respond to mouse wheel scroll when hovered */
+window.addEventListener("wheel", e => {
+  const t = e.target;
+  if (!t || t.tagName !== "INPUT" || t.type !== "range" || t.disabled) return;
+  e.preventDefault();
+  const min = t.min !== "" ? Number(t.min) : 0;
+  const max = t.max !== "" ? Number(t.max) : 100;
+  let step = t.step !== "" && t.step !== "any" ? Number(t.step) : 1;
+  if (!step || step <= 0) step = 1;
+  const cur = Number(t.value);
+  const dir = (e.deltaY < 0 || e.deltaX < 0) ? 1 : -1;
+  let next = cur + dir * step;
+  const stepStr = String(step);
+  const stepDec = stepStr.includes(".") ? stepStr.split(".")[1].length : 0;
+  next = Number(next.toFixed(stepDec));
+  next = Math.max(min, Math.min(max, next));
+  if (next !== cur) {
+    t.value = next;
+    t.dispatchEvent(new Event("input", { bubbles: true }));
+    t.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}, { passive: false });
 
 boot();
