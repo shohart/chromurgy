@@ -1947,7 +1947,9 @@ async function refreshHistory() {
   let r; try { r = await api("/history?count=30"); } catch (e) { return; }
   box.replaceChildren(...(r.items.length ? r.items.map(x => h("div", { class: "job" }, h("header", {}, h("b", {}, x.filename), h("span", { class: "dim" },
       `${x.film} · ${x.camera_look} · ${x.optical} · ${x.width}×${x.height} · ${(x.bytes / 1048576).toFixed(1)} MB · ${x.created_at.slice(0, 16).replace("T", " ")}`)),
-    h("div", { class: "acts" }, h("a", { class: "btn", href: `${API}/renders/${x.render_id}/file` }, "Download"),
+    h("div", { class: "acts" },
+      h("button", { class: "session-load-btn", title: "Загрузить этот кадр и его рецепт в редактор", onclick: () => loadHistoryRender(x) }, "↺ Загрузить"),
+      h("a", { class: "btn", href: `${API}/renders/${x.render_id}/file` }, "Download"),
       h("button", { onclick: async () => {
         const o = outputSpec(); if (!o.publish) return toast("Choose “Publish to PhotoPrism” in the destination above first");
         try { const j = await api(`/renders/${x.render_id}/publish`, { method: "POST", json: { photoprism_folder: o.photoprism_folder, photoprism_album_uid: o.photoprism_album_uid, create_album_name: o.create_album_name } });
@@ -1957,6 +1959,7 @@ const COLOR = { PUBLISHING: "var(--safe2)", COMPLETE: "var(--ok)", FAILED: "var(
 function jobCard(j) {
   const st = h("span", { class: "st", style: `color:${COLOR[j.state] || "inherit"}` }, j.state);
   const acts = h("div", { class: "acts" });
+  acts.append(h("button", { class: "session-load-btn", title: "Загрузить сессию: восстановить кадры, рецепт, кадрирование и целевой альбом в редактор", onclick: () => loadSession(j) }, "↺ Загрузить сессию"));
   if (["QUEUED", "RUNNING"].includes(j.state)) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/cancel`, { method: "POST" }); refreshJobs(); } }, "Cancel"));
   if (j.counts.FAILED || j.counts.CANCELLED) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/retry`, { method: "POST" }); refreshJobs(); } }, "Retry failed / cancelled"));
   if (j.counts.COMPLETE) acts.append(h("a", { class: "btn", href: `${API}/jobs/${j.job_id}/zip`, download: "" }, `Download ZIP (${j.counts.COMPLETE})`));
@@ -1975,6 +1978,169 @@ function jobCard(j) {
       i.state === "FAILED" ? h("span", { class: "err", title: i.error_detail || i.publish_note || "" }, ` ✗ ${i.error_code || "failed"}${i.error_detail ? ": " + i.error_detail : ""}`) : null,
       i.render ? h("a", { href: `${API}/renders/${i.render.render_id}/file`, style: "color:var(--ok)" }, `${i.render.width}×${i.render.height} ↓`)
         : (i.state !== "FAILED" ? h("span", { class: "dim", title: i.error_detail || "" }, i.state) : null)))), acts, albumBox);
+}
+
+async function loadSession(j) {
+  try {
+    if (!j) return;
+    let job = j;
+    if (!job.items || !job.recipe) {
+      job = await api(`/jobs/${j.job_id}`);
+    }
+    const items = job.items || [];
+    if (!items.length) {
+      return toast("В этой сессии нет кадров");
+    }
+
+    // 1. Un-dismiss any asset in this session and reload assets
+    items.forEach(it => S.dismissed.delete(it.asset_id));
+    saveDismissed();
+    await refreshAssets();
+
+    // 2. Select session assets
+    const itemAssetIds = new Set(items.map(it => it.asset_id));
+    S.selected = new Set(S.assets.filter(a => itemAssetIds.has(a.asset_id)).map(a => a.asset_id));
+    if (items.length) {
+      const firstAvailable = items.find(it => S.assets.some(a => a.asset_id === it.asset_id));
+      if (firstAvailable) S.current = firstAvailable.asset_id;
+    }
+
+    // 3. Restore base recipe
+    const r = job.recipe || {};
+    if (r.film) {
+      S.film = r.film.id || "portra400";
+      S.grain = Number(r.film.grain_scale !== undefined ? r.film.grain_scale : 1);
+      S.halation = Number(r.film.halation_scale !== undefined ? r.film.halation_scale : 1);
+      S.softness = Number(r.film.softness_scale !== undefined ? r.film.softness_scale : 1);
+    }
+    if (r.camera_look) {
+      S.look = r.camera_look.id || "neutral";
+      S.strength = Number(r.camera_look.strength !== undefined ? r.camera_look.strength : 1);
+    }
+    if (r.optical) {
+      S.fxPreset = r.optical.preset_id || "none";
+      S.fxStrength = Number(r.optical.strength !== undefined ? r.optical.strength : 0);
+      S.policy = r.optical.halation_policy || "film";
+      S.fx = new Set((r.optical.stack || []).map(x => x.id));
+    }
+    if (r.render) {
+      S.quality = Number(r.render.quality || 92);
+      S.width = Number(r.render.width || 0);
+      S.height = Number(r.render.height || 0);
+    }
+    S.seed = r.seed || 0;
+    S.activePreset = null;
+
+    const ext = r.extensions || {};
+    const tn = ext.tone || {};
+    S.baseTone = {
+      brightness: Number(tn.brightness_ev || 0),
+      contrast: Number(tn.contrast || 0),
+      develop: Number(tn.develop_strength !== undefined ? tn.develop_strength : 1),
+      filter: tn.filter || "none",
+      filterStrength: Number(tn.filter_strength !== undefined ? tn.filter_strength : 1)
+    };
+    if (ext.wb_profile) {
+      S.baseWbSel = "custom";
+      S.baseWbCustom = { k: ext.wb_profile.cct || 5500, t: ext.wb_profile.tint || 0 };
+    } else {
+      S.baseWbSel = ext.white_balance === "as-shot" ? "as-shot" : "daylight";
+    }
+
+    // 4. Restore per-frame overrides (crop, rotate, adjustments)
+    items.forEach(it => {
+      if (it.crop) S.crops[it.asset_id] = { ...it.crop };
+      else delete S.crops[it.asset_id];
+
+      if (it.rotate) S.rotates[it.asset_id] = normDeg(it.rotate);
+      else delete S.rotates[it.asset_id];
+
+      if (it.tone || it.wb_profile || it.white_balance) {
+        const itemTone = it.tone || {};
+        S.adjustments[it.asset_id] = {
+          tone: {
+            brightness: Number(itemTone.brightness_ev || 0),
+            contrast: Number(itemTone.contrast || 0),
+            develop: Number(itemTone.develop_strength !== undefined ? itemTone.develop_strength : 1),
+            filter: itemTone.filter || "none",
+            filterStrength: Number(itemTone.filter_strength !== undefined ? itemTone.filter_strength : 1)
+          },
+          wbSel: it.wb_profile ? "custom" : (it.white_balance === "as-shot" ? "as-shot" : "daylight"),
+          wbCustom: it.wb_profile ? { k: it.wb_profile.cct || 5500, t: it.wb_profile.tint || 0 } : { ...S.baseWbCustom }
+        };
+      } else {
+        delete S.adjustments[it.asset_id];
+      }
+    });
+    saveCrops();
+    saveRotates();
+    saveAdjustments();
+
+    // 5. Restore destination & PhotoPrism album
+    const pub = job.publish;
+    const albumUid = job.album_uid || (pub && pub.album_uid);
+    if (pub || albumUid) {
+      if ($("#dest")) $("#dest").value = "pp";
+      if ($("#destbox")) $("#destbox").hidden = false;
+      if ($("#dfolder") && pub && pub.folder) $("#dfolder").value = pub.folder;
+      await loadDestAlbums();
+      const dalbum = $("#dalbum");
+      if (dalbum) {
+        if (albumUid) {
+          if (!dalbum.querySelector(`option[value="${albumUid}"]`)) {
+            const title = (pub && pub.create_album_name) || "Целевой альбом";
+            dalbum.append(h("option", { value: albumUid }, title));
+          }
+          dalbum.value = albumUid;
+          if ($("#dnew")) $("#dnew").value = "";
+        } else if (pub && pub.create_album_name) {
+          dalbum.value = "";
+          if ($("#dnew")) $("#dnew").value = pub.create_album_name;
+        }
+      }
+    } else {
+      if ($("#dest")) $("#dest").value = "none";
+      if ($("#destbox")) $("#destbox").hidden = true;
+    }
+
+    // 6. Update UI
+    if ($("#outsize")) {
+      const szVal = S.width && S.height ? `${S.width}x${S.height}` : "";
+      $("#outsize").value = szVal;
+    }
+    if ($("#q")) $("#q").value = S.quality;
+    loadFrameAdjustments(S.current);
+    syncControls();
+    renderAssets();
+    updateDevelop();
+    schedulePreview(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast(`Сессия загружена: ${items.length} кадров, пленка ${S.film}`);
+  } catch (e) {
+    toast("Ошибка загрузки сессии: " + e.message);
+  }
+}
+
+async function loadHistoryRender(x) {
+  try {
+    S.dismissed.delete(x.asset_id);
+    saveDismissed();
+    await refreshAssets();
+    S.selected.add(x.asset_id);
+    S.current = x.asset_id;
+    if (x.film) S.film = x.film;
+    if (x.camera_look) S.look = x.camera_look;
+    if (x.crop) { S.crops[x.asset_id] = { ...x.crop }; saveCrops(); }
+    loadFrameAdjustments(S.current);
+    syncControls();
+    renderAssets();
+    updateDevelop();
+    schedulePreview(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast(`Кадр ${x.filename} загружен в редактор`);
+  } catch (e) {
+    toast("Ошибка загрузки: " + e.message);
+  }
 }
 const albumNames = {};
 function defaultAlbumName(j) {

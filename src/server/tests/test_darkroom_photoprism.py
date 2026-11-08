@@ -223,6 +223,32 @@ def test_publish_into_existing_album_same_as_source_album(pp, store):
     assert (pp.originals / "trip" / "IMG_1.DNG").is_file()
 
 
+def test_redevelop_session_updates_target_album(pp, store):
+    # 1. First job develops and publishes into al1
+    jid1 = publish_job(pp, store, photoprism_album_uid="al1")
+    drain(store)
+    run_publish(pp, store, index_into_fake(pp))
+    v1 = pp.get(f"{dapp.API}/jobs/{jid1}").json()
+    uid1 = v1["items"][0]["photoprism_photo_uid"]
+    assert uid1 and uid1 in pp.fake.albums["al1"]["members"]
+
+    # 2. Second job (re-render with recipe change, e.g. cinestill800t) into the same album al1
+    rec2 = recipe("cinestill800t")
+    jid2 = pp.post(f"{dapp.API}/jobs", headers=H, json=job_body([v1["items"][0]["asset_id"]], rec2,
+                   source=v1["source"],
+                   output={"format": "jpeg", "publish": True, "photoprism_album_uid": "al1"})).json()["job_id"]
+    drain(store)
+    run_publish(pp, store, index_into_fake(pp))
+    v2 = pp.get(f"{dapp.API}/jobs/{jid2}").json()
+    uid2 = v2["items"][0]["photoprism_photo_uid"]
+    assert v2["state"] == "COMPLETE"
+    assert uid2 != uid1
+    # Target album was updated: new rendition uid2 is in al1, old rendition uid1 was removed from al1
+    assert uid2 in pp.fake.albums["al1"]["members"]
+    assert uid1 not in pp.fake.albums["al1"]["members"]
+
+
+
 def test_unsafe_destination_is_refused_and_photoprism_outage_keeps_the_render(pp, store):
     library(pp)
     pp.post(f"{P}/select", headers=H, json={"photo_uids": ["p1"], "source_kind": "album", "source_uid": "al1"})

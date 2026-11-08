@@ -169,7 +169,10 @@ def job_view(conn: sqlite3.Connection, job_id: str, *, items: bool = True) -> di
             "album_uid": j["album_uid"]}
     if items:
         view["recipe"] = recipe
-        req_assets = {a["asset_id"]: a for a in json.loads(j["request"])["source"]["assets"]}
+        req = json.loads(j["request"])
+        view["source"] = req.get("source")
+        view["output"] = req.get("output")
+        req_assets = {a["asset_id"]: a for a in req.get("source", {}).get("assets", [])}
         view["items"] = [{
             "crop": (req_assets.get(r["source_id"]) or {}).get("crop"),
             "rotate": (req_assets.get(r["source_id"]) or {}).get("rotate"),

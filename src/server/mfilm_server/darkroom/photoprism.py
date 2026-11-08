@@ -138,6 +138,11 @@ class Client:
         if status >= 400:
             raise PPError("ALBUM_ADD_FAILED", f"HTTP {status} {data}", 502)
 
+    def remove_from_album(self, album_uid: str, photo_uids: list[str]) -> None:
+        status, data = self.t("DELETE", f"albums/{urllib.parse.quote(album_uid)}/photos", None, {"photos": photo_uids})
+        if status >= 400:
+            raise PPError("ALBUM_REMOVE_FAILED", f"HTTP {status} {data}", 502)
+
     def delete_album(self, album_uid: str) -> None:
         status, data = self.t("POST", "batch/albums/delete", None, {"albums": [album_uid]})
         if status >= 400:

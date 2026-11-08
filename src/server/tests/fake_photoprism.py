@@ -115,6 +115,12 @@ class FakePhotoPrism:
             a = self.albums[path.split("/")[1]]
             a["members"] += [u for u in body["photos"] if u not in a["members"]]
             return 200, {"code": 200}
+        if method == "DELETE" and path.startswith("albums/") and path.endswith("/photos"):
+            a = self.albums.get(path.split("/")[1])
+            if a:
+                to_remove = set(body["photos"])
+                a["members"] = [u for u in a["members"] if u not in to_remove]
+            return 200, {"code": 200}
         if method == "POST" and path == "batch/albums/delete":
             for u in body["albums"]:
                 self.albums.pop(u, None)

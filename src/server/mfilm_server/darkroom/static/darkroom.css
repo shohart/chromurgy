@@ -138,6 +138,8 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .job .items{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:.3rem .9rem;margin-top:.6rem;font:.72rem var(--mono)}
 .job .items div{display:flex;gap:.5rem;justify-content:space-between;border-bottom:1px dotted var(--line);padding:.15rem 0}
 .job .acts{display:flex;gap:.5rem;margin-top:.7rem;flex-wrap:wrap}
+.job .acts .session-load-btn{border-color:var(--safe2);color:var(--safe2);background:transparent}
+.job .acts .session-load-btn:hover{background:var(--safe2);color:#000}
 .row3{display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem}
 .bar{display:flex;gap:.8rem;align-items:center;flex-wrap:wrap;margin-top:1rem}
 .login{max-width:24rem;margin:12vh auto}

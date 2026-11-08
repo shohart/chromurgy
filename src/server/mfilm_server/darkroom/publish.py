@@ -133,6 +133,19 @@ def publish_pending(conn: sqlite3.Connection, store: Store, cfg: Cfg, client: pp
                     if client is None:
                         raise RuntimeError(api_err)
                     client.add_to_album(album, [it["pp_photo_uid"]])
+                    # When re-rendering a frame into the target album, remove previous rendition(s) of this frame from the album
+                    old_rows = conn.execute(
+                        "SELECT DISTINCT i.pp_photo_uid FROM darkroom_items i "
+                        "JOIN darkroom_jobs j ON j.id=i.job_id "
+                        "WHERE i.source_id=? AND (j.album_uid=? OR j.publish LIKE ?) "
+                        "AND i.pp_photo_uid IS NOT NULL AND i.pp_photo_uid != ?",
+                        (it["source_id"], album, f'%"{album}"%', it["pp_photo_uid"])).fetchall()
+                    old_uids = [r[0] for r in old_rows if r[0]]
+                    if old_uids:
+                        try:
+                            client.remove_from_album(album, old_uids)
+                        except Exception:
+                            pass
                 conn.execute(f"UPDATE darkroom_items SET state='COMPLETE', pub_note=NULL, finished_at={NOW} WHERE id=?", (it["id"],))
                 summary["completed"] += 1
         except (UnsafePath, ValueError) as e:
