@@ -666,6 +666,98 @@ async function pollPreview(pid, tries = 400) {
 }
 
 /* ---------------- step 2: camera look ---------------- */
+const LOOK_SIGNATURES = {
+  neutral: {
+    tag: "Базовый профиль",
+    summary: "Чистая линейная цветопередача без окраса сенсора",
+    detail: "Нейтральная точка отсчета: точный базовый цвет и линейный контраст для максимального контроля при дальнейшей проявке плёнки."
+  },
+  leica_m8_ccd: {
+    tag: "Kodak CCD · 10 Мп",
+    summary: "Высокий микроконтраст и винтажный «лейковский» объем",
+    detail: "Легендарный сенсор Kodak KAF-8300 с тонким ИК-фильтром. Плотные холодноватые тени, сочные теплые света, выразительная пластика и живые оттенки кожи."
+  },
+  leica_m9_ccd: {
+    tag: "Full-frame Kodak CCD · 18 Мп",
+    summary: "Густой аналоговый цвет и фирменная пластика M-серии",
+    detail: "Знаменитый CCD-сенсор Kodak KAF-18500. Плёночная глубина, теплые света, оливково-изумрудные полутона зелени и высокая микрорезкость без цифровой жесткости."
+  },
+  fujifilm_s5_pro: {
+    tag: "Super CCD SR Pro · Двойные пиксели",
+    summary: "Широчайший ДД в светах и мягкие портретные тона",
+    detail: "Легендарная матрица Fujifilm с раздельными датчиками для светов. Мягкий гармоничный контраст, невыбивающиеся света и нежные естественные скинтоны."
+  },
+  nikon_d200_ccd: {
+    tag: "Sony CCD · Эпоха ранних зеркалок",
+    summary: "Плотный контраст и глубокий насыщенный цвет",
+    detail: "Узнаваемый характер классических CCD-камер Nikon: плотные тени, глубокий синий цвет неба, кирпично-теплые оттенки и живая цветопередача без перенасыщения."
+  },
+  pentax_645d_ccd: {
+    tag: "Medium Format CCD · 40 Мп",
+    summary: "Плавные тональные градиенты и среднеформатный объем",
+    detail: "Крупноформатная CCD-матрица Kodak. Высочайшая градация полутонов, мягкий благородный спад в светах и сдержанный естественный колорит с глубоким разделением планов."
+  },
+  ricoh_gr_iii_positive: {
+    tag: "Стрит-культура · Ricoh GR",
+    summary: "Контрастный характер слайдовой фотопленки",
+    detail: "Фирменный режим Positive Film: выразительный микроконтраст, глубокие тени, акцент на красный и синий спектры и сочная драматичная подача кадра."
+  },
+  sigma_dp2_merrill_foveon: {
+    tag: "Foveon X3 · Прямой захват RGB",
+    summary: "Экстремальный микроконтраст и текстурная резкость",
+    detail: "Трехслойная кремниевая структура без дебайеризации (Bayer). Невероятная попиксельная четкость мелких фактур, нейтральные света и осязаемый трехмерный объем."
+  },
+  fujifilm_xpro3_classic_negative: {
+    tag: "Fujicolor Superia Look",
+    summary: "Плотные тени, умеренная насыщенность и бирюзовая зелень",
+    detail: "Стилизация под классическую негативную плёнку: характерный S-образный контраст в средних тонах, приглушенные цвета и смещение зелени в благородный циановый оттенок."
+  }
+};
+
+let lookHoverTimer = null, activeTooltipEl = null;
+function hideLookTooltip() {
+  if (lookHoverTimer) { clearTimeout(lookHoverTimer); lookHoverTimer = null; }
+  if (activeTooltipEl) { activeTooltipEl.remove(); activeTooltipEl = null; }
+}
+
+function showLookTooltip(targetEl, lookId) {
+  hideLookTooltip();
+  const sig = LOOK_SIGNATURES[lookId];
+  if (!sig || !targetEl || !targetEl.isConnected) return;
+  const l = (S.catalog && S.catalog.camera_looks) ? S.catalog.camera_looks.find(x => x.id === lookId) : null;
+  const name = l ? l.name : lookId;
+
+  const tt = h("div", { class: "look-tooltip", role: "tooltip" },
+    h("div", { class: "tt-head" },
+      h("span", { class: "tt-title" }, name),
+      h("span", { class: "tt-tag" }, sig.tag)),
+    h("div", { class: "tt-summary" }, sig.summary),
+    h("p", { class: "tt-detail" }, sig.detail));
+
+  document.body.appendChild(tt);
+  activeTooltipEl = tt;
+
+  const rect = targetEl.getBoundingClientRect();
+  const ttRect = tt.getBoundingClientRect();
+
+  let top = rect.top - ttRect.height - 8;
+  if (top < 10) top = rect.bottom + 8;
+
+  let left = rect.left + (rect.width - ttRect.width) / 2;
+  const pad = 12;
+  if (left < pad) left = pad;
+  if (left + ttRect.width > window.innerWidth - pad) {
+    left = window.innerWidth - pad - ttRect.width;
+  }
+
+  tt.style.top = Math.round(top) + "px";
+  tt.style.left = Math.round(left) + "px";
+}
+
+window.addEventListener("scroll", hideLookTooltip, { passive: true });
+window.addEventListener("pointerdown", hideLookTooltip);
+window.addEventListener("keydown", hideLookTooltip);
+
 function looksPanel() { return h("div", {}, h("div", { class: "cards", id: "looks" }),
   h("div", { class: "grid2", style: "margin-top:1rem" }, h("div", {},
     h("label", { for: "strength" }, "Look intensity ", h("span", { id: "lookv", class: "val" }, "100%")),
@@ -673,12 +765,25 @@ function looksPanel() { return h("div", {}, h("div", { class: "cards", id: "look
       ondblclick: e => { e.target.value = 100; S.strength = 1.0; if ($("#lookv")) $("#lookv").textContent = "100%"; scheduleLiveTone(); schedulePreview(); },
       oninput: e => { S.strength = e.target.value / 100; if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; scheduleLiveTone(); schedulePreview(); } })))); }
 function renderLooks() {
+  hideLookTooltip();
   $("#looks").replaceChildren(...S.catalog.camera_looks.map(l => {
     const b = h("button", { class: "card", "aria-pressed": String(S.look === l.id), "aria-disabled": String(!l.supported),
       title: l.supported ? "" : "Not implemented in this engine yet", onclick: () => {
+        hideLookTooltip();
         if (!l.supported) return toast(`${l.name}: not implemented in this engine yet`);
         S.look = l.id; syncControls(); schedulePreview(); } },
       h("strong", {}, l.name), h("small", {}, l.evidence_tier), h("span", { class: "tag" }, l.supported ? "available" : "not available"));
+
+    b.addEventListener("pointerenter", e => {
+      if (e.pointerType === "touch") return;
+      hideLookTooltip();
+      lookHoverTimer = setTimeout(() => {
+        if (b.matches(":hover")) showLookTooltip(b, l.id);
+      }, 5000);
+    });
+    b.addEventListener("pointerleave", hideLookTooltip);
+    b.addEventListener("mouseleave", hideLookTooltip);
+
     return b;
   }));
 }

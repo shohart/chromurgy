@@ -204,3 +204,12 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .album-btn:hover:not(:disabled){filter:brightness(1.08);box-shadow:0 0 20px rgba(242,184,75,.55)}
 .album-btn:disabled{opacity:.55;box-shadow:none}
 .pubinfo{font:.72rem var(--mono);margin-top:.4rem;color:var(--preset)}
+
+/* camera look characteristic signature tooltip */
+.look-tooltip{position:fixed;z-index:1000;max-width:320px;background:rgba(18,13,11,.96);border:1px solid var(--safe2);box-shadow:0 10px 30px rgba(0,0,0,.8),0 0 16px rgba(255,138,61,.25);border-radius:4px;padding:.85rem 1rem;color:var(--ink);backdrop-filter:blur(8px);pointer-events:none;animation:ttFade .22s cubic-bezier(.16,1,.3,1) both}
+@keyframes ttFade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+.look-tooltip .tt-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.4rem;border-bottom:1px solid rgba(255,138,61,.22);padding-bottom:.35rem}
+.look-tooltip .tt-title{font-weight:600;font-size:.92rem;color:#fff;letter-spacing:.02em}
+.look-tooltip .tt-tag{font:.62rem var(--mono);color:var(--safe2);background:rgba(255,138,61,.12);border:1px solid rgba(255,138,61,.28);padding:.08rem .38rem;border-radius:2px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.look-tooltip .tt-summary{font-size:.84rem;font-weight:500;color:var(--safe2);margin-bottom:.35rem;line-height:1.35}
+.look-tooltip .tt-detail{font-size:.78rem;color:#d8c6b3;line-height:1.45;margin:0}
