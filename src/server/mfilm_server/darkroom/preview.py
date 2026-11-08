@@ -88,36 +88,82 @@ def render(job: dict) -> dict:
         return {"failed": True, "error_code": "RENDER_FAILED", "detail": f"{type(e).__name__}: {e}"[:300]}
 
 
+_CREATIVE_CACHE: dict[str, np.ndarray] = {}
+_FILM_CACHE: dict[str, tuple[np.ndarray, float | None]] = {}
+_CACHE_MAX = 4
+
+
+def _cache_put(cache: dict, key: str, val):
+    if key in cache:
+        cache.pop(key)
+    elif len(cache) >= _CACHE_MAX:
+        cache.pop(next(iter(cache)))
+    cache[key] = val
+    return val
+
+
 def _render(job: dict) -> dict:
     """Runs in the preview process. job: root, src_path, sha, kind ('treated'|'before'), v2, v1, max_edge, key, captured_at."""
     t0 = time.monotonic()
     root = Path(job["root"])
     out = root / "web-previews" / "img" / f"{job['key']}.jpg"
-    if out.is_file():
-        return {"cached": True, **json.loads(out.with_suffix(".json").read_text())}
+    meta_file = out.with_suffix(".json")
+    if out.is_file() and meta_file.is_file():
+        return {"cached": True, **json.loads(meta_file.read_text())}
     out.parent.mkdir(parents=True, exist_ok=True)
-    lin = normalized_small(root, Path(job["src_path"]), job["sha"], job["wb"])
-    lin = cropping.apply_crop(lin, job.get("crop"))          # same fractions as the full render
-    lin = _shrink(lin, job["max_edge"])
     if job["kind"] == "before":
+        lin = normalized_small(root, Path(job["src_path"]), job["sha"], job["wb"])
+        lin = cropping.apply_crop(lin, job.get("crop"))          # same fractions as the full render
+        lin = _shrink(lin, job["max_edge"])
         img = _srgb_oetf(lin)
         info = {"scanner_ev": None}
     else:
         v1 = job["v1"]
-        if v1.get("wb_profile"):
-            lin = wb.apply(lin, v1["wb_profile"])
-        if v1.get("creative"):
-            lin = creative.apply_creative(lin, v1["creative"])
+        ckey = canonical_json({"sha": job["sha"], "wb": job["wb"], "crop": job.get("crop"), "edge": job["max_edge"],
+                               "wb_profile": v1.get("wb_profile"), "creative": v1.get("creative")}).decode()
+        lin = _CREATIVE_CACHE.get(ckey)
+        if lin is None:
+            lin = normalized_small(root, Path(job["src_path"]), job["sha"], job["wb"])
+            lin = cropping.apply_crop(lin, job.get("crop"))
+            lin = _shrink(lin, job["max_edge"])
+            if v1.get("wb_profile"):
+                lin = wb.apply(lin, v1["wb_profile"])
+            if v1.get("creative"):
+                lin = creative.apply_creative(lin, v1["creative"])
+            _cache_put(_CREATIVE_CACHE, ckey, lin)
         bundle = engine.current_bundle()
         seed = develop.recipe_seed(v1, *job["seed_ids"])
-        img, ev = tone.render_display(lin, v1, bundle, seed)
-        info = {"scanner_ev": None if ev is None else round(ev, 4)}
-    develop.write_jpeg(img, out, PREVIEW_QUALITY, f"M-Film preview {job['kind']} {job['key'][:16]} (not export quality)")
+        t = v1.get("tone") or {}
+        ev = float(v1.get("exposure_compensation_ev", 0.0))
+        key = v1["film_profile_id"]
+        s = float(t.get("develop_strength", 1.0))
+        if key == "none":
+            base_img = tone.srgb_encode(lin * (2.0 ** ev))
+            neutral = None
+            ev_post = 0.0
+            scanner = None
+        else:
+            look = v1["look_controls"]
+            fkey = canonical_json({"c": ckey, "film": key, "look": look, "seed": seed, "bundle": bundle.sha256}).decode()
+            cached_film = _FILM_CACHE.get(fkey)
+            if cached_film is None:
+                cached_film = bundle.develop(key, lin, seed=seed, grain_scale=look["grain_scale"],
+                                             halation_scale=look["halation_scale"], softness_scale=look["softness_scale"],
+                                             exposure_ev=0.0)
+                _cache_put(_FILM_CACHE, fkey, cached_film)
+            base_img, scanner = cached_film
+            neutral = tone.srgb_encode(lin) if s < 1.0 else None
+            ev_post = ev
+        img = tone.apply_post_tone(base_img, neutral, ev=ev_post, contrast=float(t.get("contrast", 0.0)),
+                                   develop_strength=s, filter_name=t.get("filter", "none"),
+                                   filter_strength=float(t.get("filter_strength", 1.0)), seed=seed)
+        info = {"scanner_ev": None if scanner is None else round(scanner, 4)}
     meta = {"width": int(img.shape[1]), "height": int(img.shape[0]), "elapsed_s": round(time.monotonic() - t0, 3),
             "recipe_hash": job["recipe_hash"], "kind": job["kind"], "max_edge": job["max_edge"], **info}
     tmp = out.with_suffix(".json.part")
     tmp.write_text(json.dumps(meta))
-    os.replace(tmp, out.with_suffix(".json"))
+    os.replace(tmp, meta_file)
+    develop.write_jpeg(img, out, PREVIEW_QUALITY, f"M-Film preview {job['kind']} {job['key'][:16]} (not export quality)")
     return {"cached": False, **meta}
 
 
@@ -155,10 +201,11 @@ class PreviewLane:
 
     def status(self, root: Path, key: str) -> dict:
         img = root / "web-previews" / "img" / f"{key}.jpg"
+        meta_file = img.with_suffix(".json")
         with self.lock:
             j = self.jobs.get(key)
-        if img.is_file():
-            return {"status": "DONE", **json.loads(img.with_suffix(".json").read_text())}
+        if img.is_file() and meta_file.is_file():
+            return {"status": "DONE", **json.loads(meta_file.read_text())}
         if j is None:
             return {"status": "UNKNOWN"}
         f = j["future"]

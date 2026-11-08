@@ -223,3 +223,13 @@ def test_hidden_attribute_cannot_be_overridden_by_layout_rules(client):
     swallowed the pointer and froze the before/after wipe. The stylesheet must keep [hidden] absolute."""
     css = client.get("/darkroom/static/darkroom.css").text
     assert "[hidden]{display:none!important}" in css.replace(" ", "")
+
+
+def test_two_pane_layout_loader_and_preset_separation_in_ui_assets(client):
+    html = client.get("/darkroom").text
+    css = client.get("/darkroom/static/darkroom.css").text
+    js = client.get("/darkroom/static/darkroom.js").text
+    assert 'id="loader"' in html
+    assert ".workspace{" in css.replace(" ", "") and ".pane-right{position:sticky" in css.replace(" ", "")
+    assert ".preset-card[aria-pressed=true]" in css.replace(" ", "") and ".fx-divider{" in css.replace(" ", "")
+    assert "renderLiveTone" in js and "withLoading" in js and "isCompositeActive" in js

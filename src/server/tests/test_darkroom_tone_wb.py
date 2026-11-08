@@ -102,6 +102,22 @@ def test_contrast_curve_is_monotonic_and_filters_do_what_they_say():
     assert tone.tone_filter(red, "grayscale", 1.0)[0, 0, 0] == pytest.approx(tone.srgb_encode(np.array(0.2126)), abs=1e-3)
 
 
+def test_post_tone_on_base_render_matches_full_render_display():
+    b = bundle()
+    lin = np.random.default_rng(7).random((32, 48, 3)).astype(np.float32) * 0.8
+    base_v1 = recipe2.to_v1(recipe2.normalize(recipe("portra400"), b))
+    base_film, _ = tone.render_display(lin, base_v1, b, seed=42)
+    neutral = tone.srgb_encode(lin)
+    r = recipe("portra400")
+    r["extensions"] = {"tone": {"brightness_ev": 0.75, "contrast": 0.35, "develop_strength": 0.65,
+                                "filter": "sepia", "filter_strength": 0.8}}
+    full_v1 = recipe2.to_v1(recipe2.normalize(r, b))
+    full_out, _ = tone.render_display(lin, full_v1, b, seed=42)
+    post_out = tone.apply_post_tone(base_film, neutral, ev=0.75, contrast=0.35, develop_strength=0.65,
+                                    filter_name="sepia", filter_strength=0.8, seed=42)
+    assert np.allclose(full_out, post_out, atol=1e-6)
+
+
 # ---- recipe -------------------------------------------------------------------------------------------
 def neutral(**ext):
     r = recipe("none")

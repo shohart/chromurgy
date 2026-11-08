@@ -71,22 +71,39 @@ def tone_filter(img: np.ndarray, name: str, strength: float, seed: int = 0) -> n
     return img + strength * (out - img)
 
 
+def apply_post_tone(img: np.ndarray, neutral: np.ndarray | None, *, ev: float = 0.0, contrast: float = 0.0,
+                    develop_strength: float = 1.0, filter_name: str = "none", filter_strength: float = 1.0,
+                    seed: int = 0) -> np.ndarray:
+    """Apply the post-film adjustments (development strength, exposure compensation in stops, contrast S-curve,
+    and tone filter) at the end of the pipeline so previews can update them in real time without re-running
+    RAW decode, optical effects, Camera Look, or the C film core."""
+    if neutral is not None and develop_strength < 1.0:
+        img = neutral + develop_strength * (img - neutral)               # 0 = developed with no film, 1 = the full film look
+    if ev:
+        img = srgb_encode(srgb_decode(img) * (2.0 ** ev))
+    img = contrast_curve(img, contrast)
+    img = tone_filter(img, filter_name, filter_strength, seed)
+    return np.ascontiguousarray(np.clip(img, 0, 1), dtype=np.float32)
+
+
 def render_display(lin: np.ndarray, v1: dict, bundle, seed: int) -> tuple[np.ndarray, float | None]:
     """lin: scene-linear sRGB HxWx3 float32. Returns display sRGB 0..1 and the film's scanner EV (None without film)."""
     ev = float(v1.get("exposure_compensation_ev", 0.0))
     tone = v1.get("tone") or {}
     key = v1["film_profile_id"]
     scanner = None
+    s = float(tone.get("develop_strength", 1.0))
     if key == "none":
         img = srgb_encode(lin * (2.0 ** ev))
+        neutral = None
+        ev_post = 0.0
     else:
         look = v1["look_controls"]
         img, scanner = bundle.develop(key, lin, seed=seed, grain_scale=look["grain_scale"], halation_scale=look["halation_scale"],
-                                      softness_scale=look["softness_scale"], exposure_ev=ev)
-        s = float(tone.get("develop_strength", 1.0))
-        if s < 1.0:
-            neutral = srgb_encode(lin * (2.0 ** ev))
-            img = neutral + s * (img - neutral)                       # 0 = developed with no film, 1 = the full film look
-    img = contrast_curve(img, float(tone.get("contrast", 0.0)))
-    img = tone_filter(img, tone.get("filter", "none"), float(tone.get("filter_strength", 1.0)), seed)
-    return np.ascontiguousarray(np.clip(img, 0, 1), dtype=np.float32), scanner
+                                      softness_scale=look["softness_scale"], exposure_ev=0.0)
+        neutral = srgb_encode(lin) if s < 1.0 else None
+        ev_post = ev
+    img = apply_post_tone(img, neutral, ev=ev_post, contrast=float(tone.get("contrast", 0.0)),
+                          develop_strength=s, filter_name=tone.get("filter", "none"),
+                          filter_strength=float(tone.get("filter_strength", 1.0)), seed=seed)
+    return img, scanner

@@ -15,6 +15,45 @@ function h(tag, attrs = {}, ...kids) {
 }
 let toastT;
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 4500); }
+
+/* ---------------- popup loading indicator ---------------- */
+let loadDepth = 0, loadTimer = null, loadT0 = 0;
+function showLoader(title, sub) {
+  const box = $("#loader"); if (!box) return;
+  if (loadDepth === 0) {
+    loadT0 = performance.now();
+    box.replaceChildren(h("div", { class: "loader-box" },
+      h("div", { class: "spinner", "aria-hidden": "true" }),
+      h("div", { class: "loader-title", id: "loader_title" }, title || "Loading source material…"),
+      h("div", { class: "loader-sub", id: "loader_sub" }, sub || "Reading RAW frames from archive…"),
+      h("div", { class: "loader-bar", "aria-hidden": "true" }),
+      h("div", { class: "loader-time", id: "loader_time" }, "0.0 s")));
+    box.hidden = false;
+    clearInterval(loadTimer);
+    loadTimer = setInterval(() => {
+      const el = $("#loader_time");
+      if (el) el.textContent = ((performance.now() - loadT0) / 1000).toFixed(1) + " s";
+    }, 100);
+  } else {
+    const t = $("#loader_title"), s = $("#loader_sub");
+    if (t && title) t.textContent = title;
+    if (s && sub) s.textContent = sub;
+  }
+  loadDepth++;
+}
+function hideLoader() {
+  loadDepth = Math.max(0, loadDepth - 1);
+  if (loadDepth === 0) {
+    clearInterval(loadTimer); loadTimer = null;
+    const box = $("#loader"); if (box) box.hidden = true;
+  }
+}
+async function withLoading(title, sub, fn) {
+  showLoader(title, sub);
+  try { return await fn(); }
+  finally { hideLoader(); }
+}
+
 async function api(path, opts = {}) {
   const r = await fetch(API + path, { credentials: "same-origin", ...opts,
     headers: { "X-MFilm-CSRF": "1", ...(opts.json ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) },
@@ -29,7 +68,7 @@ async function api(path, opts = {}) {
 /* ---------------- state ---------------- */
 const S = { catalog: null, assets: [], selected: new Set(), current: null,
   look: "neutral", film: null, strength: 1, grain: 1, halation: 1, softness: 1, quality: 92, seed: 0, wb: "daylight",
-  width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film",
+  width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film", activePreset: null,
   tone: { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, wbSel: "daylight", wbCustom: { k: 5500, t: 0 }, wbl: null, sliders: [],
   crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"), aspect: "free", cropMode: false, cropRect: null, cropImg: null };
 const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Preview · Develop"];
@@ -64,6 +103,14 @@ function recipe(withCrop = true) {
   if (withCrop && S.crops[S.current]) r.extensions.crop = S.crops[S.current];     // this frame's own framing
   return r;
 }
+function baseRecipe(opts = {}) {
+  const r = recipe(true);
+  if (r.extensions) delete r.extensions.tone;     // post-tone (brightness, contrast, develop, filter) is applied live on canvas
+  if (opts.noFilm) r.film = { id: "none", grain_scale: 1, halation_scale: 1, softness_scale: 1 };
+  if (opts.noFx) r.optical = { preset_id: "none", strength: 0, halation_policy: S.policy === "disabled" ? "disabled" : "film", stack: [] };
+  if (opts.noLook) r.camera_look = { id: "neutral", version: "1.0.0", strength: 1 };
+  return r;
+}
 
 /* ---------------- login ---------------- */
 function showLogin() {
@@ -88,12 +135,16 @@ async function boot() {
   if (!S.film) S.film = S.catalog.films.find(f => f.id === "portra400") ? "portra400" : S.catalog.films[0].id;
   $("#logout").hidden = false;
   $("#steps").replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1) }, h("b", {}, i + 1), t)));
-  $("#app").replaceChildren(
+  const left = h("div", { class: "pane-left", id: "leftPane" },
     step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared M-Film engine`, filmPanel()),
-    step(4, "Optical effects", "optional · applied before the look and film", opticsPanel()),
-    step(5, "Preview, develop", "", adjustPanel(), previewPanel(), developPanel()));
+    step(4, "Optical effects", "optional · applied before the look and film", opticsPanel()));
+  const right = h("div", { class: "pane-right", id: "rightPane" },
+    step(5, "Preview, develop", "",
+      h("div", { class: "pv-pin" }, previewPanel()),
+      h("div", { class: "dev-scroll" }, adjustPanel(), developPanel())));
+  $("#app").replaceChildren(h("div", { class: "workspace" }, left, right));
   await refreshAssets(); refreshJobs(); syncControls();
 }
 $("#logout").addEventListener("click", async () => { try { await api("/logout", { method: "POST" }); } finally { showLogin(); } });
@@ -114,23 +165,26 @@ function materialPanel() {
 /* ---- camera rolls received from the SX510: their archived originals can be developed again with any recipe ---- */
 function rollPaneEl() { return h("div", { id: "rolls", hidden: true }, h("p", { class: "dim", id: "rollmsg" }, "Loading rolls…"), h("div", { class: "cards", id: "rolllist" })); }
 async function rollsInit() {
-  try {
-    const r = await api("/rolls");
-    $("#rollmsg").textContent = r.items.length ? "Rolls received from the camera. The roll's own archive and history are never changed; renditions are new files." : "No rolls on the server yet.";
-    $("#rolllist").replaceChildren(...r.items.map(x => h("button", { class: "card", disabled: !x.verified, onclick: () => rollUse(x) },
-      h("strong", {}, `${x.roll_id.slice(0, 8)} · ${x.film_profile_id}`), h("small", {}, `${x.verified}/${x.frames} frames on the server · ${(x.created_at || "").slice(0, 10)}`),
-      h("br"), h("span", { class: "tag" }, `use ${x.verified} frame(s)`))));
-  } catch (e) { $("#rollmsg").textContent = e.message; }
+  await withLoading("Loading M-Film rolls…", "Reading archived camera rolls from the server…", async () => {
+    try {
+      const r = await api("/rolls");
+      $("#rollmsg").textContent = r.items.length ? "Rolls received from the camera. The roll's own archive and history are never changed; renditions are new files." : "No rolls on the server yet.";
+      $("#rolllist").replaceChildren(...r.items.map(x => h("button", { class: "card", disabled: !x.verified, onclick: () => rollUse(x) },
+        h("strong", {}, `${x.roll_id.slice(0, 8)} · ${x.film_profile_id}`), h("small", {}, `${x.verified}/${x.frames} frames on the server · ${(x.created_at || "").slice(0, 10)}`),
+        h("span", { class: "tag" }, `use ${x.verified} frame(s)`))));
+    } catch (e) { $("#rollmsg").textContent = e.message; }
+  });
 }
 async function rollUse(x) {
-  try {
-    toast("Reading the roll…");
-    const r = await api("/rolls/select", { method: "POST", json: { device_id: x.device_id, roll_id: x.roll_id } });
-    r.assets.forEach(a => S.selected.add(a.asset_id)); S.ppSource = r.source;
-    await refreshAssets();
-    if (r.assets.length) setCurrent(r.assets[0].asset_id);
-    toast(`${r.assets.length} frame(s) ready${r.skipped.length ? `, ${r.skipped.length} skipped: ${r.skipped[0].reason}` : ""}`);
-  } catch (e) { toast(e.message); }
+  await withLoading(`Loading roll ${x.roll_id.slice(0, 8)}…`, `Inspecting ${x.verified} RAW frame(s) and extracting previews…`, async () => {
+    try {
+      const r = await api("/rolls/select", { method: "POST", json: { device_id: x.device_id, roll_id: x.roll_id } });
+      r.assets.forEach(a => S.selected.add(a.asset_id)); S.ppSource = r.source;
+      await refreshAssets();
+      if (r.assets.length) setCurrent(r.assets[0].asset_id);
+      toast(`${r.assets.length} frame(s) ready${r.skipped.length ? `, ${r.skipped.length} skipped: ${r.skipped[0].reason}` : ""}`);
+    } catch (e) { toast(e.message); }
+  });
 }
 function uploadPane() {
   const input = h("input", { type: "file", multiple: true, accept: ".dng,.nef,.DNG,.NEF", hidden: true, id: "file" });
@@ -155,38 +209,44 @@ function ppPaneEl() { return h("div", { id: "pp", hidden: true }, h("div", { cla
   h("div", { class: "cards", id: "pp_list" }), h("div", { id: "pp_photos" })); }
 async function ppInit() {
   if (PP.inst) return;
-  try {
-    const r = await api("/photoprism/instances"); PP.inst = r.items[0];
-    if (!PP.inst.configured) { $("#pp_state").textContent = "PhotoPrism is not configured on this server"; return; }
-    $("#pp_state").textContent = `${PP.inst.name} ${PP.inst.version || ""}${PP.inst.read.originals ? "" : " · originals not readable from this host"}`;
-    ppMode("albums");
-  } catch (e) { $("#pp_state").textContent = e.message; }
+  await withLoading("Connecting to PhotoPrism…", "Checking library instance and albums…", async () => {
+    try {
+      const r = await api("/photoprism/instances"); PP.inst = r.items[0];
+      if (!PP.inst.configured) { $("#pp_state").textContent = "PhotoPrism is not configured on this server"; return; }
+      $("#pp_state").textContent = `${PP.inst.name} ${PP.inst.version || ""}${PP.inst.read.originals ? "" : " · originals not readable from this host"}`;
+      await ppMode("albums");
+    } catch (e) { $("#pp_state").textContent = e.message; }
+  });
 }
-function ppMode(m) { PP.mode = m; PP.stack = []; PP.src = null; $("#pp_photos").replaceChildren(); $("#pp_q").hidden = m !== "albums"; ppList(); }
+async function ppMode(m) { PP.mode = m; PP.stack = []; PP.src = null; $("#pp_photos").replaceChildren(); $("#pp_q").hidden = m !== "albums"; await ppList(); }
 async function ppList() {
   const box = $("#pp_list"); box.replaceChildren(); $("#pp_photos").replaceChildren();
-  try {
-    if (PP.mode === "albums") {
-      $("#pp_crumb").textContent = "Albums are virtual collections, not folders";
-      const r = await api(`/photoprism/${PP.inst.id}/albums?count=200&q=${encodeURIComponent(PP.q)}`);
-      box.replaceChildren(...r.items.map(a => h("button", { class: "card", onclick: () => ppOpen("album", a.uid, a.title) }, h("strong", {}, a.title), h("small", {}, `${a.photo_count} photos${a.manual ? "" : " · smart album"}`))));
-      if (!r.items.length) box.append(h("p", { class: "dim" }, "No albums"));
-    } else {
-      const parent = PP.stack.join("/");
-      $("#pp_crumb").textContent = "Folder under originals: /" + parent;
-      const r = await api(`/photoprism/${PP.inst.id}/folders?parent_id=${encodeURIComponent(parent)}`);
-      if (PP.stack.length) box.append(h("button", { class: "card", onclick: () => { PP.stack.pop(); ppList(); } }, h("strong", {}, "↑ up")));
-      box.append(...r.items.map(f => h("button", { class: "card", onclick: () => { PP.stack = f.path.split("/"); ppList(); ppOpen("folder", f.path, f.path); } }, h("strong", {}, f.title), h("small", {}, f.path))));
-    }
-  } catch (e) { box.append(h("p", { class: "err" }, e.message)); }
+  await withLoading("Loading PhotoPrism catalog…", PP.mode === "albums" ? "Fetching albums…" : "Fetching folders…", async () => {
+    try {
+      if (PP.mode === "albums") {
+        $("#pp_crumb").textContent = "Albums are virtual collections, not folders";
+        const r = await api(`/photoprism/${PP.inst.id}/albums?count=200&q=${encodeURIComponent(PP.q)}`);
+        box.replaceChildren(...r.items.map(a => h("button", { class: "card", onclick: () => ppOpen("album", a.uid, a.title) }, h("strong", {}, a.title), h("small", {}, `${a.photo_count} photos${a.manual ? "" : " · smart album"}`))));
+        if (!r.items.length) box.append(h("p", { class: "dim" }, "No albums"));
+      } else {
+        const parent = PP.stack.join("/");
+        $("#pp_crumb").textContent = "Folder under originals: /" + parent;
+        const r = await api(`/photoprism/${PP.inst.id}/folders?parent_id=${encodeURIComponent(parent)}`);
+        if (PP.stack.length) box.append(h("button", { class: "card", onclick: () => { PP.stack.pop(); ppList(); } }, h("strong", {}, "↑ up")));
+        box.append(...r.items.map(f => h("button", { class: "card", onclick: () => { PP.stack = f.path.split("/"); ppList(); ppOpen("folder", f.path, f.path); } }, h("strong", {}, f.title), h("small", {}, f.path))));
+      }
+    } catch (e) { box.append(h("p", { class: "err" }, e.message)); }
+  });
 }
 async function ppOpen(kind, uid, title, offset = 0) {
   PP.sourceKind = kind; PP.sourceUid = uid; PP.title = title;
   const box = $("#pp_photos"); box.replaceChildren(h("p", { class: "dim" }, "loading…"));
-  try {
-    const r = await api(`/photoprism/${PP.inst.id}/photos?source_kind=${kind}&source_uid=${encodeURIComponent(uid)}&count=60&offset=${offset}`);
-    PP.page = r.items; PP.offset = offset; PP.next = r.next_offset; ppRender();
-  } catch (e) { box.replaceChildren(h("p", { class: "err" }, e.message)); }
+  await withLoading(`Loading "${title}"…`, "Checking RAW originals in PhotoPrism…", async () => {
+    try {
+      const r = await api(`/photoprism/${PP.inst.id}/photos?source_kind=${kind}&source_uid=${encodeURIComponent(uid)}&count=60&offset=${offset}`);
+      PP.page = r.items; PP.offset = offset; PP.next = r.next_offset; ppRender();
+    } catch (e) { box.replaceChildren(h("p", { class: "err" }, e.message)); }
+  });
 }
 function ppRender() {
   const box = $("#pp_photos");
@@ -210,14 +270,17 @@ function ppRender() {
       h("button", { class: "primary", disabled: !PP.chosen.size, onclick: ppUse }, `Use ${PP.chosen.size} selected`)));
 }
 async function ppSelectAll() {
-  toast("Reading the library… this snapshots every RAW (hash + metadata) and can take a while");
-  await ppSelect({ all_eligible: true, source_kind: PP.sourceKind, source_uid: PP.sourceUid });
+  await withLoading("Importing all eligible RAWs…", "Hashing and snapshotting every RAW in this collection…", async () => {
+    await ppSelect({ all_eligible: true, source_kind: PP.sourceKind, source_uid: PP.sourceUid });
+  });
 }
 async function ppUse() {
-  const groups = new Map();
-  for (const [uid, g] of PP.chosen) { const k = g.kind + ":" + g.uid; if (!groups.has(k)) groups.set(k, { ...g, uids: [] }); groups.get(k).uids.push(uid); }
-  for (const g of groups.values()) for (let i = 0; i < g.uids.length; i += 25) await ppSelect({ photo_uids: g.uids.slice(i, i + 25), source_kind: g.kind, source_uid: g.uid });
-  PP.chosen.clear(); ppRender();
+  await withLoading(`Importing ${PP.chosen.size} selected RAW(s)…`, "Verifying RAW originals and extracting thumbnails…", async () => {
+    const groups = new Map();
+    for (const [uid, g] of PP.chosen) { const k = g.kind + ":" + g.uid; if (!groups.has(k)) groups.set(k, { ...g, uids: [] }); groups.get(k).uids.push(uid); }
+    for (const g of groups.values()) for (let i = 0; i < g.uids.length; i += 25) await ppSelect({ photo_uids: g.uids.slice(i, i + 25), source_kind: g.kind, source_uid: g.uid });
+    PP.chosen.clear(); ppRender();
+  });
 }
 async function ppSelect(body) {
   try {
@@ -276,7 +339,9 @@ function setCurrent(id) {
   const changed = S.current !== id;
   S.current = id;
   if (changed) {
+    resetPvState();
     ["#pv_t", "#pv_b"].forEach(q => { const i = $(q); if (i) { i.removeAttribute("src"); i.hidden = true; i.classList.remove("stale"); } });
+    const c = $("#pv_c"); if (c) c.hidden = true;
     const info = $("#pvinfo"); if (info) info.textContent = "Rendering the preview of the selected frame…";
   }
   renderAssets(); schedulePreview(true);
@@ -319,22 +384,24 @@ async function pollPreview(pid, tries = 400) {
   for (let i = 0; i < tries; i++) {
     const st = await api("/previews/" + pid);
     if (["DONE", "FAILED", "SUPERSEDED"].includes(st.status)) return st;
-    await new Promise(r => setTimeout(r, i < 5 ? 250 : 600));
+    await new Promise(r => setTimeout(r, i < 8 ? 150 : 400));
   }
   return { status: "FAILED", error_code: "TIMEOUT" };
 }
 
 /* ---------------- step 2: camera look ---------------- */
 function looksPanel() { return h("div", {}, h("div", { class: "cards", id: "looks" }),
-  h("div", { class: "grid2", style: "margin-top:1rem" }, h("div", {}, h("label", { for: "strength" }, "Look intensity"), h("input", { type: "range", id: "strength", min: 0, max: 100, value: 100, disabled: true,
-    oninput: e => { S.strength = e.target.value / 100; schedulePreview(); } })))); }
+  h("div", { class: "grid2", style: "margin-top:1rem" }, h("div", {},
+    h("label", { for: "strength" }, "Look intensity ", h("span", { id: "lookv", class: "val" }, "100%")),
+    h("input", { type: "range", id: "strength", min: 0, max: 100, value: 100, disabled: true,
+      oninput: e => { S.strength = e.target.value / 100; if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; scheduleLiveTone(); schedulePreview(); } })))); }
 function renderLooks() {
   $("#looks").replaceChildren(...S.catalog.camera_looks.map(l => {
     const b = h("button", { class: "card", "aria-pressed": String(S.look === l.id), "aria-disabled": String(!l.supported),
       title: l.supported ? "" : "Not implemented in this engine yet", onclick: () => {
         if (!l.supported) return toast(`${l.name}: not implemented in this engine yet`);
         S.look = l.id; syncControls(); schedulePreview(); } },
-      h("strong", {}, l.name), h("small", {}, l.evidence_tier), h("br"), h("span", { class: "tag" }, l.supported ? "available" : "not available"));
+      h("strong", {}, l.name), h("small", {}, l.evidence_tier), h("span", { class: "tag" }, l.supported ? "available" : "not available"));
     return b;
   }));
 }
@@ -356,42 +423,116 @@ function renderFilms() {
       f.name, h("span", {}, [f.kind, f.iso && "ISO " + f.iso].filter(Boolean).join(" · ")))));
 }
 
-/* ---------------- step 4: optics ---------------- */
+/* ---------------- step 4: optics (presets vs individual effects) ---------------- */
+function normKey(t) { return String(t || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+function findFilmId(alias) {
+  if (!alias || !S.catalog) return null;
+  const n = normKey(alias);
+  const f = S.catalog.films.find(x => normKey(x.id) === n || normKey(x.name) === n);
+  return f ? f.id : null;
+}
+function isCompositeActive(c) {
+  const f = c.film && findFilmId(c.film);
+  const lookOk = S.look === c.camera_look;
+  const filmOk = !f || S.film === f;
+  const fxOk = c.optical_preset === "golden_haze"
+    ? S.fxPreset === "golden_haze"
+    : (S.fxPreset === "none" && S.fx.size === 1 && S.fx.has(c.optical_preset));
+  return Boolean(lookOk && filmOk && fxOk && (!S.activePreset || S.activePreset === c.id));
+}
 function opticsPanel() {
-  const norm = t => String(t || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const findFilm = alias => { const n = norm(alias); const f = S.catalog.films.find(x => norm(x.id) === n || norm(x.name) === n); return f ? f.id : null; };
-  const quick = h("div", { class: "cards", style: "margin-bottom:1rem" }, S.catalog.composites.map(c => h("button", { class: "card", title: "Sets camera look, film and optics together",
-    onclick: () => {
-      S.look = c.camera_look; S.strength = c.look_strength; const f = c.film && findFilm(c.film); if (f) S.film = f;
-      S.fx = new Set(c.optical_preset === "golden_haze" ? [] : [c.optical_preset]); S.fxPreset = c.optical_preset === "golden_haze" ? "golden_haze" : "none";
-      S.fxStrength = c.optical_strength; S.policy = c.halation_policy || "film"; syncControls(); schedulePreview(true); toast("Applied: " + c.name); } },
-    h("strong", {}, c.name), h("small", {}, "quick combination"))));
-  const cards = h("div", { class: "cards", id: "fxcards" });
-  const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 100, value: 50, "aria-label": "Optical effects strength", oninput: e => { S.fxStrength = e.target.value / 100; $("#fxv").textContent = S.fxStrength.toFixed(2); schedulePreview(); } });
+  const presetGroup = h("div", { class: "preset-group" },
+    h("div", { class: "group-head" },
+      h("span", {}, "✦ Effect bundles & presets"),
+      h("small", {}, "sets a curated combination · active bundle is framed in gold")),
+    h("div", { class: "cards", id: "presetcards" }));
+  const divider = h("div", { class: "fx-divider", role: "separator" });
+  const fxGroup = h("div", { class: "effects-group" },
+    h("div", { class: "group-head" },
+      h("span", {}, "Individual optical effects"),
+      h("small", {}, "combinable · effects included in an active bundle are also highlighted")),
+    h("div", { class: "cards", id: "fxcards" }));
+  const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 100, value: 50, "aria-label": "Optical effects strength",
+    oninput: e => { S.fxStrength = e.target.value / 100; $("#fxv").textContent = S.fxStrength.toFixed(2); scheduleLiveTone(); schedulePreview(); } });
   const policy = h("select", { id: "policy", onchange: e => { S.policy = e.target.value; schedulePreview(); } },
     h("option", { value: "film" }, "film: the film stock owns halation"), h("option", { value: "optical" }, "optical: replaces the film's halation"),
     h("option", { value: "stacked" }, "stacked: film + optical (deliberate)"), h("option", { value: "disabled" }, "disabled: no halation at all"));
-  return h("div", {}, h("p", { class: "dim" }, "Effects run on scene-linear light before the look and film, in the engine's fixed order. Starter parameters are provisional artistic approximations, not measured recreations of any filter."),
-    quick, cards, h("div", { class: "grid2", style: "margin-top:1rem" },
-      h("div", {}, h("label", { for: "fxstrength" }, "Effects strength ", h("span", { id: "fxv" }, "0.50")), strength),
+  return h("div", {}, h("p", { class: "dim", style: "margin-top:0" }, "Effects run on scene-linear light before the look and film, in the engine's fixed order. Starter parameters are provisional artistic approximations, not measured recreations of any filter."),
+    presetGroup, divider, fxGroup, h("div", { class: "grid2", style: "margin-top:1rem" },
+      h("div", {}, h("label", { for: "fxstrength" }, "Effects strength ", h("span", { id: "fxv", class: "val" }, "0.50")), strength),
       h("div", {}, h("label", { for: "policy" }, "Halation (applied exactly once)"), policy)));
 }
 function renderFx() {
-  const box = $("#fxcards"); if (!box) return;
-  const items = [...S.catalog.optical_effects, ...S.catalog.optical_presets.filter(p => p.id !== "none")];
-  box.replaceChildren(...items.map(o => {
-    const on = o.id === "golden_haze" ? S.fxPreset === "golden_haze" : S.fx.has(o.id);
-    return h("button", { class: "card", "aria-pressed": String(on), "aria-disabled": String(!o.supported), onclick: () => {
+  const pbox = $("#presetcards"), box = $("#fxcards");
+  if (!box || !S.catalog) return;
+  if (pbox) {
+    const compCards = S.catalog.composites.map(c => {
+      const on = isCompositeActive(c);
+      const summary = [c.camera_look !== "neutral" ? c.camera_look.replace(/_/g, " ") : "neutral look", c.film, c.optical_preset.replace(/_/g, " ")].filter(Boolean).join(" + ");
+      return h("button", { class: "card preset-card", "aria-pressed": String(on), title: "Sets camera look, film and optical effect together",
+        onclick: () => {
+          if (on) {
+            S.activePreset = null; S.fxPreset = "none"; S.fx.clear(); S.policy = "film";
+            syncControls(); schedulePreview(true); toast("Preset cleared: " + c.name);
+            return;
+          }
+          S.activePreset = c.id;
+          S.look = c.camera_look; S.strength = c.look_strength;
+          const f = c.film && findFilmId(c.film); if (f) S.film = f;
+          if (c.optical_preset === "golden_haze") {
+            S.fxPreset = "golden_haze"; S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
+          } else {
+            S.fxPreset = "none"; S.fx = new Set([c.optical_preset]);
+          }
+          S.fxStrength = c.optical_strength; S.policy = c.halation_policy || "film";
+          syncControls(); schedulePreview(true); toast("Applied preset: " + c.name);
+        } },
+        h("span", { class: "badge" }, "✦ Preset"),
+        h("strong", {}, c.name),
+        h("small", {}, summary));
+    });
+    const anyCompOn = S.catalog.composites.some(isCompositeActive);
+    const optPresets = S.catalog.optical_presets.filter(p => p.id !== "none").map(p => {
+      const on = S.fxPreset === p.id && (!anyCompOn || S.activePreset === "opt:" + p.id);
+      return h("button", { class: "card preset-card", "aria-pressed": String(on), "aria-disabled": String(!p.supported),
+        title: "Applies the optical bundle without changing Camera Look or Film",
+        onclick: () => {
+          if (!p.supported) return toast(`${p.name}: not available`);
+          if (on) {
+            S.activePreset = null; S.fxPreset = "none"; S.fx.clear();
+          } else {
+            S.activePreset = "opt:" + p.id; S.fxPreset = p.id;
+            S.fx = new Set(p.id === "golden_haze" ? ["soft_sun_glow", "black_pro_mist_like"] : []);
+          }
+          syncControls(); schedulePreview();
+        } },
+        h("span", { class: "badge" }, "✦ Optics bundle"),
+        h("strong", {}, p.name),
+        h("small", {}, "Soft Sun Glow + Black Pro-Mist (keeps Look & Film)"));
+    });
+    pbox.replaceChildren(...compCards, ...optPresets);
+  }
+  box.replaceChildren(...S.catalog.optical_effects.map(o => {
+    const inGoldenHaze = S.fxPreset === "golden_haze" && (o.id === "soft_sun_glow" || o.id === "black_pro_mist_like");
+    const on = inGoldenHaze || S.fx.has(o.id);
+    return h("button", { class: "card fx-card", "aria-pressed": String(on), "aria-disabled": String(!o.supported), onclick: () => {
       if (!o.supported) return toast(`${o.name}: not available`);
-      if (o.id === "golden_haze") { S.fxPreset = on ? "none" : "golden_haze"; S.fx.clear(); }
-      else { S.fxPreset = "none"; on ? S.fx.delete(o.id) : S.fx.add(o.id); }
+      if (S.fxPreset === "golden_haze") {
+        S.fxPreset = "none";
+        S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
+      }
+      S.activePreset = null;
+      on ? S.fx.delete(o.id) : S.fx.add(o.id);
       if (o.id === "film_halation_extra") S.policy = S.fx.has(o.id) ? "optical" : "film";
-      syncControls(); schedulePreview(); } }, h("strong", {}, o.name), h("small", {}, o.id === "golden_haze" ? "composite preset" : "optical effect"));
+      syncControls(); schedulePreview(); } },
+      h("span", { class: "badge" }, inGoldenHaze ? "Effect · in preset" : "Individual effect"),
+      h("strong", {}, o.name),
+      h("small", {}, "optical effect"));
   }));
 }
 function syncControls() {
   renderLooks(); renderFilms(); renderFx();
-  if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); }
+  if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; }
   if ($("#fxstrength")) { $("#fxstrength").value = Math.round(S.fxStrength * 100); $("#fxv").textContent = S.fxStrength.toFixed(2); }
   if ($("#policy")) $("#policy").value = S.policy;
   S.sliders.forEach(x => { x.inp.value = x.get(); x.out.textContent = x.fmt(x.get()); });
@@ -401,33 +542,210 @@ function syncControls() {
   if ($("#wbsel")) { renderWb(); }
 }
 
-/* ---------------- step 5: preview ---------------- */
-let pvSeq = 0, pvTimer = null, pvShown = null;
+/* ---------------- step 5: real-time preview + adjustments ---------------- */
+let pvSeq = 0, pvTimer = null, liveRaf = 0;
+
+/* Precomputed sRGB and Sepia tables (1025 steps = 1/4 bit precision) for 60 FPS canvas post-processing */
+const LUT_N = 1024;
+const SRGB_DEC = new Float32Array(LUT_N + 1);
+const SEPIA_R = new Float32Array(LUT_N + 1);
+const SEPIA_G = new Float32Array(LUT_N + 1);
+const SEPIA_B = new Float32Array(LUT_N + 1);
+for (let i = 0; i <= LUT_N; i++) {
+  const x = i / LUT_N;
+  SRGB_DEC[i] = x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  SEPIA_R[i] = Math.min(1, Math.pow(x, 0.90) * 1.00);
+  SEPIA_G[i] = Math.min(1, Math.pow(x, 1.02) * 0.93);
+  SEPIA_B[i] = Math.min(1, Math.pow(x, 1.30) * 0.78);
+}
+function srgbEncScalar(x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+}
+
+const pvState = {
+  w: 0, h: 0,
+  filmImageData: null, filmPx: null,
+  neutralPx: null,
+  noFxPx: null, baseFxStrength: 0,
+  noLookPx: null, baseLookStrength: 1,
+  outImageData: null,
+  grain: null, grainKey: "",
+  meta: null
+};
+function resetPvState() {
+  pvState.w = pvState.h = 0;
+  pvState.filmImageData = pvState.filmPx = pvState.neutralPx = pvState.noFxPx = pvState.noLookPx = pvState.outImageData = null;
+  pvState.meta = null;
+}
+function extractPixels(img) {
+  const c = document.createElement("canvas");
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  return ctx.getImageData(0, 0, c.width, c.height);
+}
+function ensureSilverGrain(w, h, seed) {
+  const key = `${w}x${h}:${seed}`;
+  if (pvState.grain && pvState.grainKey === key) return pvState.grain;
+  const g = new Float32Array(w * h);
+  let s = ((seed | 0) ^ 0x9e3779b9) >>> 0;
+  if (!s) s = 1;
+  const nextU = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s >>> 0) + 0.5) / 4294967296; };
+  for (let i = 0; i < g.length; i += 2) {
+    const u1 = nextU(), u2 = nextU();
+    const r = Math.sqrt(-2 * Math.log(u1)), th = 6.283185307179586 * u2;
+    g[i] = r * Math.cos(th);
+    if (i + 1 < g.length) g[i + 1] = r * Math.sin(th);
+  }
+  pvState.grain = g; pvState.grainKey = key;
+  return g;
+}
+
+function scheduleLiveTone() {
+  if (liveRaf) return;
+  liveRaf = requestAnimationFrame(() => { liveRaf = 0; renderLiveTone(); });
+}
+
+function renderLiveTone() {
+  const c = $("#pv_c");
+  if (!c || !pvState.filmPx || !pvState.w || !pvState.h) return;
+  if (c.width !== pvState.w || c.height !== pvState.h) { c.width = pvState.w; c.height = pvState.h; }
+  const ctx = c.getContext("2d");
+  const T = S.tone;
+  const dev = S.film === "none" ? 1 : T.develop;
+  const ev = T.brightness, con = T.contrast, flt = T.filter, fstr = T.filterStrength;
+  const hasFxDelta = pvState.noFxPx && pvState.baseFxStrength > 0 && Math.abs(S.fxStrength - pvState.baseFxStrength) > 1e-3;
+  const fxScale = hasFxDelta ? (S.fxStrength / pvState.baseFxStrength) : 1;
+  const hasLookDelta = pvState.noLookPx && pvState.baseLookStrength > 0 && S.look !== "neutral" && Math.abs(S.strength - pvState.baseLookStrength) > 1e-3;
+  const lookScale = hasLookDelta ? (S.strength / pvState.baseLookStrength) : 1;
+
+  if (dev === 1 && ev === 0 && con === 0 && (flt === "none" || fstr <= 0) && !hasFxDelta && !hasLookDelta) {
+    ctx.putImageData(pvState.filmImageData, 0, 0);
+    updatePvInfo(false);
+    return;
+  }
+
+  const bcLut = new Float32Array(LUT_N + 1);
+  const bcByte = new Uint8ClampedArray(LUT_N + 1);
+  const evMul = ev !== 0 ? Math.pow(2, ev) : 1;
+  for (let i = 0; i <= LUT_N; i++) {
+    let x = i / LUT_N;
+    if (ev !== 0) {
+      x = srgbEncScalar(SRGB_DEC[i] * evMul);
+    }
+    if (con !== 0) {
+      const s = x * x * (3 - 2 * x);
+      x = Math.min(1, Math.max(0, x + con * (s - x)));
+    }
+    bcLut[i] = x;
+    bcByte[i] = (x * 255 + 0.5) | 0;
+  }
+
+  if (!pvState.outImageData || pvState.outImageData.width !== pvState.w || pvState.outImageData.height !== pvState.h) {
+    pvState.outImageData = ctx.createImageData(pvState.w, pvState.h);
+  }
+  const src = pvState.filmPx, np = pvState.neutralPx, nfx = pvState.noFxPx, nlk = pvState.noLookPx;
+  const out = pvState.outImageData.data;
+  const len = src.length;
+  const useDev = dev < 1 && np && np.length === len;
+  const useFx = hasFxDelta && nfx && nfx.length === len;
+  const useLook = hasLookDelta && nlk && nlk.length === len;
+  const useFilter = flt !== "none" && fstr > 0;
+  const grain = (useFilter && flt === "silver") ? ensureSilverGrain(pvState.w, pvState.h, S.seed) : null;
+  const scaleIdx = LUT_N / 255;
+
+  for (let p = 0; p < len; p += 4) {
+    let r = src[p], g = src[p + 1], b = src[p + 2];
+    if (useFx) {
+      r = Math.min(255, Math.max(0, nfx[p] + (r - nfx[p]) * fxScale));
+      g = Math.min(255, Math.max(0, nfx[p + 1] + (g - nfx[p + 1]) * fxScale));
+      b = Math.min(255, Math.max(0, nfx[p + 2] + (b - nfx[p + 2]) * fxScale));
+    }
+    if (useLook) {
+      r = Math.min(255, Math.max(0, nlk[p] + (r - nlk[p]) * lookScale));
+      g = Math.min(255, Math.max(0, nlk[p + 1] + (g - nlk[p + 1]) * lookScale));
+      b = Math.min(255, Math.max(0, nlk[p + 2] + (b - nlk[p + 2]) * lookScale));
+    }
+    if (useDev) {
+      r = np[p] + dev * (r - np[p]);
+      g = np[p + 1] + dev * (g - np[p + 1]);
+      b = np[p + 2] + dev * (b - np[p + 2]);
+    }
+    const ri = (r * scaleIdx + 0.5) | 0;
+    const gi = (g * scaleIdx + 0.5) | 0;
+    const bi = (b * scaleIdx + 0.5) | 0;
+    if (!useFilter) {
+      out[p] = bcByte[ri];
+      out[p + 1] = bcByte[gi];
+      out[p + 2] = bcByte[bi];
+      out[p + 3] = 255;
+    } else {
+      let rf = bcLut[ri], gf = bcLut[gi], bf = bcLut[bi];
+      if (flt === "grayscale" || flt === "sepia") {
+        const linL = 0.2126 * SRGB_DEC[(rf * LUT_N) | 0] + 0.7152 * SRGB_DEC[(gf * LUT_N) | 0] + 0.0722 * SRGB_DEC[(bf * LUT_N) | 0];
+        const lumI = Math.min(LUT_N, Math.max(0, (srgbEncScalar(linL) * LUT_N + 0.5) | 0));
+        if (flt === "grayscale") {
+          const lv = lumI / LUT_N;
+          rf += fstr * (lv - rf); gf += fstr * (lv - gf); bf += fstr * (lv - bf);
+        } else {
+          rf += fstr * (SEPIA_R[lumI] - rf); gf += fstr * (SEPIA_G[lumI] - gf); bf += fstr * (SEPIA_B[lumI] - bf);
+        }
+      } else if (flt === "silver") {
+        let v = 0.38 * rf + 0.52 * gf + 0.10 * bf;
+        v = (v + 0.40 * (v * v * (3 - 2 * v) - v)) * 0.965 + 0.018;
+        const amp = 0.008 + 0.034 * 4.0 * v * (1.0 - v);
+        v = Math.min(1, Math.max(0, v + amp * grain[p >> 2]));
+        rf += fstr * (v - rf); gf += fstr * (v - gf); bf += fstr * (v - bf);
+      }
+      out[p] = (rf * 255 + 0.5) | 0;
+      out[p + 1] = (gf * 255 + 0.5) | 0;
+      out[p + 2] = (bf * 255 + 0.5) | 0;
+      out[p + 3] = 255;
+    }
+  }
+  ctx.putImageData(pvState.outImageData, 0, 0);
+  updatePvInfo(true);
+}
+
+function updatePvInfo(liveAdjusted) {
+  const info = $("#pvinfo"), m = pvState.meta;
+  if (!info || !m) return;
+  info.replaceChildren(
+    h("span", {}, "recipe ", m.hash.slice(0, 12)),
+    h("span", {}, `${m.width}×${m.height}px preview`),
+    h("span", {}, `${m.elapsed_s}s${m.cached ? " (cached)" : ""}`),
+    liveAdjusted ? h("span", { style: "color:var(--safe2)" }, "live adjustments active") : null,
+    h("span", {}, "not export quality"));
+}
+
 /* ---------------- adjustments: brightness, contrast, development strength, filters, white balance, all-off ---------------- */
-function slider(id, label, min, max, step, get, set, fmt, def, title) {
+function slider(id, label, min, max, step, get, set, fmt, def, title, liveOnly = false) {
   const out = h("span", { class: "val" }, fmt(get()));
+  const onChange = () => { if (liveOnly) scheduleLiveTone(); else schedulePreview(); };
   const inp = h("input", { type: "range", id, min, max, step, value: get(), "aria-label": label, title: (title || "") + " Double-click resets.",
-    oninput: e => { set(+e.target.value); out.textContent = fmt(get()); schedulePreview(); },
-    ondblclick: () => { set(def); inp.value = def; out.textContent = fmt(def); schedulePreview(); } });
+    oninput: e => { set(+e.target.value); out.textContent = fmt(get()); onChange(); },
+    ondblclick: () => { set(def); inp.value = def; out.textContent = fmt(def); onChange(); } });
   S.sliders.push({ inp, out, get, fmt });
   return h("div", {}, h("label", { for: id }, label, " ", out), inp);
 }
 function adjustPanel() {
   S.sliders = [];
   const T = S.tone, sg = v => (v > 0 ? "+" : "") + v.toFixed(2);
-  const filter = h("select", { id: "filter", "aria-label": "Tone filter", onchange: e => { T.filter = e.target.value; syncControls(); schedulePreview(); } },
+  const filter = h("select", { id: "filter", "aria-label": "Tone filter", onchange: e => { T.filter = e.target.value; syncControls(); scheduleLiveTone(); } },
     h("option", { value: "none" }, "No filter"), h("option", { value: "grayscale" }, "Black & white (plain grayscale)"), h("option", { value: "silver" }, "Silver B&W film (grain, film curve)"), h("option", { value: "sepia" }, "Sepia"));
   const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => { S.wbSel = e.target.value; S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight"; renderWb(); schedulePreview(true); } });
   const file = h("input", { type: "file", id: "wbfile", multiple: true, hidden: true, accept: ".json,.csv,.xmp,.lrtemplate,.pp3", onchange: wbImport });
   return h("div", { class: "adjust" },
-    h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Adjustments ", h("small", { class: "dim" }, "· shown in the preview and kept in every render")),
+    h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Adjustments ", h("small", { class: "dim" }, "· real-time in preview and kept in every full render")),
     h("div", { class: "row3" },
-      slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => T.brightness, v => { T.brightness = v; }, sg, 0, "Exposure compensation in stops, the film engine's own control."),
-      slider("sl_contrast", "Contrast", -1, 1, 0.01, () => T.contrast, v => { T.contrast = v; }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones."),
-      slider("sl_develop", "Development strength", 0, 1, 0.01, () => T.develop, v => { T.develop = v; }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.")),
+      slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => T.brightness, v => { T.brightness = v; }, sg, 0, "Exposure compensation in stops.", true),
+      slider("sl_contrast", "Contrast", -1, 1, 0.01, () => T.contrast, v => { T.contrast = v; }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones.", true),
+      slider("sl_develop", "Development strength", 0, 1, 0.01, () => T.develop, v => { T.develop = v; }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.", true)),
     h("div", { class: "grid2", style: "margin-top:.8rem" },
       h("div", {}, h("label", { for: "filter" }, "Filter"), filter,
-        h("div", { style: "margin-top:.4rem" }, slider("filterstr", "Filter strength", 0, 1, 0.01, () => T.filterStrength, v => { T.filterStrength = v; }, v => Math.round(v * 100) + "%", 1))),
+        h("div", { style: "margin-top:.4rem" }, slider("filterstr", "Filter strength", 0, 1, 0.01, () => T.filterStrength, v => { T.filterStrength = v; }, v => Math.round(v * 100) + "%", 1, "Filter blend strength.", true))),
       h("div", {}, h("label", { for: "wbsel" }, "White balance"), wbsel,
         h("div", { class: "bar", style: "margin-top:.4rem" }, h("button", { onclick: () => $("#wbfile").click(), title: "Import .json .csv .xmp .lrtemplate .pp3" }, "Import profile…"),
           h("button", { id: "wbdel", hidden: true, onclick: wbDelete }, "Delete imported"), file),
@@ -461,17 +779,24 @@ async function wbDelete() {
   const id = S.wbSel; if (!id.startsWith("user:")) return;
   try { await api("/wb-profiles/" + id, { method: "DELETE" }); S.wbl = await api("/wb-profiles"); S.wbSel = "daylight"; renderWb(); schedulePreview(true); toast("Profile deleted (renders already made keep their own copy)"); } catch (e) { toast(e.message); }
 }
-function resetAdjust() { S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }; S.wbSel = "daylight"; S.wb = "daylight"; S.wbCustom = { k: 5500, t: 0 }; syncControls(); schedulePreview(true); }
+function resetAdjust() {
+  const wbChanged = S.wbSel !== "daylight" || S.wb !== "daylight";
+  S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 };
+  S.wbSel = "daylight"; S.wb = "daylight"; S.wbCustom = { k: 5500, t: 0 };
+  syncControls();
+  if (wbChanged || !pvState.filmPx) schedulePreview(true); else scheduleLiveTone();
+}
 function everythingOff() {
-  S.look = "neutral"; S.fx.clear(); S.fxPreset = "none"; S.policy = "film"; S.film = "none";
+  S.look = "neutral"; S.fx.clear(); S.fxPreset = "none"; S.activePreset = null; S.policy = "film"; S.film = "none";
   S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }; S.wbSel = "daylight"; S.wb = "daylight";
   syncControls(); schedulePreview(true); toast("All effects off: the plain developed RAW");
 }
 function previewPanel() {
+  const treatedCanvas = h("canvas", { id: "pv_c", hidden: true, "aria-label": "Treated preview" });
   const treated = h("img", { alt: "Treated preview", id: "pv_t", hidden: true });
   const before = h("img", { alt: "Original, neutral development", id: "pv_b", hidden: true });
   const cut = h("div", { class: "cut", id: "cut", tabindex: "0", role: "slider", "aria-label": "Before / after", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": 50 });
-  const stage = h("div", { class: "stage", id: "stage" }, h("div", { class: "layer" }, treated), h("div", { class: "layer", id: "beforeLayer" }, before), cut,
+  const stage = h("div", { class: "stage", id: "stage" }, h("div", { class: "layer" }, treatedCanvas, treated), h("div", { class: "layer", id: "beforeLayer" }, before), cut,
     h("div", { class: "layer", id: "cropLayer", hidden: true }), h("span", { class: "busy", id: "busy" }), h("span", { class: "dim", id: "empty" }, "Upload a RAW to see a preview"));
   let pos = 50;
   const setCut = p => { pos = Math.max(0, Math.min(100, p)); cut.style.left = pos + "%"; $("#beforeLayer").style.clipPath = `inset(0 ${100 - pos}% 0 0)`; cut.setAttribute("aria-valuenow", Math.round(pos)); };
@@ -480,7 +805,7 @@ function previewPanel() {
   cut.addEventListener("pointerdown", e => { cut.setPointerCapture(e.pointerId); cut.addEventListener("pointermove", move); });
   cut.addEventListener("pointerup", () => cut.removeEventListener("pointermove", move));
   cut.addEventListener("keydown", e => { if (e.key === "ArrowLeft") setCut(pos - 3); if (e.key === "ArrowRight") setCut(pos + 3); });
-  return h("div", {}, h("div", { class: "bar", style: "margin:0 0 .7rem" },
+  return h("div", {}, h("div", { class: "bar", style: "margin:0 0 .6rem" },
     h("label", { for: "pvsize", style: "margin:0" }, "Preview size"), h("select", { id: "pvsize", style: "width:auto", onchange: () => schedulePreview(true) },
       h("option", { value: 1280 }, "1280 px (default)"), h("option", { value: 720 }, "720 px"), h("option", { value: 2048 }, "2048 px")),
     h("button", { onclick: () => schedulePreview(true) }, "Refresh preview"),
@@ -495,42 +820,108 @@ function previewPanel() {
     stage, h("div", { class: "pvinfo", id: "pvinfo" }, "Previews are real renders at reduced size and are not export quality."));
 }
 function schedulePreview(now) {
-  const t = $("#pv_t"); if (!t) return;
-  if (t.src) t.classList.add("stale");
+  const c = $("#pv_c"); if (!c) return;
   clearTimeout(pvTimer);
-  pvTimer = setTimeout(runPreview, now ? 0 : 450);
+  pvTimer = setTimeout(runPreview, now ? 0 : 200);
+}
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+async function fetchPreviewPixels(rec, edge, stream) {
+  const p = await api("/previews", { method: "POST", json: { asset_id: S.current, recipe: rec, max_edge: edge, stream } });
+  const st = await pollPreview(p.preview_id);
+  if (st.status !== "DONE") return null;
+  const u = await imgUrl(p.preview_id);
+  const img = await loadImage(u);
+  return extractPixels(img).data;
 }
 async function runPreview() {
   if (!S.current) { $("#empty").hidden = false; return; }
   if (S.cropMode) return;                                  // the cropper shows the whole frame, not a render
   const seq = ++pvSeq, edge = Number($("#pvsize").value), busy = $("#busy");
+  const snapFxStrength = S.fxStrength, snapLookStrength = S.strength;
+  const hasFx = S.fxPreset !== "none" || S.fx.size > 0;
+  const hasLook = S.look !== "neutral";
+  const needsSeparateNeutral = S.film !== "none" && (hasLook || hasFx || wbExt() !== null);
   busy.textContent = "rendering…"; $("#empty").hidden = true;
   try {
-    const [pt, pb] = await Promise.all([
-      api("/previews", { method: "POST", json: { asset_id: S.current, recipe: recipe(), max_edge: edge, stream: "main" } }),
-      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main", white_balance: S.wb, ...(S.crops[S.current] ? { crop: S.crops[S.current] } : {}) } })]);
-    const [st, sb] = await Promise.all([pollPreview(pt.preview_id), pollPreview(pb.preview_id)]);
+    const reqs = [
+      api("/previews", { method: "POST", json: { asset_id: S.current, recipe: baseRecipe(), max_edge: edge, stream: "main" } }),
+      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main", white_balance: S.wb, ...(S.crops[S.current] ? { crop: S.crops[S.current] } : {}) } })
+    ];
+    if (needsSeparateNeutral) {
+      reqs.push(api("/previews", { method: "POST", json: { asset_id: S.current, recipe: baseRecipe({ noFilm: true }), max_edge: edge, stream: "main-nofilm" } }));
+    }
+    const [pt, pb, pn] = await Promise.all(reqs);
+    const [st, sb, sn] = await Promise.all([
+      pollPreview(pt.preview_id),
+      pollPreview(pb.preview_id),
+      pn ? pollPreview(pn.preview_id) : Promise.resolve(null)
+    ]);
     if (seq !== pvSeq) return;                         // a newer edit superseded this one: never show it as current
     if (st.status !== "DONE") { busy.textContent = ""; $("#pvinfo").textContent = `Preview failed: ${st.error_code || st.status} ${st.detail || ""}`; return; }
-    const [u1, u2] = await Promise.all([imgUrl(pt.preview_id), sb.status === "DONE" ? imgUrl(pb.preview_id) : null]);
+    const [u1, u2, u3] = await Promise.all([
+      imgUrl(pt.preview_id),
+      sb.status === "DONE" ? imgUrl(pb.preview_id) : null,
+      sn && sn.status === "DONE" ? imgUrl(pn.preview_id) : null
+    ]);
     if (seq !== pvSeq) return;
-    const t = $("#pv_t"), b = $("#pv_b");
+    const [imgT, imgB, imgN] = await Promise.all([
+      loadImage(u1),
+      u2 ? loadImage(u2) : Promise.resolve(null),
+      u3 ? loadImage(u3) : Promise.resolve(null)
+    ]);
+    if (seq !== pvSeq) return;
+    const t = $("#pv_t"), b = $("#pv_b"), c = $("#pv_c");
+    const fData = extractPixels(imgT);
+    const bData = imgB ? extractPixels(imgB) : null;
+    const nData = imgN ? extractPixels(imgN) : bData;
+    pvState.w = imgT.naturalWidth; pvState.h = imgT.naturalHeight;
+    pvState.filmImageData = fData; pvState.filmPx = fData.data;
+    pvState.neutralPx = nData ? nData.data : null;
+    pvState.baseFxStrength = hasFx ? snapFxStrength : 0;
+    pvState.baseLookStrength = hasLook ? snapLookStrength : 1;
+    if (!hasFx) pvState.noFxPx = fData.data;
+    if (!hasLook) pvState.noLookPx = fData.data;
+    pvState.meta = { hash: pt.recipe_hash, width: st.width, height: st.height, elapsed_s: st.elapsed_s, cached: st.cached };
+
     $("#stage").style.height = "";
-    t.onload = () => fitStage(t);
-    t.src = u1; t.hidden = false; t.classList.remove("stale");
+    t.src = u1; t.hidden = true;
+    c.hidden = false;
+    renderLiveTone();
+    fitStage(c);
     if (u2) { b.src = u2; b.hidden = false; }
     busy.textContent = "";
-    $("#pvinfo").replaceChildren(h("span", {}, "recipe ", pt.recipe_hash.slice(0, 12)), h("span", {}, `${st.width}×${st.height}px preview`),
-      h("span", {}, `${st.elapsed_s}s${st.cached ? " (cached)" : ""}`), h("span", {}, "not export quality"));
+
+    /* Pre-warm reference baselines for real-time slider interpolation of Effects strength & Look intensity */
+    if (hasFx && snapFxStrength > 0) {
+      fetchPreviewPixels(baseRecipe({ noFx: true }), edge, "bg-nofx").then(px => {
+        if (seq === pvSeq && px) { pvState.noFxPx = px; scheduleLiveTone(); }
+      }).catch(() => {});
+    }
+    if (hasLook && snapLookStrength > 0) {
+      fetchPreviewPixels(baseRecipe({ noLook: true }), edge, "bg-nolook").then(px => {
+        if (seq === pvSeq && px) { pvState.noLookPx = px; scheduleLiveTone(); }
+      }).catch(() => {});
+    }
   } catch (e) { if (seq === pvSeq) { busy.textContent = ""; $("#pvinfo").textContent = "Preview: " + e.message; } }
 }
 
 /* The stage must be as tall as the picture in it (the layers are absolutely positioned, so they cannot size it). */
-function fitStage(img) {
-  const st = $("#stage"); if (!st || !img) return;
-  requestAnimationFrame(() => { const h = img.getBoundingClientRect().height; if (h > 40) st.style.height = Math.round(h + (S.cropMode ? 24 : 0)) + "px"; });
+function fitStage(el) {
+  const st = $("#stage"); if (!st || !el) return;
+  requestAnimationFrame(() => { const h = el.getBoundingClientRect().height; if (h > 40) st.style.height = Math.round(h + (S.cropMode ? 24 : 0)) + "px"; });
 }
-window.addEventListener("resize", () => { const i = S.cropMode ? S.cropImg : $("#pv_t"); if (i && i.getAttribute("src")) { $("#stage").style.height = ""; fitStage(i); } });
+window.addEventListener("resize", () => {
+  const c = $("#pv_c");
+  const i = S.cropMode ? S.cropImg : (c && !c.hidden ? c : $("#pv_t"));
+  if (i && (i.tagName === "CANVAS" || i.getAttribute("src"))) { $("#stage").style.height = ""; fitStage(i); }
+});
 
 /* ---------------- crop tool ----------------
    The rectangle is kept in normalized coordinates of the upright frame, the same numbers the server uses for the
@@ -589,7 +980,9 @@ function endCrop(apply) {
   S.cropMode = false; S.cropRect = null; $("#cropbtn").setAttribute("aria-pressed", "false"); $("#cropctl").hidden = true;
   const lay = $("#cropLayer"); lay.hidden = true; lay.replaceChildren();
   $("#stage").querySelectorAll(".layer:not(#cropLayer), .cut").forEach(e => { e.style.visibility = ""; });
+  resetPvState();
   ["#pv_t", "#pv_b"].forEach(q => { const i = $(q); i.removeAttribute("src"); i.hidden = true; });
+  const c = $("#pv_c"); if (c) c.hidden = true;
   renderAssets(); schedulePreview(true);
 }
 function saveCrops() { try { localStorage.setItem("mfilm.crops", JSON.stringify(S.crops)); } catch (e) { /* private mode: crops last for this page only */ } }
@@ -648,7 +1041,7 @@ function wireCrop(box) {
 function developPanel() {
   const sizeSel = h("select", { id: "outsize", onchange: e => { const v = e.target.value; [S.width, S.height] = v ? v.split("x").map(Number) : [0, 0]; schedulePreview(); } },
     h("option", { value: "" }, "Original size"), h("option", { value: "3000x2000" }, "3000 × 2000 (3:2)"), h("option", { value: "2000x1333" }, "2000 × 1333 (3:2)"), h("option", { value: "1600x1200" }, "1600 × 1200 (4:3)"));
-  return h("div", { style: "margin-top:1.6rem" }, h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Develop (full size, from the original RAW)"),
+  return h("div", { style: "margin-top:1.4rem" }, h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Develop (full size, from the original RAW)"),
     h("div", { class: "row3" }, h("div", {}, h("label", { for: "outsize" }, "Output size (never upscaled)"), sizeSel),
       h("div", {}, h("label", { for: "q" }, "JPEG quality"), h("input", { type: "number", id: "q", min: 1, max: 100, value: 92, onchange: e => { S.quality = Number(e.target.value); } })),
       h("div", {})),
