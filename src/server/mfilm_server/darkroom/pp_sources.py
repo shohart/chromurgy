@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -74,9 +75,12 @@ def sync_thumb_file(store: Store, client: pp.Client | None, thumb_hash: str, upd
 def _copy_to_source_thumb(store: Store, sha: str, src_jpg: Path) -> None:
     td = sources.thumb_path(store, sha)
     td.parent.mkdir(parents=True, exist_ok=True)
-    tmp = td.with_suffix(f".{os.getpid()}.tmp")
-    shutil.copyfile(src_jpg, tmp)
-    os.replace(tmp, td)
+    tmp = td.with_suffix(f".{os.getpid()}_{threading.get_ident()}_{time.monotonic_ns()}.tmp")
+    try:
+        shutil.copyfile(src_jpg, tmp)
+        os.replace(tmp, td)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def snapshot(conn: sqlite3.Connection, store: Store, cfg: Cfg, detail: dict,

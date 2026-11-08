@@ -758,8 +758,12 @@ function applyPresetState(st, name) {
   S.fxStrength = num(st.fxStrength, 0.5);
   S.policy = ["film", "optical", "stacked", "disabled"].includes(st.policy) ? st.policy : "film";
   S.activePreset = st.activePreset || null;
-  S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1, ...(st.tone || {}) };
-  S.wbCustom = { k: 5500, t: 0, ...(st.wbCustom || {}) };
+  if (st.tone) {
+    Object.assign(S.tone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, st.tone);
+  } else {
+    Object.assign(S.tone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
+  }
+  Object.assign(S.wbCustom, { k: 5500, t: 0 }, st.wbCustom || {});
   const L = S.wbl || { builtin: [], imported: [] };
   const wbOk = ["daylight", "as-shot", "custom"].includes(st.wbSel) || [...L.builtin, ...L.imported].some(p => p.id === st.wbSel);
   S.wbSel = wbOk ? st.wbSel : "daylight"; if (st.wbSel && !wbOk) warn.push("white-balance profile");
@@ -1038,26 +1042,27 @@ function slider(id, label, min, max, step, get, set, fmt, def, title, liveOnly =
   const onChange = () => { if (liveOnly) scheduleLiveTone(); else schedulePreview(); };
   const inp = h("input", { type: "range", id, min, max, step, value: get(), "aria-label": label, title: (title || "") + " Double-click resets.",
     oninput: e => { set(+e.target.value); out.textContent = fmt(get()); onChange(); },
+    onchange: e => { set(+e.target.value); out.textContent = fmt(get()); onChange(); },
     ondblclick: () => { set(def); inp.value = def; out.textContent = fmt(def); onChange(); } });
   S.sliders.push({ inp, out, get, fmt });
   return h("div", {}, h("label", { for: id }, label, " ", out), inp);
 }
 function adjustPanel() {
   S.sliders = [];
-  const T = S.tone, sg = v => (v > 0 ? "+" : "") + v.toFixed(2);
-  const filter = h("select", { id: "filter", "aria-label": "Tone filter", onchange: e => { T.filter = e.target.value; syncControls(); scheduleLiveTone(); } },
+  const sg = v => (v > 0 ? "+" : "") + v.toFixed(2);
+  const filter = h("select", { id: "filter", "aria-label": "Tone filter", onchange: e => { S.tone.filter = e.target.value; syncControls(); scheduleLiveTone(); } },
     h("option", { value: "none" }, "No filter"), h("option", { value: "grayscale" }, "Black & white (plain grayscale)"), h("option", { value: "silver" }, "Silver B&W film (grain, film curve)"), h("option", { value: "sepia" }, "Sepia"));
   const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => { S.wbSel = e.target.value; S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight"; renderWb(); schedulePreview(true); } });
   const file = h("input", { type: "file", id: "wbfile", multiple: true, hidden: true, accept: ".json,.csv,.xmp,.lrtemplate,.pp3", onchange: wbImport });
   return h("div", { class: "adjust" },
     h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Adjustments ", h("small", { class: "dim" }, "· real-time in preview and kept in every full render")),
     h("div", { class: "row3" },
-      slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => T.brightness, v => { T.brightness = v; }, sg, 0, "Exposure compensation in stops.", true),
-      slider("sl_contrast", "Contrast", -1, 1, 0.01, () => T.contrast, v => { T.contrast = v; }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones.", true),
-      slider("sl_develop", "Development strength", 0, 1, 0.01, () => T.develop, v => { T.develop = v; }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.", true)),
+      slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => S.tone.brightness, v => { S.tone.brightness = v; }, sg, 0, "Exposure compensation in stops.", true),
+      slider("sl_contrast", "Contrast", -1, 1, 0.01, () => S.tone.contrast, v => { S.tone.contrast = v; }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones.", true),
+      slider("sl_develop", "Development strength", 0, 1, 0.01, () => S.tone.develop, v => { S.tone.develop = v; }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.", true)),
     h("div", { class: "grid2", style: "margin-top:.8rem" },
       h("div", {}, h("label", { for: "filter" }, "Filter"), filter,
-        h("div", { style: "margin-top:.4rem" }, slider("filterstr", "Filter strength", 0, 1, 0.01, () => T.filterStrength, v => { T.filterStrength = v; }, v => Math.round(v * 100) + "%", 1, "Filter blend strength.", true))),
+        h("div", { style: "margin-top:.4rem" }, slider("filterstr", "Filter strength", 0, 1, 0.01, () => S.tone.filterStrength, v => { S.tone.filterStrength = v; }, v => Math.round(v * 100) + "%", 1, "Filter blend strength.", true))),
       h("div", {}, h("label", { for: "wbsel" }, "White balance"), wbsel,
         h("div", { class: "bar", style: "margin-top:.4rem" }, h("button", { onclick: () => $("#wbfile").click(), title: "Import .json .csv .xmp .lrtemplate .pp3" }, "Import profile…"),
           h("button", { id: "wbdel", hidden: true, onclick: wbDelete }, "Delete imported"), file),
@@ -1093,14 +1098,15 @@ async function wbDelete() {
 }
 function resetAdjust() {
   const wbChanged = S.wbSel !== "daylight" || S.wb !== "daylight";
-  S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 };
-  S.wbSel = "daylight"; S.wb = "daylight"; S.wbCustom = { k: 5500, t: 0 };
+  Object.assign(S.tone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
+  S.wbSel = "daylight"; S.wb = "daylight"; Object.assign(S.wbCustom, { k: 5500, t: 0 });
   syncControls();
   if (wbChanged || !pvState.filmPx) schedulePreview(true); else scheduleLiveTone();
 }
 function everythingOff() {
   S.look = "neutral"; S.fx.clear(); S.fxPreset = "none"; S.activePreset = null; S.policy = "film"; S.film = "none";
-  S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }; S.wbSel = "daylight"; S.wb = "daylight";
+  Object.assign(S.tone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
+  S.wbSel = "daylight"; S.wb = "daylight";
   syncControls(); schedulePreview(true); toast("All effects off: the plain developed RAW");
 }
 function previewPanel() {
