@@ -772,6 +772,84 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             raise ApiError(e.status, e.code, e.detail) from None
         return {**jobs.job_view(c, jid, items=False), "status_url": f"{API}/jobs/{jid}", "created": created}
 
+    @app.post(f"{API}/jobs/{{job_id}}/publish", status_code=202)
+    async def publish_job(job_id: str, request: Request, _t: str = Depends(session), c=Depends(conn)):
+        """Put every finished frame of a developed job into PhotoPrism (and a new or existing album) later.
+        A new job over the same assets, recipe, crops and rotations: renders are reused byte for byte,
+        only the publication stages run. Repeating the same request returns the same job."""
+        j = c.execute("SELECT * FROM darkroom_jobs WHERE id=?", (job_id_ok(job_id),)).fetchone()
+        if not j:
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        try:
+            out = json.loads(await request.body() or b"{}")
+        except ValueError:
+            raise ApiError(400, "BAD_REQUEST", "JSON body required") from None
+        dest = {k: str(out[k]).strip() for k in ("photoprism_folder", "photoprism_album_uid", "create_album_name")
+                if out.get(k) and str(out[k]).strip()}
+        if not dest.get("photoprism_album_uid") and not dest.get("create_album_name"):
+            raise ApiError(422, "INVALID_REQUEST", "album name (create_album_name) or photoprism_album_uid required")
+        done = {r[0] for r in c.execute("SELECT source_id FROM darkroom_items WHERE job_id=? AND state='COMPLETE' "
+                                        "AND render_id IS NOT NULL", (job_id,))}
+        if not done:
+            raise ApiError(409, "NOTHING_TO_PUBLISH", "no finished frames in this job")
+        orig = json.loads(j["request"])
+        assets = [a for a in orig["source"]["assets"] if a["asset_id"] in done]
+        quality = (orig.get("output") or {}).get("quality") or json.loads(j["recipe"])["render"].get("quality", 92)
+        req = {"schema_version": 1, "source": {**orig["source"], "assets": assets}, "recipe": orig["recipe"],
+               "output": {"format": "jpeg", "quality": int(quality), "publish": True, **dest},
+               "idempotency_key": "pubjob-" + hashlib.sha256(
+                   f"{job_id}{json.dumps(dest, sort_keys=True)}".encode()).hexdigest()[:40]}
+        try:
+            jid, created = jobs.create_job(c, bundle(), req, cfg.photoprism.web_folder, wb_lookup)
+        except recipe2.RecipeError as e:
+            raise ApiError(422, e.code, e.detail) from None
+        except jobs.JobError as e:
+            raise ApiError(e.status, e.code, e.detail) from None
+        return {**jobs.job_view(c, jid, items=False), "status_url": f"{API}/jobs/{jid}", "created": created,
+                "frames": len(assets)}
+
+    # ---- operator presets: the whole Darkroom setting (look, film, optics, adjustments) under a name ----
+    def preset_view(r: sqlite3.Row) -> dict:
+        return {"id": r["id"], "name": r["name"], "state": json.loads(r["state"]),
+                "created_at": r["created_at"], "updated_at": r["updated_at"]}
+
+    @app.get(f"{API}/presets")
+    def list_presets(_t: str = Depends(session), c=Depends(conn)):
+        return {"items": [preset_view(r) for r in c.execute("SELECT * FROM darkroom_presets ORDER BY name COLLATE NOCASE")]}
+
+    @app.post(f"{API}/presets")
+    async def save_preset(request: Request, _t: str = Depends(session), c=Depends(conn)):
+        try:
+            body = json.loads(await request.body())
+            import re
+            import unicodedata
+            name = re.sub(r"[\x00-\x1f\x7f]", "", unicodedata.normalize("NFC", str(body["name"]))).strip()[:80].strip()
+            state = body["state"]
+        except (ValueError, KeyError, TypeError):
+            raise ApiError(400, "BAD_REQUEST", "name and state required") from None
+        if not name or not isinstance(state, dict):
+            raise ApiError(422, "INVALID_REQUEST", "a non-empty name and a state object are required")
+        blob = json.dumps(state, sort_keys=True)
+        if len(blob) > 64 << 10:
+            raise ApiError(413, "PRESET_TOO_LARGE", "state over 64 KiB")
+        have = c.execute("SELECT id FROM darkroom_presets WHERE name=?", (name,)).fetchone()
+        if have:
+            c.execute("UPDATE darkroom_presets SET state=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+                      (blob, have["id"]))
+            pid, created = have["id"], False
+        else:
+            pid, created = uuid.uuid4().hex, True
+            c.execute("INSERT INTO darkroom_presets(id, name, state) VALUES (?,?,?)", (pid, name, blob))
+        return {**preset_view(c.execute("SELECT * FROM darkroom_presets WHERE id=?", (pid,)).fetchone()), "created": created}
+
+    @app.delete(f"{API}/presets/{{preset_id}}")
+    def delete_preset(preset_id: str, _t: str = Depends(session), c=Depends(conn)):
+        if len(preset_id) != 32 or any(ch not in "0123456789abcdef" for ch in preset_id):
+            raise ApiError(404, "UNKNOWN_PRESET", "")
+        if not c.execute("DELETE FROM darkroom_presets WHERE id=?", (preset_id,)).rowcount:
+            raise ApiError(404, "UNKNOWN_PRESET", preset_id)
+        return {"deleted": preset_id}
+
     @app.get(f"{API}/jobs/{{job_id}}/zip")
     def job_zip(job_id: str, _t: str = Depends(session), c=Depends(conn)):
         import tempfile

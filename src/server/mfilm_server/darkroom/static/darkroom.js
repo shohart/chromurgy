@@ -74,7 +74,7 @@ const S = { catalog: null, assets: [], allSourceCount: 0, selected: new Set(), c
   crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"),
   rotates: JSON.parse(localStorage.getItem("mfilm.rotates") || "{}"), rotOpen: false,
   aspect: "free", cropMode: false, cropRect: null, cropImg: null };
-const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Preview · Develop"];
+const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "My presets", "Preview · Develop"];
 
 function saveDismissed() {
   try { localStorage.setItem("mfilm.dismissed", JSON.stringify([...S.dismissed])); } catch (e) {}
@@ -161,13 +161,14 @@ async function boot() {
     step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared M-Film engine`, filmPanel()),
-    step(4, "Optical effects", "optional · applied before the look and film", opticsPanel()));
+    step(4, "Optical effects", "optional · applied before the look and film", opticsPanel()),
+    step(5, "My presets", "the whole setting — look, film, optics, adjustments — saved under a name", presetsPanel()));
   const right = h("div", { class: "pane-right", id: "rightPane" },
-    step(5, "Preview, develop", "",
+    step(6, "Preview, develop", "",
       h("div", { class: "pv-pin" }, previewPanel()),
       h("div", { class: "dev-scroll" }, adjustPanel(), developPanel())));
   $("#app").replaceChildren(h("div", { class: "workspace" }, left, right));
-  await refreshAssets(); refreshJobs(); syncControls();
+  await refreshAssets(); refreshJobs(); syncControls(); refreshPresets();
 }
 $("#logout").addEventListener("click", async () => { try { await api("/logout", { method: "POST" }); } finally { showLogin(); } });
 
@@ -726,9 +727,97 @@ function syncControls() {
   if ($("#filterstr")) { $("#filterstr").disabled = S.tone.filter === "none"; $("#filter").value = S.tone.filter; }
   if ($("#wbsel")) { renderWb(); }
   syncRotateUi();
+  renderPresets();
 }
 
-/* ---------------- step 5: real-time preview + adjustments ---------------- */
+/* ---------------- step 5: operator presets (the whole Darkroom setting under a name, stored on the server) ---------------- */
+const PRESET_V = 1;
+let userPresets = [], activeUserPreset = null;
+function snapshotState() {
+  return { v: PRESET_V, look: S.look, strength: S.strength, film: S.film, grain: S.grain, halation: S.halation, softness: S.softness,
+    fxPreset: S.fxPreset, fx: [...S.fx], fxStrength: S.fxStrength, policy: S.policy, activePreset: S.activePreset,
+    tone: { ...S.tone }, wbSel: S.wbSel, wbCustom: { ...S.wbCustom }, seed: S.seed };
+}
+function canon(x) {
+  if (Array.isArray(x)) return "[" + x.map(canon).join(",") + "]";
+  if (x && typeof x === "object") return "{" + Object.keys(x).sort().map(k => JSON.stringify(k) + ":" + canon(x[k])).join(",") + "}";
+  return JSON.stringify(x === undefined ? null : x);
+}
+function stateKey(st) { const { v, activePreset, ...rest } = st || {}; return canon({ ...rest, fx: [...(rest.fx || [])].sort() }); }
+function applyPresetState(st, name) {
+  const C = S.catalog, warn = [];
+  const num = (v, d) => (typeof v === "number" && isFinite(v) ? v : d);
+  const look = C.camera_looks.find(l => l.id === st.look && l.supported);
+  S.look = look ? look.id : "neutral"; if (st.look && !look) warn.push(`look ${st.look}`);
+  S.strength = num(st.strength, 1);
+  if (st.film === "none" || C.films.some(f => f.id === st.film)) S.film = st.film; else if (st.film) warn.push(`film ${st.film}`);
+  S.grain = num(st.grain, 1); S.halation = num(st.halation, 1); S.softness = num(st.softness, 1);
+  const okFx = new Set(C.optical_effects.filter(o => o.supported).map(o => o.id));
+  S.fx = new Set((st.fx || []).filter(id => okFx.has(id)));
+  S.fxPreset = st.fxPreset && C.optical_presets.some(p => p.id === st.fxPreset) ? st.fxPreset : "none";
+  S.fxStrength = num(st.fxStrength, 0.5);
+  S.policy = ["film", "optical", "stacked", "disabled"].includes(st.policy) ? st.policy : "film";
+  S.activePreset = st.activePreset || null;
+  S.tone = { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1, ...(st.tone || {}) };
+  S.wbCustom = { k: 5500, t: 0, ...(st.wbCustom || {}) };
+  const L = S.wbl || { builtin: [], imported: [] };
+  const wbOk = ["daylight", "as-shot", "custom"].includes(st.wbSel) || [...L.builtin, ...L.imported].some(p => p.id === st.wbSel);
+  S.wbSel = wbOk ? st.wbSel : "daylight"; if (st.wbSel && !wbOk) warn.push("white-balance profile");
+  S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight";
+  S.seed = num(st.seed, 0);
+  ["grain", "halation", "softness"].forEach(k => { const i = $("#sl_" + k), o = $("#v_" + k); if (i) i.value = Math.round(S[k] * 100); if (o) o.textContent = S[k].toFixed(2); });
+  syncControls(); schedulePreview(true);
+  toast(`Preset “${name}” applied${warn.length ? ` · unavailable here: ${warn.join(", ")}` : ""}`);
+}
+function presetSummary(st) {
+  const C = S.catalog, film = st.film === "none" ? "no film" : ((C.films.find(f => f.id === st.film) || {}).name || st.film);
+  const look = st.look === "neutral" ? "neutral look" : ((C.camera_looks.find(l => l.id === st.look) || {}).name || st.look);
+  const fx = st.fxPreset && st.fxPreset !== "none" ? st.fxPreset.replace(/_/g, " ") : (st.fx || []).length ? `${st.fx.length} effect(s)` : "no optics";
+  const t = st.tone || {}, adj = [t.brightness ? `${t.brightness > 0 ? "+" : ""}${t.brightness} EV` : "", t.contrast ? `contrast ${Math.round(t.contrast * 100)}%` : "",
+    t.filter && t.filter !== "none" ? t.filter : ""].filter(Boolean);
+  return [look, film, fx, ...adj].join(" · ");
+}
+function presetsPanel() {
+  const name = h("input", { type: "text", id: "presetname", maxlength: 80, placeholder: "Preset name, e.g. Autumn Portra soft", style: "flex:1 1 14rem",
+    onkeydown: e => { if (e.key === "Enter") { e.preventDefault(); savePreset(); } } });
+  return h("div", {},
+    h("p", { class: "dim", style: "margin-top:0" }, "Saves camera look, film stock and its sliders, optical effects, adjustments and white balance together. Crop and rotation stay per frame. Saving under an existing name updates that preset."),
+    h("div", { class: "bar", style: "margin-top:0" }, name, h("button", { type: "button", class: "primary", onclick: savePreset }, "★ Save current settings")),
+    h("div", { class: "cards", id: "userpresets", style: "margin-top:.9rem" }));
+}
+async function refreshPresets() {
+  try { userPresets = (await api("/presets")).items; } catch (e) { userPresets = []; }
+  renderPresets();
+}
+function renderPresets() {
+  const box = $("#userpresets"); if (!box) return;
+  const cur = stateKey(snapshotState());
+  if (!userPresets.length) { box.replaceChildren(h("p", { class: "dim" }, "No saved presets yet.")); return; }
+  box.replaceChildren(...userPresets.map(p => {
+    const on = stateKey({ v: PRESET_V, ...p.state }) === cur;
+    const del = h("button", { type: "button", class: "rm", title: "Delete preset", onclick: async ev => {
+      ev.stopPropagation();
+      if (!confirm(`Delete preset “${p.name}”?`)) return;
+      try { await api(`/presets/${p.id}`, { method: "DELETE" }); toast(`Preset “${p.name}” deleted`); refreshPresets(); } catch (e) { toast(e.message); }
+    } }, "×");
+    return h("button", { type: "button", class: "card user-preset", "aria-pressed": String(on), title: "Apply this preset",
+      onclick: () => { activeUserPreset = p.id; $("#presetname").value = p.name; applyPresetState(p.state, p.name); } },
+      del, h("span", { class: "badge" }, "★ My preset"), h("strong", {}, p.name), h("small", {}, presetSummary(p.state)),
+      h("small", { class: "dim" }, (p.updated_at || "").slice(0, 16).replace("T", " ")));
+  }));
+}
+async function savePreset() {
+  const inp = $("#presetname"), name = (inp.value || "").trim();
+  if (!name) { inp.focus(); return toast("Give the preset a name"); }
+  const exists = userPresets.find(p => p.name === name);
+  if (exists && !confirm(`Overwrite preset “${name}” with the current settings?`)) return;
+  try {
+    const r = await api("/presets", { method: "POST", json: { name, state: snapshotState() } });
+    activeUserPreset = r.id; toast(r.created ? `Preset “${r.name}” saved` : `Preset “${r.name}” updated`); refreshPresets();
+  } catch (e) { toast(e.message); }
+}
+
+/* ---------------- step 6: real-time preview + adjustments ---------------- */
 let pvSeq = 0, pvTimer = null, liveRaf = 0;
 
 /* Precomputed sRGB and Sepia tables (1025 steps = 1/4 bit precision) for 60 FPS canvas post-processing */
@@ -1439,14 +1528,15 @@ async function develop() {
   } catch (e) { toast(e.message); }
 }
 let jobsTimer;
-async function refreshJobs() {
+async function refreshJobs(force = false) {
   clearTimeout(jobsTimer);
   let list; try { list = await api("/jobs?count=15"); } catch (e) { return; }
   const full = await Promise.all(list.items.map(j => api("/jobs/" + j.job_id)));
   const box = $("#jobs"); if (!box) return;
-  box.replaceChildren(...full.map(jobCard));
+  const typing = !force && document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === "INPUT";
+  if (!typing) box.replaceChildren(...full.map(jobCard));
   refreshHistory();
-  if (full.some(j => ["QUEUED", "RUNNING"].includes(j.state))) jobsTimer = setTimeout(refreshJobs, 2500);
+  if (full.some(j => ["QUEUED", "RUNNING", "PUBLISHING"].includes(j.state))) jobsTimer = setTimeout(refreshJobs, 2500);
   else jobsTimer = setTimeout(refreshJobs, 15000);
 }
 async function refreshHistory() {
@@ -1467,11 +1557,39 @@ function jobCard(j) {
   if (["QUEUED", "RUNNING"].includes(j.state)) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/cancel`, { method: "POST" }); refreshJobs(); } }, "Cancel"));
   if (j.counts.FAILED || j.counts.CANCELLED) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/retry`, { method: "POST" }); refreshJobs(); } }, "Retry failed / cancelled"));
   if (j.counts.COMPLETE) acts.append(h("a", { class: "btn", href: `${API}/jobs/${j.job_id}/zip`, download: "" }, `Download ZIP (${j.counts.COMPLETE})`));
+  const albumBox = (j.counts.COMPLETE && !j.publish) ? albumCreator(j) : null;
+  const pubInfo = j.publish ? h("div", { class: "pubinfo" }, "→ PhotoPrism ",
+    h("b", {}, j.publish.create_album_name ? `album “${j.publish.create_album_name}”` : j.publish.album_uid ? "existing album" : "folder only"),
+    h("span", { class: "dim" }, ` · ${j.publish.folder}`), j.album_uid ? h("span", { class: "okc" }, " · album ✓") : null) : null;
   return h("div", { class: "job" }, h("header", {}, st, h("b", {}, j.film), h("span", { class: "dim" }, `${j.camera_look} · recipe ${j.recipe_hash.slice(0, 10)} · ${j.created_at.slice(0, 19).replace("T", " ")}`)),
+    pubInfo,
     h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename, i.crop ? " ✂" : "", i.rotate ? ` ⟳${i.rotate}°` : ""),
       i.published_path ? h("span", { class: i.state === "COMPLETE" ? "okc" : "dim", title: i.publish_note || i.published_path }, i.state === "COMPLETE" ? "in PhotoPrism ✓" : i.state.toLowerCase()) : null,
       i.render ? h("a", { href: `${API}/renders/${i.render.render_id}/file`, style: "color:var(--ok)" }, `${i.render.width}×${i.render.height} ↓`)
-        : h("span", { class: i.state === "FAILED" ? "err" : "dim", title: i.error_detail || "" }, i.error_code || i.state)))), acts);
+        : h("span", { class: i.state === "FAILED" ? "err" : "dim", title: i.error_detail || "" }, i.error_code || i.state)))), acts, albumBox);
+}
+const albumNames = {};
+function defaultAlbumName(j) {
+  const f = S.catalog && S.catalog.films.find(x => x.id === j.film);
+  return `${f ? f.name : j.film} · ${j.created_at.slice(0, 10)}`;
+}
+function albumCreator(j) {
+  if (!(j.job_id in albumNames)) albumNames[j.job_id] = defaultAlbumName(j);
+  const inp = h("input", { type: "text", maxlength: 200, value: albumNames[j.job_id], "aria-label": "New PhotoPrism album name",
+    placeholder: "Album name", oninput: e => { albumNames[j.job_id] = e.target.value; },
+    onkeydown: e => { if (e.key === "Enter") { e.preventDefault(); btn.click(); } } });
+  const btn = h("button", { type: "button", class: "album-btn", title: "Copy the finished frames into PhotoPrism and collect them in a new album",
+    onclick: async () => {
+      const name = (albumNames[j.job_id] || "").trim();
+      if (!name) { inp.focus(); return toast("Enter an album name"); }
+      btn.disabled = true;
+      try {
+        const r = await api(`/jobs/${j.job_id}/publish`, { method: "POST", json: { create_album_name: name } });
+        toast(r.created ? `Creating album “${name}” in PhotoPrism (${r.frames} frame(s))…` : `Album “${name}” is already being created for this job`);
+        refreshJobs(true);
+      } catch (e) { toast(e.message); btn.disabled = false; }
+    } }, `★ Create album in PhotoPrism (${j.counts.COMPLETE})`);
+  return h("div", { class: "album-create" }, h("label", {}, "Developed frames → new PhotoPrism album"), h("div", { class: "bar", style: "margin-top:.3rem" }, inp, btn));
 }
 
 boot();

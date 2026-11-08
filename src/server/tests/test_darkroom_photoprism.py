@@ -354,3 +354,24 @@ def test_photoprism_merged_pagination(pp):
     p2 = pp.get(f"{P}/photos", params={"source_kind": "folder", "source_uid": "trip", "count": 3, "offset": p1["next_offset"]}).json()
     assert [i["photo_uid"] for i in p2["items"]] == ["p3", "p4"]
     assert p2["next_offset"] is None
+
+
+def test_developed_job_becomes_a_new_photoprism_album(pp, store):
+    library(pp)
+    pp.post(f"{P}/select", headers=H, json={"photo_uids": ["p1"], "source_kind": "album", "source_uid": "al1"})
+    jid = pp.post(f"{dapp.API}/jobs", headers=H, json=job_body(["pp_fp1r"], recipe(width=800, height=600), source={
+        "kind": "photoprism_album", "source_uid": "al1", "assets": [{"asset_id": "pp_fp1r", "rotate": 90}]})).json()["job_id"]
+    assert pp.post(f"{dapp.API}/jobs/{jid}/publish", headers=H, json={"create_album_name": "X"}).status_code == 409   # nothing developed yet
+    drain(store)
+    assert pp.post(f"{dapp.API}/jobs/{jid}/publish", headers=H, json={}).status_code == 422                          # a name is required
+    a = pp.post(f"{dapp.API}/jobs/{jid}/publish", headers=H, json={"create_album_name": "Autumn developed"})
+    assert a.status_code == 202 and a.json()["created"] and a.json()["frames"] == 1
+    b = pp.post(f"{dapp.API}/jobs/{jid}/publish", headers=H, json={"create_album_name": "Autumn developed"})
+    assert b.json()["job_id"] == a.json()["job_id"] and not b.json()["created"]                                       # idempotent
+    res = drain(store)
+    assert [x.detail for x in res] == ["reused"] and len(renders_on_disk(store)) == 1                                 # rotation kept, no re-render
+    run_publish(pp, store, index_into_fake(pp))
+    v = pp.get(f"{dapp.API}/jobs/{a.json()['job_id']}").json()
+    assert v["state"] == "COMPLETE" and v["publish"]["create_album_name"] == "Autumn developed"
+    alb = [x for x in pp.fake.albums.values() if x["Title"] == "Autumn developed"]
+    assert len(alb) == 1 and alb[0]["members"] == [v["items"][0]["photoprism_photo_uid"]]

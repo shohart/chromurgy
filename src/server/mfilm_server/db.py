@@ -227,6 +227,16 @@ MIGRATIONS: list[str] = [
     ALTER TABLE darkroom_items ADD COLUMN pub_attempts INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE darkroom_items ADD COLUMN pub_note TEXT
     """,
+    # 8: operator's saved Darkroom presets (look + film + optics + adjustments as one named UI state)
+    """
+    CREATE TABLE darkroom_presets (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL UNIQUE,
+        state       TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    )
+    """,
 ]
 
 

@@ -165,3 +165,20 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 
 .adjust{border:1px solid var(--line);background:var(--panel2);padding:.85rem 1rem;margin-bottom:1rem;border-radius:2px}
 .val{font:.72rem var(--mono);color:var(--safe2)}
+
+/* operator presets (step 5) */
+.card.user-preset{position:relative;border-color:rgba(120,190,255,.35);background:rgba(120,190,255,.05)}
+.card.user-preset:hover{border-color:#78beff}
+.card.user-preset[aria-pressed=true]{border-color:#78beff;box-shadow:inset 0 0 0 1.5px #78beff,0 0 14px rgba(120,190,255,.25);background:rgba(120,190,255,.13)}
+.card.user-preset .badge{display:inline-block;font:.62rem var(--mono);color:#06121e;background:#78beff;padding:.05rem .42rem;border-radius:2px;font-weight:700;margin-bottom:.3rem;letter-spacing:.05em;text-transform:uppercase}
+.card.user-preset .rm{position:absolute;top:.35rem;right:.35rem;width:1.2rem;height:1.2rem;border:1px solid var(--line);background:rgba(0,0,0,.6);color:var(--dim);border-radius:2px;display:grid;place-items:center;font:.8rem/1 var(--mono);padding:0;cursor:pointer}
+.card.user-preset .rm:hover{border-color:var(--bad);color:var(--bad)}
+
+/* developed job -> PhotoPrism album */
+.album-create{margin-top:.8rem;padding:.65rem .8rem;border:1px solid var(--preset-dim);background:var(--preset-bg);border-radius:3px}
+.album-create label{margin:0;color:var(--preset);font:.72rem var(--mono);letter-spacing:.04em;text-transform:uppercase}
+.album-create input{flex:1 1 14rem}
+.album-btn{background:var(--preset);border-color:var(--preset);color:#1a1105;font-weight:700;box-shadow:0 0 14px rgba(242,184,75,.35)}
+.album-btn:hover:not(:disabled){filter:brightness(1.08);box-shadow:0 0 20px rgba(242,184,75,.55)}
+.album-btn:disabled{opacity:.55;box-shadow:none}
+.pubinfo{font:.72rem var(--mono);margin-top:.4rem;color:var(--preset)}

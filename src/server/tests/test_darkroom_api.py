@@ -234,3 +234,23 @@ def test_two_pane_layout_loader_and_preset_separation_in_ui_assets(client):
     assert ".preset-card[aria-pressed=true]" in css.replace(" ", "") and ".fx-divider{" in css.replace(" ", "")
     assert "renderLiveTone" in js and "withLoading" in js and "isCompositeActive" in js
     assert "clearAssets" in js and "stepRotate" in js and "rotpreset" in js and "rotdeg" in js
+
+
+def test_operator_presets_roundtrip(logged, client):
+    P = f"{dapp.API}/presets"
+    assert client.get(P).json()["items"] == []
+    st = {"v": 1, "look": "neutral", "film": "portra400", "grain": 1.2, "fx": ["soft_sun_glow"], "fxStrength": 0.4,
+          "tone": {"brightness": 0.3, "contrast": 0.1, "develop": 1, "filter": "none", "filterStrength": 1}}
+    r = logged.post(P, json={"name": "Autumn soft", "state": st}, headers=H)
+    assert r.status_code == 200 and r.json()["created"] and r.json()["state"] == st
+    pid = r.json()["id"]
+    st2 = {**st, "film": "cinestill800t"}
+    r2 = logged.post(P, json={"name": "Autumn soft", "state": st2}, headers=H).json()
+    assert r2["id"] == pid and not r2["created"]                       # same name: updated, not duplicated
+    items = logged.get(P).json()["items"]
+    assert len(items) == 1 and items[0]["state"]["film"] == "cinestill800t"
+    assert logged.post(P, json={"name": "  ", "state": st}, headers=H).status_code == 422
+    assert logged.post(P, json={"name": "x", "state": "nope"}, headers=H).status_code == 422
+    assert logged.delete(f"{P}/{pid}", headers=H).status_code == 200
+    assert logged.delete(f"{P}/{pid}", headers=H).status_code == 404
+    assert logged.get(P).json()["items"] == []
