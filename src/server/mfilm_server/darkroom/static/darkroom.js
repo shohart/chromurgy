@@ -208,8 +208,6 @@ function baseJobRecipe() {
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
   return r;
 }
-  return r;
-}
 function baseRecipe(opts = {}) {
   const r = recipe(true);
   if (r.extensions) delete r.extensions.tone;     // post-tone (brightness, contrast, develop, filter) is applied live on canvas
