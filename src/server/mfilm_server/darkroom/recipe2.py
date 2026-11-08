@@ -272,24 +272,53 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
     return v1
 
 
-def with_crop(r: dict, crop: dict | None, rotate: float | None = None) -> dict:
-    """Copy of a normalized recipe carrying this frame's crop and rotation (None/0 = unchanged)."""
+def with_frame_overrides(r: dict, asset_req: dict, wb_lookup=None) -> dict:
+    """Copy of a normalized recipe carrying this frame's crop, rotation, tone, and white-balance overrides."""
     out = copy.deepcopy(r)
     ext = dict(out.get("extensions") or {})
-    ext.pop("crop", None)
-    c = cropping.normalize_crop(crop) if crop else None
-    if c:
-        ext["crop"] = c
-    if rotate is not None:
+    if "crop" in asset_req:
+        ext.pop("crop", None)
+        c = cropping.normalize_crop(asset_req["crop"]) if asset_req["crop"] else None
+        if c:
+            ext["crop"] = c
+
+    if "rotate" in asset_req:
         ext.pop("rotate", None)
-        rot = cropping.normalize_rotate(rotate)
+        rot = cropping.normalize_rotate(asset_req["rotate"]) if asset_req["rotate"] is not None else None
         if rot:
             ext["rotate"] = rot
+
+    if "tone" in asset_req:
+        t = asset_req["tone"]
+        if t:
+            ext["tone"] = copy.deepcopy(t)
+            _tone(ext)
+        else:
+            ext.pop("tone", None)
+
+    if "wb_profile" in asset_req:
+        wp = asset_req["wb_profile"]
+        if wp:
+            ext["wb_profile"] = copy.deepcopy(wp)
+            _wb_profile(ext, wb_lookup)
+        else:
+            ext.pop("wb_profile", None)
+
+    if "white_balance" in asset_req:
+        wb = asset_req["white_balance"]
+        if wb in ("daylight", "as-shot"):
+            ext["white_balance"] = wb
+
     if ext:
         out["extensions"] = ext
     else:
         out.pop("extensions", None)
     return out
+
+
+def with_crop(r: dict, crop: dict | None, rotate: float | None = None) -> dict:
+    """Copy of a normalized recipe carrying this frame's crop and rotation (None/0 = unchanged)."""
+    return with_frame_overrides(r, {"crop": crop, "rotate": rotate})
 
 
 def default(film_id: str, bundle: core.Bundle) -> dict:

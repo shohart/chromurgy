@@ -70,7 +70,10 @@ const S = { catalog: null, assets: [], allSourceCount: 0, selected: new Set(), c
   dismissed: new Set(JSON.parse(localStorage.getItem("mfilm.dismissed") || "[]")),
   look: "neutral", film: null, strength: 1, grain: 1, halation: 1, softness: 1, quality: 92, seed: 0, wb: "daylight",
   width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film", activePreset: null,
+  baseTone: { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 },
+  baseWbSel: "daylight", baseWbCustom: { k: 5500, t: 0 },
   tone: { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, wbSel: "daylight", wbCustom: { k: 5500, t: 0 }, wbl: null, sliders: [],
+  adjustments: JSON.parse(localStorage.getItem("mfilm.adjustments") || "{}"),
   crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"),
   rotates: JSON.parse(localStorage.getItem("mfilm.rotates") || "{}"), rotOpen: false,
   aspect: "free", cropMode: false, cropRect: null, cropImg: null };
@@ -81,6 +84,9 @@ function saveDismissed() {
 }
 function saveRotates() {
   try { localStorage.setItem("mfilm.rotates", JSON.stringify(S.rotates)); } catch (e) {}
+}
+function saveAdjustments() {
+  try { localStorage.setItem("mfilm.adjustments", JSON.stringify(S.adjustments)); } catch (e) {}
 }
 function normDeg(d) {
   let v = ((Number(d) || 0) + 180) % 360;
@@ -94,16 +100,81 @@ function curRotate() {
   return S.current && S.rotates[S.current] ? normDeg(S.rotates[S.current]) : 0;
 }
 
-function toneExt() {
-  const t = {}, k = S.tone;
-  if (k.brightness) t.brightness_ev = k.brightness; if (k.contrast) t.contrast = k.contrast; if (k.develop !== 1 && S.film !== "none") t.develop_strength = k.develop;
-  if (k.filter !== "none") { t.filter = k.filter; if (k.filterStrength !== 1) t.filter_strength = k.filterStrength; }
+function loadFrameAdjustments(id) {
+  if (!id) return;
+  const adj = S.adjustments[id];
+  if (adj && adj.tone) {
+    Object.assign(S.tone, S.baseTone, adj.tone);
+  } else {
+    Object.assign(S.tone, S.baseTone);
+  }
+  if (adj && adj.wbSel !== undefined) {
+    S.wbSel = adj.wbSel;
+  } else {
+    S.wbSel = S.baseWbSel;
+  }
+  S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight";
+  if (adj && adj.wbCustom) {
+    Object.assign(S.wbCustom, S.baseWbCustom, adj.wbCustom);
+  } else {
+    Object.assign(S.wbCustom, S.baseWbCustom);
+  }
+}
+function markFrameAdjusted() {
+  if (!S.current) return;
+  const toneDiff = Math.abs(S.tone.brightness - S.baseTone.brightness) > 1e-4 ||
+                   Math.abs(S.tone.contrast - S.baseTone.contrast) > 1e-4 ||
+                   Math.abs(S.tone.develop - S.baseTone.develop) > 1e-4 ||
+                   S.tone.filter !== S.baseTone.filter ||
+                   Math.abs(S.tone.filterStrength - S.baseTone.filterStrength) > 1e-4;
+  const wbDiff = S.wbSel !== S.baseWbSel ||
+                 (S.wbSel === "custom" && (Math.abs(S.wbCustom.k - S.baseWbCustom.k) > 1 || Math.abs(S.wbCustom.t - S.baseWbCustom.t) > 1));
+  if (toneDiff || wbDiff) {
+    S.adjustments[S.current] = {
+      tone: { ...S.tone },
+      wbSel: S.wbSel,
+      wbCustom: { ...S.wbCustom }
+    };
+  } else {
+    delete S.adjustments[S.current];
+  }
+  saveAdjustments();
+  renderAssets();
+}
+function getFrameAdjustments(asset_id) {
+  const adj = S.adjustments[asset_id];
+  const tone = (adj && adj.tone) ? { ...S.baseTone, ...adj.tone } : { ...S.baseTone };
+  const wbSel = (adj && adj.wbSel !== undefined) ? adj.wbSel : S.baseWbSel;
+  const wbCustom = (adj && adj.wbCustom) ? { ...S.baseWbCustom, ...adj.wbCustom } : { ...S.baseWbCustom };
+  return { tone, wbSel, wbCustom, isAdjusted: Boolean(adj) };
+}
+function frameToneExt(tone) {
+  const t = {};
+  if (tone.brightness) t.brightness_ev = tone.brightness;
+  if (tone.contrast) t.contrast = tone.contrast;
+  if (tone.develop !== 1 && S.film !== "none") t.develop_strength = tone.develop;
+  if (tone.filter !== "none") {
+    t.filter = tone.filter;
+    if (tone.filterStrength !== 1) t.filter_strength = tone.filterStrength;
+  }
   return t;
 }
-function wbExt() {
-  if (S.wbSel.startsWith("builtin:") || S.wbSel.startsWith("user:")) return S.wbSel;
-  if (S.wbSel === "custom") return { name: `Custom ${S.wbCustom.k} K`, kelvin: S.wbCustom.k, tint: S.wbCustom.t };
+function frameWbExt(wbSel, wbCustom) {
+  if (wbSel.startsWith("builtin:") || wbSel.startsWith("user:")) return wbSel;
+  if (wbSel === "custom") return { name: `Custom ${wbCustom.k} K`, kelvin: wbCustom.k, tint: wbCustom.t };
   return null;
+}
+function resetAllFrameOverrides() {
+  S.adjustments = {}; saveAdjustments();
+  S.crops = {}; saveCrops();
+  S.rotates = {}; saveRotates();
+}
+
+function toneExt() {
+  return frameToneExt(S.tone);
+}
+function wbExt() {
+  return frameWbExt(S.wbSel, S.wbCustom);
 }
 function opticalBlock() {
   if (S.fxPreset === "golden_haze") return { preset_id: "golden_haze", strength: S.fxStrength, halation_policy: S.policy, stack: [] };
@@ -123,6 +194,20 @@ function recipe(withCrop = true) {
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
   if (withCrop && S.crops[S.current]) r.extensions.crop = S.crops[S.current];     // this frame's own framing
   if (withCrop && S.rotates[S.current]) r.extensions.rotate = normDeg(S.rotates[S.current]);
+  return r;
+}
+function baseJobRecipe() {
+  const r = { schema_version: 2,
+    camera_look: { id: S.look, version: "1.0.0", strength: S.look === "neutral" ? 1 : S.strength },
+    film: { id: S.film, grain_scale: S.grain, halation_scale: S.halation, softness_scale: S.softness },
+    optical: opticalBlock(),
+    render: { output_format: "jpeg", output_color_space: "srgb", quality: S.quality },
+    seed: S.seed, extensions: { white_balance: S.baseWbSel === "as-shot" ? "as-shot" : "daylight" } };
+  const tn = frameToneExt(S.baseTone); if (Object.keys(tn).length) r.extensions.tone = tn;
+  const wp = frameWbExt(S.baseWbSel, S.baseWbCustom); if (wp) r.extensions.wb_profile = wp;
+  if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
+  return r;
+}
   return r;
 }
 function baseRecipe(opts = {}) {
@@ -460,20 +545,23 @@ async function refreshAssets() {
   for (const id of [...S.selected]) if (!S.assets.some(a => a.asset_id === id)) S.selected.delete(id);
   if (!S.current || !S.assets.find(a => a.asset_id === S.current)) S.current = S.assets.length ? S.assets[0].asset_id : null;
   if (!S.current) clearPreviewStage();
-  renderAssets(); syncRotateUi(); if (S.current) schedulePreview();
+  else loadFrameAdjustments(S.current);
+  renderAssets(); syncControls(); if (S.current) schedulePreview();
 }
 /* The preview always follows the frame the user last touched; the previous frame's picture is cleared, never left standing. */
 function setCurrent(id) {
   if (!id) return;
   const changed = S.current !== id;
   S.current = id;
+  loadFrameAdjustments(id);
+  syncControls();
   if (changed) {
     resetPvState();
     ["#pv_t", "#pv_b"].forEach(q => { const i = $(q); if (i) { i.removeAttribute("src"); i.hidden = true; i.classList.remove("stale"); } });
     const c = $("#pv_c"); if (c) c.hidden = true;
     const info = $("#pvinfo"); if (info) info.textContent = "Rendering the preview of the selected frame…";
   }
-  renderAssets(); syncRotateUi(); schedulePreview(true);
+  renderAssets(); schedulePreview(true);
 }
 function selectAll(on) {
   S.selected = new Set(on ? S.assets.filter(a => a.eligible).map(a => a.asset_id) : []);
@@ -486,6 +574,7 @@ function clearAssets() {
   S.assets = [];
   S.selected.clear();
   S.current = null;
+  S.adjustments = {}; saveAdjustments();
   if (PP.chosen.size) { PP.chosen.clear(); if ($("#pp_photos") && $("#pp_photos").children.length) ppRender(); }
   const upl = $("#uplist"); if (upl) upl.replaceChildren();
   clearPreviewStage();
@@ -497,6 +586,7 @@ function removeAsset(id) {
   S.dismissed.add(id);
   saveDismissed();
   S.selected.delete(id);
+  delete S.adjustments[id]; saveAdjustments();
   S.assets = S.assets.filter(a => a.asset_id !== id);
   if (S.current === id) {
     S.current = S.assets.length ? S.assets[0].asset_id : null;
@@ -527,7 +617,7 @@ function renderAssets() {
     const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), role: "button", tabindex: "0", "aria-pressed": String(sel),
       title: "Click: show in the preview · tick: include in Develop · ×: remove from workspace" },
       th, h("span", { class: "tick", title: "Include in Develop" }, sel ? "✓" : ""), rmBtn,
-      h("div", { class: "meta" }, h("b", {}, a.filename, S.crops[a.asset_id] ? " ✂" : "", rot ? ` ⟳${rot}°` : ""), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
+      h("div", { class: "meta" }, h("b", {}, a.filename, S.crops[a.asset_id] ? " ✂" : "", rot ? ` ⟳${rot}°` : "", S.adjustments[a.asset_id] ? " 🎛" : ""), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
         (m.warnings || []).length ? h("span", { class: "err" }, " ⚠ " + m.warnings[0]) : null));
     const toggle = () => { sel ? S.selected.delete(a.asset_id) : S.selected.add(a.asset_id); renderAssets(); updateDevelop(); };
     el.addEventListener("click", ev => { if (ev.target.classList.contains("tick")) toggle(); else { if (S.cropMode && a.asset_id !== S.current) endCrop(false); setCurrent(a.asset_id); } });
@@ -659,7 +749,9 @@ function renderFx() {
         onclick: () => {
           if (on) {
             S.activePreset = null; S.fxPreset = "none"; S.fx.clear(); S.policy = "film";
-            syncControls(); schedulePreview(true); toast("Preset cleared: " + c.name);
+            resetAllFrameOverrides();
+            loadFrameAdjustments(S.current);
+            syncControls(); renderAssets(); schedulePreview(true); toast("Preset cleared: " + c.name);
             return;
           }
           S.activePreset = c.id;
@@ -671,7 +763,9 @@ function renderFx() {
             S.fxPreset = "none"; S.fx = new Set([c.optical_preset]);
           }
           S.fxStrength = c.optical_strength; S.policy = c.halation_policy || "film";
-          syncControls(); schedulePreview(true); toast("Applied preset: " + c.name);
+          resetAllFrameOverrides();
+          loadFrameAdjustments(S.current);
+          syncControls(); renderAssets(); schedulePreview(true); toast("Applied preset: " + c.name);
         } },
         h("span", { class: "badge" }, "✦ Preset"),
         h("strong", {}, c.name),
@@ -759,18 +853,19 @@ function applyPresetState(st, name) {
   S.policy = ["film", "optical", "stacked", "disabled"].includes(st.policy) ? st.policy : "film";
   S.activePreset = st.activePreset || null;
   if (st.tone) {
-    Object.assign(S.tone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, st.tone);
+    Object.assign(S.baseTone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, st.tone);
   } else {
-    Object.assign(S.tone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
+    Object.assign(S.baseTone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
   }
-  Object.assign(S.wbCustom, { k: 5500, t: 0 }, st.wbCustom || {});
+  Object.assign(S.baseWbCustom, { k: 5500, t: 0 }, st.wbCustom || {});
   const L = S.wbl || { builtin: [], imported: [] };
   const wbOk = ["daylight", "as-shot", "custom"].includes(st.wbSel) || [...L.builtin, ...L.imported].some(p => p.id === st.wbSel);
-  S.wbSel = wbOk ? st.wbSel : "daylight"; if (st.wbSel && !wbOk) warn.push("white-balance profile");
-  S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight";
+  S.baseWbSel = wbOk ? st.wbSel : "daylight"; if (st.wbSel && !wbOk) warn.push("white-balance profile");
+  resetAllFrameOverrides();
+  loadFrameAdjustments(S.current);
   S.seed = num(st.seed, 0);
   ["grain", "halation", "softness"].forEach(k => { const i = $("#sl_" + k), o = $("#v_" + k); if (i) i.value = Math.round(S[k] * 100); if (o) o.textContent = S[k].toFixed(2); });
-  syncControls(); schedulePreview(true);
+  syncControls(); renderAssets(); schedulePreview(true);
   toast(`Preset “${name}” applied${warn.length ? ` · unavailable here: ${warn.join(", ")}` : ""}`);
 }
 function presetSummary(st) {
@@ -1050,27 +1145,30 @@ function slider(id, label, min, max, step, get, set, fmt, def, title, liveOnly =
 function adjustPanel() {
   S.sliders = [];
   const sg = v => (v > 0 ? "+" : "") + v.toFixed(2);
-  const filter = h("select", { id: "filter", "aria-label": "Tone filter", onchange: e => { S.tone.filter = e.target.value; syncControls(); scheduleLiveTone(); } },
+  const filter = h("select", { id: "filter", "aria-label": "Tone filter", onchange: e => { S.tone.filter = e.target.value; markFrameAdjusted(); syncControls(); scheduleLiveTone(); } },
     h("option", { value: "none" }, "No filter"), h("option", { value: "grayscale" }, "Black & white (plain grayscale)"), h("option", { value: "silver" }, "Silver B&W film (grain, film curve)"), h("option", { value: "sepia" }, "Sepia"));
-  const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => { S.wbSel = e.target.value; S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight"; renderWb(); schedulePreview(true); } });
+  const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => { S.wbSel = e.target.value; S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight"; markFrameAdjusted(); renderWb(); schedulePreview(true); } });
   const file = h("input", { type: "file", id: "wbfile", multiple: true, hidden: true, accept: ".json,.csv,.xmp,.lrtemplate,.pp3", onchange: wbImport });
   return h("div", { class: "adjust" },
     h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Adjustments ", h("small", { class: "dim" }, "· real-time in preview and kept in every full render")),
     h("div", { class: "row3" },
-      slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => S.tone.brightness, v => { S.tone.brightness = v; }, sg, 0, "Exposure compensation in stops.", true),
-      slider("sl_contrast", "Contrast", -1, 1, 0.01, () => S.tone.contrast, v => { S.tone.contrast = v; }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones.", true),
-      slider("sl_develop", "Development strength", 0, 1, 0.01, () => S.tone.develop, v => { S.tone.develop = v; }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.", true)),
+      slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => S.tone.brightness, v => { S.tone.brightness = v; markFrameAdjusted(); }, sg, 0, "Exposure compensation in stops.", true),
+      slider("sl_contrast", "Contrast", -1, 1, 0.01, () => S.tone.contrast, v => { S.tone.contrast = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones.", true),
+      slider("sl_develop", "Development strength", 0, 1, 0.01, () => S.tone.develop, v => { S.tone.develop = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.", true)),
     h("div", { class: "grid2", style: "margin-top:.8rem" },
       h("div", {}, h("label", { for: "filter" }, "Filter"), filter,
-        h("div", { style: "margin-top:.4rem" }, slider("filterstr", "Filter strength", 0, 1, 0.01, () => S.tone.filterStrength, v => { S.tone.filterStrength = v; }, v => Math.round(v * 100) + "%", 1, "Filter blend strength.", true))),
+        h("div", { style: "margin-top:.4rem" }, slider("filterstr", "Filter strength", 0, 1, 0.01, () => S.tone.filterStrength, v => { S.tone.filterStrength = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 1, "Filter blend strength.", true))),
       h("div", {}, h("label", { for: "wbsel" }, "White balance"), wbsel,
         h("div", { class: "bar", style: "margin-top:.4rem" }, h("button", { onclick: () => $("#wbfile").click(), title: "Import .json .csv .xmp .lrtemplate .pp3" }, "Import profile…"),
           h("button", { id: "wbdel", hidden: true, onclick: wbDelete }, "Delete imported"), file),
         h("div", { id: "wbcustom", hidden: true, style: "margin-top:.4rem" },
-          slider("sl_kelvin", "Light colour temperature", 2000, 12000, 50, () => S.wbCustom.k, v => { S.wbCustom.k = v; }, v => v + " K", 5500),
-          slider("sl_tint", "Tint (− green · + magenta)", -100, 100, 1, () => S.wbCustom.t, v => { S.wbCustom.t = v; }, v => (v > 0 ? "+" : "") + v, 0)),
+          slider("sl_kelvin", "Light colour temperature", 2000, 12000, 50, () => S.wbCustom.k, v => { S.wbCustom.k = v; markFrameAdjusted(); }, v => v + " K", 5500),
+          slider("sl_tint", "Tint (− green · + magenta)", -100, 100, 1, () => S.wbCustom.t, v => { S.wbCustom.t = v; markFrameAdjusted(); }, v => (v > 0 ? "+" : "") + v, 0)),
         h("p", { class: "dim", id: "wbnote", style: "font:.68rem var(--mono);margin:.3rem 0 0" }))),
-    h("div", { class: "bar" }, h("button", { onclick: resetAdjust }, "Reset adjustments"), h("button", { onclick: everythingOff, title: "Neutral look, no optics, no film, no filter, no adjustments: the plain developed RAW" }, "Everything off")));
+    h("div", { class: "bar" },
+      h("button", { onclick: resetAdjust, title: "Reset adjustments for this frame back to preset/defaults" }, "Reset adjustments"),
+      h("button", { onclick: adjustAll, title: "Apply adjustments of this frame to all selected frames" }, "Apply to all selected"),
+      h("button", { onclick: everythingOff, title: "Neutral look, no optics, no film, no filter, no adjustments: the plain developed RAW" }, "Everything off")));
 }
 function renderWb() {
   const sel = $("#wbsel"); if (!sel) return;
@@ -1090,24 +1188,43 @@ async function wbImport(ev) {
     try { const r = await api("/wb-profiles?filename=" + encodeURIComponent(f.name), { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } }); n += r.added.length; last = r.added[0]; }
     catch (e) { toast(`${f.name}: ${e.message}`); }
   }
-  if (n) { S.wbl = await api("/wb-profiles"); S.wbSel = last.id; S.wb = "daylight"; renderWb(); schedulePreview(true); toast(`${n} white-balance profile(s) imported`); }
+  if (n) { S.wbl = await api("/wb-profiles"); S.wbSel = last.id; S.wb = "daylight"; markFrameAdjusted(); renderWb(); schedulePreview(true); toast(`${n} white-balance profile(s) imported`); }
 }
 async function wbDelete() {
   const id = S.wbSel; if (!id.startsWith("user:")) return;
-  try { await api("/wb-profiles/" + id, { method: "DELETE" }); S.wbl = await api("/wb-profiles"); S.wbSel = "daylight"; renderWb(); schedulePreview(true); toast("Profile deleted (renders already made keep their own copy)"); } catch (e) { toast(e.message); }
+  try { await api("/wb-profiles/" + id, { method: "DELETE" }); S.wbl = await api("/wb-profiles"); S.wbSel = "daylight"; markFrameAdjusted(); renderWb(); schedulePreview(true); toast("Profile deleted (renders already made keep their own copy)"); } catch (e) { toast(e.message); }
 }
 function resetAdjust() {
-  const wbChanged = S.wbSel !== "daylight" || S.wb !== "daylight";
-  Object.assign(S.tone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
-  S.wbSel = "daylight"; S.wb = "daylight"; Object.assign(S.wbCustom, { k: 5500, t: 0 });
+  if (S.current) {
+    delete S.adjustments[S.current];
+    saveAdjustments();
+  }
+  loadFrameAdjustments(S.current);
   syncControls();
-  if (wbChanged || !pvState.filmPx) schedulePreview(true); else scheduleLiveTone();
+  renderAssets();
+  schedulePreview(true);
+}
+function adjustAll() {
+  const curAdj = {
+    tone: { ...S.tone },
+    wbSel: S.wbSel,
+    wbCustom: { ...S.wbCustom }
+  };
+  [...S.selected].forEach(id => {
+    S.adjustments[id] = JSON.parse(JSON.stringify(curAdj));
+  });
+  if (S.current) S.adjustments[S.current] = JSON.parse(JSON.stringify(curAdj));
+  saveAdjustments();
+  renderAssets();
+  toast(`Adjustments copied to ${S.selected.size} selected frame(s)`);
 }
 function everythingOff() {
   S.look = "neutral"; S.fx.clear(); S.fxPreset = "none"; S.activePreset = null; S.policy = "film"; S.film = "none";
-  Object.assign(S.tone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
-  S.wbSel = "daylight"; S.wb = "daylight";
-  syncControls(); schedulePreview(true); toast("All effects off: the plain developed RAW");
+  Object.assign(S.baseTone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
+  S.baseWbSel = "daylight"; Object.assign(S.baseWbCustom, { k: 5500, t: 0 });
+  resetAllFrameOverrides();
+  loadFrameAdjustments(S.current);
+  syncControls(); renderAssets(); schedulePreview(true); toast("All effects off: the plain developed RAW");
 }
 function previewPanel() {
   const treatedCanvas = h("canvas", { id: "pv_c", hidden: true, "aria-label": "Treated preview" });
@@ -1594,12 +1711,22 @@ async function develop() {
     const o = [...origins][0];
     const source = o === "photoprism" ? { kind: S.ppSource && S.ppSource.kind === "album" ? "photoprism_album" : "photoprism_folder", ...(S.ppSource ? { source_uid: S.ppSource.uid } : {}) }
       : o === "camera_roll" ? { kind: "mfilm_roll", ...(S.ppSource ? { source_uid: S.ppSource.uid } : {}) } : { kind: "upload" };
-    const j = await api("/jobs", { method: "POST", json: { schema_version: 1, source: { ...source, assets: assets.map(a => ({
-      asset_id: a.asset_id,
-      ...(S.crops[a.asset_id] ? { crop: S.crops[a.asset_id] } : {}),
-      ...(S.rotates[a.asset_id] && normDeg(S.rotates[a.asset_id]) ? { rotate: normDeg(S.rotates[a.asset_id]) } : {})
-    })) },
-      recipe: recipe(false), output: outputSpec() } });
+    const assetsPayload = assets.map(a => {
+      const { tone, wbSel, wbCustom, isAdjusted } = getFrameAdjustments(a.asset_id);
+      const item = { asset_id: a.asset_id };
+      if (S.crops[a.asset_id]) item.crop = S.crops[a.asset_id];
+      if (S.rotates[a.asset_id] && normDeg(S.rotates[a.asset_id])) item.rotate = normDeg(S.rotates[a.asset_id]);
+      if (isAdjusted) {
+        const tn = frameToneExt(tone);
+        if (Object.keys(tn).length) item.tone = tn;
+        const wp = frameWbExt(wbSel, wbCustom);
+        if (wp) item.wb_profile = wp;
+        if (wbSel === "as-shot") item.white_balance = "as-shot";
+      }
+      return item;
+    });
+    const j = await api("/jobs", { method: "POST", json: { schema_version: 1, source: { ...source, assets: assetsPayload },
+      recipe: baseJobRecipe(), output: outputSpec() } });
     toast(`Job queued (${j.total} frame${j.total === 1 ? "" : "s"})`); refreshJobs();
   } catch (e) { toast(e.message); }
 }
@@ -1643,7 +1770,7 @@ function jobCard(j) {
         : (j.counts.PUBLISHING || j.state === "PUBLISHING") ? h("span", { class: "dim" }, " · publishing…") : null) : null;
   return h("div", { class: "job" }, h("header", {}, st, h("b", {}, j.film), h("span", { class: "dim" }, `${j.camera_look} · recipe ${j.recipe_hash.slice(0, 10)} · ${j.created_at.slice(0, 19).replace("T", " ")}`)),
     pubInfo,
-    h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename, i.crop ? " ✂" : "", i.rotate ? ` ⟳${i.rotate}°` : ""),
+    h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename, i.crop ? " ✂" : "", i.rotate ? ` ⟳${i.rotate}°` : "", (i.tone || i.wb_profile || i.white_balance) ? " 🎛" : ""),
       i.published_path ? h("span", { class: i.state === "COMPLETE" ? "okc" : "dim", title: i.publish_note || i.published_path }, i.state === "COMPLETE" ? "in PhotoPrism ✓" : i.state.toLowerCase()) : null,
       i.state === "FAILED" ? h("span", { class: "err", title: i.error_detail || i.publish_note || "" }, ` ✗ ${i.error_code || "failed"}${i.error_detail ? ": " + i.error_detail : ""}`) : null,
       i.render ? h("a", { href: `${API}/renders/${i.render.render_id}/file`, style: "color:var(--ok)" }, `${i.render.width}×${i.render.height} ↓`)

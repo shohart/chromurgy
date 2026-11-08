@@ -89,6 +89,44 @@
                 "type": "number",
                 "minimum": -360,
                 "maximum": 360
+              },
+              "tone": {
+                "description": "EXTENSION: per-frame tone adjustment overrides",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "brightness_ev": { "type": "number", "minimum": -3.0, "maximum": 3.0 },
+                  "contrast": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+                  "develop_strength": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+                  "filter": { "type": "string", "enum": ["none", "grayscale", "sepia", "silver"] },
+                  "filter_strength": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+                }
+              },
+              "white_balance": {
+                "description": "EXTENSION: per-frame white-balance mode",
+                "type": "string",
+                "enum": ["daylight", "as-shot"]
+              },
+              "wb_profile": {
+                "description": "EXTENSION: per-frame white-balance profile id or custom object",
+                "oneOf": [
+                  { "type": "string" },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string" },
+                      "id": { "type": "string" },
+                      "kelvin": { "type": "number" },
+                      "tint": { "type": "number" },
+                      "gains": {
+                        "type": "array",
+                        "items": { "type": "number" },
+                        "minItems": 3,
+                        "maxItems": 4
+                      }
+                    }
+                  }
+                ]
               }
             }
           }

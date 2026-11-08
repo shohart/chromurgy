@@ -145,3 +145,28 @@ def test_restart_mid_render_recovers_without_a_duplicate(logged, store):
     v = logged.get(f"{dapp.API}/jobs/{jid}").json()
     assert v["state"] == "COMPLETE" and len(renders_on_disk(store)) == 1
     assert not list((store.root / "incoming").glob("web-render-*"))
+
+
+def test_per_frame_adjustments_and_overrides(logged, store):
+    a = upload(logged, DNG, "a.dng").json()["source"]["asset_id"]
+    b = upload(logged, DNG2 if DNG2.is_file() else DNG, "b.dng").json()["source"]["asset_id"]
+    assets = [
+        {"asset_id": a, "tone": {"brightness_ev": 0.5, "contrast": 0.2}},
+        {"asset_id": b, "rotate": 90, "tone": {"develop_strength": 0.7}}
+    ] if a != b else [{"asset_id": a, "tone": {"brightness_ev": 0.5}, "rotate": 90}]
+    body = {
+        "schema_version": 1,
+        "source": {"kind": "upload", "assets": assets},
+        "recipe": recipe(width=800, height=600),
+        "output": {"format": "jpeg", "quality": 90, "publish": False}
+    }
+    r = logged.post(f"{dapp.API}/jobs", headers=H, json=body)
+    assert r.status_code == 202, r.text
+    jid = r.json()["job_id"]
+    assert all(res.state == "COMMITTED" for res in drain(store))
+    v = logged.get(f"{dapp.API}/jobs/{jid}").json()
+    assert v["state"] == "COMPLETE"
+    assert v["items"][0]["tone"]["brightness_ev"] == 0.5
+    if len(v["items"]) > 1:
+        assert v["items"][1]["rotate"] == 90
+        assert v["items"][1]["tone"]["develop_strength"] == 0.7
