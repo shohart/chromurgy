@@ -42,7 +42,7 @@
         "strength": {
           "type": "number",
           "minimum": 0,
-          "maximum": 1
+          "maximum": 2
         },
         "bundle_hash": {
           "type": "string",
@@ -98,7 +98,7 @@
         "strength": {
           "type": "number",
           "minimum": 0,
-          "maximum": 1
+          "maximum": 2
         },
         "halation_policy": {
           "enum": [

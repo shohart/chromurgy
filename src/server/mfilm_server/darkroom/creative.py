@@ -165,19 +165,19 @@ def apply_look(x: np.ndarray, look_id: str, strength: float) -> np.ndarray:
     yy = y3[..., None]
     out = yy + p["global_chroma_gain"] * (out - yy)                          # chroma about luma
     k = p["shadow_warm_cool"] * (1 - smoothstep(y3, 0.0, 0.3)) + p["highlight_warm_cool"] * smoothstep(y3, 0.4, 1.0)
-    out = out * np.stack([1 + 1.5 * k, np.ones_like(k), 1 - 1.5 * k], -1)    # warm / cool split
+    out = out * np.stack([1 + 2.5 * k, np.ones_like(k), 1 - 2.5 * k], -1)    # warm / cool split
     gb = p["green_hue_bias"]
     if gb:
         g = out[..., 1]
         gw = np.clip((g - np.maximum(out[..., 0], out[..., 2])) / np.maximum(g, 1e-6), 0, 1) * 2.0
-        d = gb * 1.5 * gw * g
+        d = gb * 2.5 * gw * g
         out = out.copy()
         if gb > 0:
             out[..., 0] += d                                                 # greens toward yellow
         else:
             out[..., 2] -= d                                                 # greens toward cyan
     out = np.maximum(out, 0)
-    return x + strength * (out - x)
+    return np.maximum(x + strength * (out - x), 0.0)
 
 
 def apply_creative(lin: np.ndarray, creative: dict | None) -> np.ndarray:

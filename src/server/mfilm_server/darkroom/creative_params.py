@@ -97,42 +97,42 @@ LOOKS = {
 }
 EFFECTS = {
  "soft_sun_glow": {
-  "threshold": 1.0,
-  "knee": 0.28,
-  "radius_fraction": 0.012,
-  "warm_shift": 0.1,
-  "veil": 0.08
- },
- "ricoh_hdf_diffusion": {
-  "threshold": 0.75,
-  "knee": 0.35,
-  "radius_fraction": 0.006,
-  "broad_radius_fraction": 0.02,
-  "veil": 0.045
- },
- "black_pro_mist_like": {
-  "threshold": 0.85,
+  "threshold": 0.65,
   "knee": 0.3,
   "radius_fraction": 0.015,
-  "veil": 0.035
+  "warm_shift": 0.15,
+  "veil": 0.12
+ },
+ "ricoh_hdf_diffusion": {
+  "threshold": 0.5,
+  "knee": 0.35,
+  "radius_fraction": 0.008,
+  "broad_radius_fraction": 0.025,
+  "veil": 0.08
+ },
+ "black_pro_mist_like": {
+  "threshold": 0.55,
+  "knee": 0.3,
+  "radius_fraction": 0.018,
+  "veil": 0.06
  },
  "vintage_veiling_flare": {
-  "threshold": 0.9,
+  "threshold": 0.6,
   "knee": 0.4,
   "radius_fraction": 0.05,
-  "veil": 0.13
+  "veil": 0.18
  },
  "film_halation_extra": {
-  "threshold": 1.15,
-  "knee": 0.2,
-  "radius_fraction": 0.003,
-  "red_gain": 0.12
+  "threshold": 0.6,
+  "knee": 0.25,
+  "radius_fraction": 0.005,
+  "red_gain": 0.2
  },
  "orton_glow": {
-  "threshold": 0.5,
+  "threshold": 0.45,
   "knee": 0.4,
   "radius_fraction": 0.03,
-  "mix": 0.28
+  "mix": 0.4
  },
  "none": {}
 }

@@ -669,7 +669,8 @@ async function pollPreview(pid, tries = 400) {
 function looksPanel() { return h("div", {}, h("div", { class: "cards", id: "looks" }),
   h("div", { class: "grid2", style: "margin-top:1rem" }, h("div", {},
     h("label", { for: "strength" }, "Look intensity ", h("span", { id: "lookv", class: "val" }, "100%")),
-    h("input", { type: "range", id: "strength", min: 0, max: 100, value: 100, disabled: true,
+    h("input", { type: "range", id: "strength", min: 0, max: 200, value: 100, disabled: true, title: "Double-click resets to 100%",
+      ondblclick: e => { e.target.value = 100; S.strength = 1.0; if ($("#lookv")) $("#lookv").textContent = "100%"; scheduleLiveTone(); schedulePreview(); },
       oninput: e => { S.strength = e.target.value / 100; if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; scheduleLiveTone(); schedulePreview(); } })))); }
 function renderLooks() {
   $("#looks").replaceChildren(...S.catalog.camera_looks.map(l => {
@@ -728,7 +729,8 @@ function opticsPanel() {
       h("span", {}, "Individual optical effects"),
       h("small", {}, "combinable · effects included in an active bundle are also highlighted")),
     h("div", { class: "cards", id: "fxcards" }));
-  const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 100, value: 50, "aria-label": "Optical effects strength",
+  const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 200, value: 50, "aria-label": "Optical effects strength", title: "Double-click resets to 0.50",
+    ondblclick: e => { e.target.value = 50; S.fxStrength = 0.5; $("#fxv").textContent = "0.50"; scheduleLiveTone(); schedulePreview(); },
     oninput: e => { S.fxStrength = e.target.value / 100; $("#fxv").textContent = S.fxStrength.toFixed(2); scheduleLiveTone(); schedulePreview(); } });
   const policy = h("select", { id: "policy", onchange: e => { S.policy = e.target.value; schedulePreview(); } },
     h("option", { value: "film" }, "film: the film stock owns halation"), h("option", { value: "optical" }, "optical: replaces the film's halation"),

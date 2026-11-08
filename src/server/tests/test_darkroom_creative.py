@@ -48,7 +48,7 @@ def test_bright_pixels_spill_into_neighbours_and_far_dark_stays_put(eid):
 
 def test_effect_strength_is_monotonic():
     x = scene()
-    d = [np.abs(creative.apply_optics(x, stack("soft_sun_glow"), k) - x).mean() for k in (0.25, 0.5, 0.75, 1.0)]
+    d = [np.abs(creative.apply_optics(x, stack("soft_sun_glow"), k) - x).mean() for k in (0.25, 0.5, 0.75, 1.0, 1.5, 2.0)]
     assert d == sorted(d) and d[0] > 0
 
 
@@ -96,6 +96,9 @@ def test_every_look_is_finite_distinct_and_blends_linearly(lid):
     assert np.isfinite(full).all() and full.min() >= 0 and np.abs(full - x).max() > 1e-3
     half = creative.apply_look(x, lid, 0.5)
     assert np.allclose(half, (x + full) / 2, atol=1e-4)          # strength blends in linear light
+    double = creative.apply_look(x, lid, 2.0)
+    assert np.isfinite(double).all() and double.min() >= 0
+    assert np.abs(double - x).max() > np.abs(full - x).max()     # 200% strength is noticeably punchier than 100%
     for other in LOOKS:
         if other not in ("neutral", lid):
             assert np.abs(creative.apply_look(x, other, 1.0) - full).max() > 1e-4, f"{lid} == {other}"

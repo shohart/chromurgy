@@ -124,3 +124,21 @@ def test_halation_policy_has_one_owner(bundle):
     d = neutral()
     d["optical"] = {"preset_id": "none", "strength": 0, "halation_policy": "disabled", "stack": []}
     assert recipe2.to_v1(recipe2.normalize(d, bundle))["look_controls"]["halation_scale"] == 0.0
+
+
+def test_camera_look_and_optical_strength_up_to_two(bundle):
+    r = neutral()
+    r["camera_look"] = {"id": "leica_m9_ccd", "version": "1.0.0", "strength": 1.75}
+    r["optical"] = {"preset_id": "soft_sun_glow", "strength": 2.0, "stack": []}
+    n = recipe2.normalize(r, bundle)
+    assert n["camera_look"]["strength"] == 1.75
+    assert n["optical"]["strength"] == 2.0
+    v1 = recipe2.to_v1(n)
+    assert v1["creative"]["camera_look"]["strength"] == 1.75
+    assert v1["creative"]["optical"]["strength"] == 2.0
+
+    r_bad = neutral()
+    r_bad["camera_look"]["strength"] = 2.01
+    with pytest.raises(recipe2.RecipeError):
+        recipe2.normalize(r_bad, bundle)
+
