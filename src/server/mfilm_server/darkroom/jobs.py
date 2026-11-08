@@ -181,7 +181,9 @@ def job_view(conn: sqlite3.Connection, job_id: str, *, items: bool = True) -> di
             "white_balance": (req_assets.get(r["source_id"]) or {}).get("white_balance"),
             "item_id": r["id"], "asset_id": r["source_id"], "filename": r["filename"], "ordinal": r["ordinal"],
             "state": r["state"], "attempt": r["attempt"], "error_code": r["error_code"],
-            "error_detail": r["error_detail"], "published_path": r["pub_path"], "photoprism_photo_uid": r["pp_photo_uid"],
+            "error_detail": r["error_detail"] if r["state"] == "FAILED" else None,
+            "warning": r["error_detail"] if r["state"] != "FAILED" else None,
+            "published_path": r["pub_path"], "photoprism_photo_uid": r["pp_photo_uid"],
             "publish_note": r["pub_note"],
             "render": None if not r["render_id"] else {
                 "render_id": r["render_id"], "width": r["width"], "height": r["height"], "bytes": r["bytes"],
@@ -293,8 +295,15 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
         rid = recipe_render_id(src["sha256"], v1, bundle.sha256, seed)
         have = conn.execute("SELECT * FROM web_renders WHERE id=?", (rid,)).fetchone()
         if have and (store.root / have["path"]).is_file():
+            side = (store.root / have["path"]).with_suffix(".jpg.json")
+            warning = None
+            if side.is_file():
+                try:
+                    warning = json.loads(side.read_text()).get("warning")
+                except Exception:
+                    pass
             done = "STAGED" if job["publish"] else "COMPLETE"
-            _set(conn, iid, done, render_id=rid, finished_at=None)
+            _set(conn, iid, done, render_id=rid, error_detail=warning, finished_at=None)
             conn.execute(f"UPDATE darkroom_items SET finished_at={NOW if done == 'COMPLETE' else 'NULL'} WHERE id=?", (iid,))
             return iid, rid, "COMPLETE", None, "reused"
         if sha256_file(path)[0] != src["sha256"]:
@@ -330,7 +339,7 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
                      (rid, src["id"], rhash, json.dumps(recipe, sort_keys=True), str(dest.relative_to(store.root)), sha, nbytes,
                       prov["output_width"], prov["output_height"]))
         done = "STAGED" if job["publish"] else "COMPLETE"
-        _set(conn, iid, done, render_id=rid)
+        _set(conn, iid, done, render_id=rid, error_detail=prov.get("warning"))
         conn.execute(f"UPDATE darkroom_items SET finished_at={NOW if done == 'COMPLETE' else 'NULL'} WHERE id=?", (iid,))
         conn.execute("COMMIT")
         return iid, rid, "COMPLETE", None, None

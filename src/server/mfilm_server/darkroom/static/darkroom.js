@@ -1645,8 +1645,6 @@ function endCrop(apply) {
     const r = S.cropRect, full = r.x < 0.001 && r.y < 0.001 && r.w > 0.998 && r.h > 0.998;
     if (full) delete S.crops[S.current]; else S.crops[S.current] = { x: +r.x.toFixed(4), y: +r.y.toFixed(4), w: +r.w.toFixed(4), h: +r.h.toFixed(4) };
     saveCrops();
-    const curVal = $("#outsize") ? $("#outsize").value : "";
-    if (curVal) checkAndFitOutputSize(curVal, true);
   }
   S.cropMode = false; S.cropRect = null; $("#cropbtn").setAttribute("aria-pressed", "false"); $("#cropctl").hidden = true;
   const lay = $("#cropLayer"); lay.hidden = true; lay.replaceChildren();
@@ -1859,7 +1857,11 @@ function checkAndFitOutputSize(requestedVal, showWarning = true) {
 }
 
 function developPanel() {
-  const sizeSel = h("select", { id: "outsize", onchange: e => { checkAndFitOutputSize(e.target.value, true); schedulePreview(); } },
+  const sizeSel = h("select", { id: "outsize", onchange: e => {
+    const v = e.target.value;
+    [S.width, S.height] = v ? v.split("x").map(Number) : [0, 0];
+    schedulePreview();
+  } },
     h("option", { value: "" }, "Original size"),
     h("option", { value: "3000x2000" }, "3000 × 2000 (3:2)"),
     h("option", { value: "2000x1333" }, "2000 × 1333 (3:2)"),
@@ -1904,8 +1906,6 @@ async function develop() {
   try {
     const assets = [...S.selected].map(id => S.assets.find(a => a.asset_id === id)).filter(Boolean);
     if (!assets.length) return toast("Select at least one frame to develop");
-    const curVal = $("#outsize") ? $("#outsize").value : (S.width && S.height ? `${S.width}x${S.height}` : "");
-    if (curVal) checkAndFitOutputSize(curVal, true);
     const origins = new Set(assets.map(a => a.origin));
     if (origins.size > 1) return toast("Develop frames from one kind of source per job (uploads, PhotoPrism or a roll)");
     const o = [...origins][0];
@@ -1976,7 +1976,9 @@ function jobCard(j) {
     h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename, i.crop ? " ✂" : "", i.rotate ? ` ⟳${i.rotate}°` : "", (i.tone || i.wb_profile || i.white_balance) ? " 🎛" : ""),
       i.published_path ? h("span", { class: i.state === "COMPLETE" ? "okc" : "dim", title: i.publish_note || i.published_path }, i.state === "COMPLETE" ? "in PhotoPrism ✓" : i.state.toLowerCase()) : null,
       i.state === "FAILED" ? h("span", { class: "err", title: i.error_detail || i.publish_note || "" }, ` ✗ ${i.error_code || "failed"}${i.error_detail ? ": " + i.error_detail : ""}`) : null,
-      i.render ? h("a", { href: `${API}/renders/${i.render.render_id}/file`, style: "color:var(--ok)" }, `${i.render.width}×${i.render.height} ↓`)
+      i.render ? h("span", {},
+        h("a", { href: `${API}/renders/${i.render.render_id}/file`, style: "color:var(--ok)" }, `${i.render.width}×${i.render.height} ↓`),
+        i.warning ? h("span", { class: "warn", style: "color:var(--safe2);margin-left:.4rem;font-size:.68rem", title: i.warning }, ` ⚠ ${i.warning}`) : null)
         : (i.state !== "FAILED" ? h("span", { class: "dim", title: i.error_detail || "" }, i.state) : null)))), acts, albumBox);
 }
 

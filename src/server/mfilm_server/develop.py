@@ -120,6 +120,56 @@ def normalize_geometry(path: Path, img: np.ndarray) -> tuple[np.ndarray, dict]:
         "applied": True, "table": table["file"], "table_sha256": table["sha256"], "focal_mm": info["focal_mm"]}
 
 
+STANDARD_LADDER = [
+    (3000, 2000),
+    (2000, 1333),
+    (1600, 1200),
+    (1200, 800),
+]
+
+
+def resolve_output_size(img_shape: tuple[int, int, ...], width: int, height: int) -> tuple[int, int, str | None]:
+    """Given source image dimensions (h, w, ...) and requested target width and height:
+    - If width and height are 0: returns (0, 0, None) for native size.
+    - Orients target dimensions to match the source image orientation (portrait -> portrait).
+    - If target fits within source: returns (target_w, target_h, None).
+    - If target exceeds source resolution:
+      - If requested size exceeds all standard presets (max > 3000): raises DevelopError('OUTPUT_LARGER_THAN_SOURCE').
+      - Otherwise, automatically picks the next allowable smaller preset from the ladder that fits without upscaling.
+        If none fit (frame is smaller than 1200x800), falls back to native frame size (0, 0).
+        Returns (fit_w, fit_h, warning_message).
+    """
+    h, w = img_shape[:2]
+    if not width and not height:
+        return 0, 0, None
+
+    # Match orientation
+    if (h > w and width > height) or (w > h and height > width):
+        width, height = height, width
+
+    # Check if requested size fits directly
+    if width <= w and height <= h:
+        return width, height, None
+
+    req_max = max(width, height)
+    req_min = min(width, height)
+
+    if req_max > 3000:
+        raise DevelopError("OUTPUT_LARGER_THAN_SOURCE", f"requested {width}x{height}, source {w}x{h}")
+
+    for lw, lh in STANDARD_LADDER:
+        if (h > w and lw > lh) or (w > h and lh > lw):
+            cw, ch = lh, lw
+        else:
+            cw, ch = lw, lh
+        if (max(cw, ch) < req_max or (max(cw, ch) == req_max and min(cw, ch) < req_min)) and cw <= w and ch <= h:
+            warning = f"Целевой размер {width}×{height} превышает разрешение кадра ({w}×{h}); сгенерирован {cw}×{ch}"
+            return cw, ch, warning
+
+    warning = f"Целевой размер {width}×{height} превышает разрешение кадра ({w}×{h}); сгенерирован в исходном размере ({w}×{h})"
+    return 0, 0, warning
+
+
 def fit_output(img: np.ndarray, width: int, height: int) -> np.ndarray:
     """Centre-crop to the requested aspect, then downscale. Never upscale.
     The aspect orientation follows the image: portrait images yield portrait
@@ -254,7 +304,9 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
     spec = recipe.get("output_spec", {})
     if spec.get("format", "image/jpeg") != "image/jpeg" or spec.get("colorspace", "sRGB") != "sRGB":
         raise DevelopError("UNSUPPORTED_RECIPE", "only image/jpeg sRGB output")
-    img = fit_output(img, int(spec.get("width") or 0), int(spec.get("height") or 0))
+    req_w, req_h = int(spec.get("width") or 0), int(spec.get("height") or 0)
+    fit_w, fit_h, warning = resolve_output_size(img.shape, req_w, req_h)
+    img = fit_output(img, fit_w, fit_h)
     out_h, out_w = img.shape[:2]
     commit = core_commit()
     rid = recipe_render_id(src_sha, recipe, bundle.sha256, seed)
@@ -272,6 +324,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
         "lens_correction": lens_info, "creative": recipe.get("creative"), "crop": recipe.get("crop"), "tone": recipe.get("tone"), "wb_profile": recipe.get("wb_profile"),
         "source_width": int(lin.shape[1]), "source_height": int(lin.shape[0]),
         "output_width": out_w, "output_height": out_h, "jpeg_quality": int(spec.get("jpeg_quality", 92)),
+        "warning": warning,
         "developed_by": "linux", "development_timestamp": t1.isoformat(timespec="seconds"),
         "elapsed_s": round((t1 - t0).total_seconds(), 3), "original_sha256": src_sha, "original_bytes": src_bytes,
         "device_id": device_id, "roll_id": roll_id, "frame_id": frame_id, "captured_at": captured_at,

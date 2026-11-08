@@ -59,6 +59,37 @@ def test_fit_output_orientation_and_oversize():
     assert e.value.code == "OUTPUT_LARGER_THAN_SOURCE"
 
 
+def test_resolve_output_size_ladder_and_oversize():
+    from mfilm_server import develop
+    # Full size landscape (3000, 4000) -> fits 3000x2000 directly
+    w, h, warn = develop.resolve_output_size((3000, 4000), 3000, 2000)
+    assert (w, h, warn) == (3000, 2000, None)
+
+    # Full size portrait (4000, 3000) -> fits 3000x2000 as 2000x3000
+    w, h, warn = develop.resolve_output_size((4000, 3000), 3000, 2000)
+    assert (w, h, warn) == (2000, 3000, None)
+
+    # Cropped frame (1600, 2400) requested 3000x2000 -> falls back to 2000x1333 with warning
+    w, h, warn = develop.resolve_output_size((1600, 2400), 3000, 2000)
+    assert (w, h) == (2000, 1333)
+    assert warn is not None and "2000×1333" in warn
+
+    # Cropped frame (1200, 1800) requested 3000x2000 -> falls back to 1600x1200 with warning
+    w, h, warn = develop.resolve_output_size((1200, 1800), 3000, 2000)
+    assert (w, h) == (1600, 1200)
+    assert warn is not None and "1600×1200" in warn
+
+    # Extremely cropped frame (600, 800) requested 3000x2000 -> falls back to original (0, 0) with warning
+    w, h, warn = develop.resolve_output_size((600, 800), 3000, 2000)
+    assert (w, h) == (0, 0)
+    assert warn is not None and "исходном размере" in warn
+
+    # Oversized non-preset request (9000x6000) -> raises OUTPUT_LARGER_THAN_SOURCE
+    with pytest.raises(develop.DevelopError) as e:
+        develop.resolve_output_size((3000, 4000), 9000, 6000)
+    assert e.value.code == "OUTPUT_LARGER_THAN_SOURCE"
+
+
 
 def test_recipe_carries_the_crop_and_a_crop_changes_identity():
     from mfilm_server.darkroom import engine
