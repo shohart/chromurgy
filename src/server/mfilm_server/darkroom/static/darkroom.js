@@ -66,12 +66,33 @@ async function api(path, opts = {}) {
 }
 
 /* ---------------- state ---------------- */
-const S = { catalog: null, assets: [], selected: new Set(), current: null,
+const S = { catalog: null, assets: [], allSourceCount: 0, selected: new Set(), current: null,
+  dismissed: new Set(JSON.parse(localStorage.getItem("mfilm.dismissed") || "[]")),
   look: "neutral", film: null, strength: 1, grain: 1, halation: 1, softness: 1, quality: 92, seed: 0, wb: "daylight",
   width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film", activePreset: null,
   tone: { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, wbSel: "daylight", wbCustom: { k: 5500, t: 0 }, wbl: null, sliders: [],
-  crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"), aspect: "free", cropMode: false, cropRect: null, cropImg: null };
+  crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"),
+  rotates: JSON.parse(localStorage.getItem("mfilm.rotates") || "{}"), rotOpen: false,
+  aspect: "free", cropMode: false, cropRect: null, cropImg: null };
 const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Preview · Develop"];
+
+function saveDismissed() {
+  try { localStorage.setItem("mfilm.dismissed", JSON.stringify([...S.dismissed])); } catch (e) {}
+}
+function saveRotates() {
+  try { localStorage.setItem("mfilm.rotates", JSON.stringify(S.rotates)); } catch (e) {}
+}
+function normDeg(d) {
+  let v = ((Number(d) || 0) + 180) % 360;
+  if (v < 0) v += 360;
+  v -= 180;
+  if (Math.abs(v + 180) < 0.01) v = 180;
+  v = Math.round(v * 100) / 100;
+  return Math.abs(v) < 0.01 ? 0 : v;
+}
+function curRotate() {
+  return S.current && S.rotates[S.current] ? normDeg(S.rotates[S.current]) : 0;
+}
 
 function toneExt() {
   const t = {}, k = S.tone;
@@ -101,6 +122,7 @@ function recipe(withCrop = true) {
   const wp = wbExt(); if (wp) r.extensions.wb_profile = wp;
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
   if (withCrop && S.crops[S.current]) r.extensions.crop = S.crops[S.current];     // this frame's own framing
+  if (withCrop && S.rotates[S.current]) r.extensions.rotate = normDeg(S.rotates[S.current]);
   return r;
 }
 function baseRecipe(opts = {}) {
@@ -159,8 +181,13 @@ function materialPanel() {
     if (pane === ppPane) ppInit(); if (pane === rollPane) rollsInit(); } }, label);
   const tabs = h("div", { class: "tabs", role: "tablist" }, mk("Upload RAW", upPane, true), mk("PhotoPrism", ppPane), mk("M-Film rolls", rollPane));
   return h("div", {}, tabs, upPane, ppPane, rollPane,
-    h("div", { class: "bar" }, h("button", { onclick: () => selectAll(true) }, "Select all"), h("button", { onclick: () => selectAll(false) }, "Clear"),
-      h("span", { class: "dim", id: "selcount" })), h("div", { class: "assets", id: "assets" }));
+    h("div", { class: "bar" },
+      h("button", { onclick: () => selectAll(true) }, "Select all"),
+      h("button", { id: "deselectbtn", onclick: () => selectAll(false), title: "Uncheck all frames without removing them from the tray" }, "Deselect"),
+      h("button", { id: "clearbtn", onclick: clearAssets, title: "Clear loaded photos from the workspace tray and reset the preview" }, "Clear"),
+      h("button", { id: "restorebtn", hidden: true, onclick: restoreAssets, title: "Restore previously loaded photos from archive" }, "Restore archived"),
+      h("span", { class: "dim", id: "selcount" })),
+    h("div", { class: "assets", id: "assets" }));
 }
 /* ---- camera rolls received from the SX510: their archived originals can be developed again with any recipe ---- */
 function rollPaneEl() { return h("div", { id: "rolls", hidden: true }, h("p", { class: "dim", id: "rollmsg" }, "Loading rolls…"), h("div", { class: "cards", id: "rolllist" })); }
@@ -179,7 +206,9 @@ async function rollUse(x) {
   await withLoading(`Loading roll ${x.roll_id.slice(0, 8)}…`, `Inspecting ${x.verified} RAW frame(s) and extracting previews…`, async () => {
     try {
       const r = await api("/rolls/select", { method: "POST", json: { device_id: x.device_id, roll_id: x.roll_id } });
-      r.assets.forEach(a => S.selected.add(a.asset_id)); S.ppSource = r.source;
+      r.assets.forEach(a => { S.dismissed.delete(a.asset_id); S.selected.add(a.asset_id); });
+      saveDismissed();
+      S.ppSource = r.source;
       await refreshAssets();
       if (r.assets.length) setCurrent(r.assets[0].asset_id);
       toast(`${r.assets.length} frame(s) ready${r.skipped.length ? `, ${r.skipped.length} skipped: ${r.skipped[0].reason}` : ""}`);
@@ -264,6 +293,7 @@ function ppRender() {
     h("span", {}, `${PP.page.length} on this page`), h("span", {}, `${elig.length} with a supported RAW`), h("span", {}, `${PP.page.length - elig.length} not usable (hover for the reason)`)), grid,
     h("div", { class: "bar" },
       h("button", { onclick: () => { elig.forEach(p => PP.chosen.set(p.photo_uid, { kind: PP.sourceKind, uid: PP.sourceUid })); ppRender(); } }, "Select visible"),
+      h("button", { disabled: !PP.chosen.size, onclick: () => { PP.chosen.clear(); ppRender(); } }, "Clear selection"),
       h("button", { onclick: ppSelectAll }, "Select all eligible in this " + PP.sourceKind),
       h("button", { disabled: PP.offset === 0, onclick: () => ppOpen(PP.sourceKind, PP.sourceUid, PP.title, Math.max(0, PP.offset - 60)) }, "← Prev"),
       h("button", { disabled: PP.next == null, onclick: () => ppOpen(PP.sourceKind, PP.sourceUid, PP.title, PP.next) }, "Next →"),
@@ -285,7 +315,9 @@ async function ppUse() {
 async function ppSelect(body) {
   try {
     const r = await api(`/photoprism/${PP.inst.id}/select`, { method: "POST", json: body });
-    r.assets.forEach(a => S.selected.add(a.asset_id)); S.ppSource = r.source;
+    r.assets.forEach(a => { S.dismissed.delete(a.asset_id); S.selected.add(a.asset_id); });
+    saveDismissed();
+    S.ppSource = r.source;
     await refreshAssets();
     if (r.assets.length) setCurrent(r.assets[r.assets.length - 1].asset_id);
     toast(`${r.assets.length} RAW source(s) ready${r.skipped.length ? `, ${r.skipped.length} skipped: ${r.skipped[0].reason}` : ""}`);
@@ -321,17 +353,30 @@ async function uploadFiles(files) {
         src = (await api(`/sources/uploads/${init.upload_id}/complete`, { method: "POST" })).source;
       }
       msg.textContent = init.duplicate ? "already on the server" : "ready"; msg.className = "okc";
+      S.dismissed.delete(src.asset_id); saveDismissed();
       S.selected.add(src.asset_id);
       await refreshAssets();
       setCurrent(src.asset_id);
     } catch (e) { msg.textContent = e.message; msg.className = "err"; }
   }
 }
+function clearPreviewStage() {
+  pvSeq++; clearTimeout(pvTimer); resetPvState();
+  ["#pv_t", "#pv_b"].forEach(q => { const i = $(q); if (i) { i.removeAttribute("src"); i.hidden = true; i.classList.remove("stale"); } });
+  const c = $("#pv_c"); if (c) c.hidden = true;
+  const b = $("#busy"); if (b) b.textContent = "";
+  const emp = $("#empty"); if (emp) emp.hidden = false;
+  const st = $("#stage"); if (st) st.style.height = "";
+  const info = $("#pvinfo"); if (info) info.textContent = "Previews are real renders at reduced size and are not export quality.";
+}
 async function refreshAssets() {
   const r = await api("/sources?count=500");
-  S.assets = r.items;
+  S.allSourceCount = r.items.length;
+  S.assets = r.items.filter(a => !S.dismissed.has(a.asset_id));
+  for (const id of [...S.selected]) if (!S.assets.some(a => a.asset_id === id)) S.selected.delete(id);
   if (!S.current || !S.assets.find(a => a.asset_id === S.current)) S.current = S.assets.length ? S.assets[0].asset_id : null;
-  renderAssets(); schedulePreview();
+  if (!S.current) clearPreviewStage();
+  renderAssets(); syncRotateUi(); if (S.current) schedulePreview();
 }
 /* The preview always follows the frame the user last touched; the previous frame's picture is cleared, never left standing. */
 function setCurrent(id) {
@@ -344,28 +389,71 @@ function setCurrent(id) {
     const c = $("#pv_c"); if (c) c.hidden = true;
     const info = $("#pvinfo"); if (info) info.textContent = "Rendering the preview of the selected frame…";
   }
-  renderAssets(); schedulePreview(true);
+  renderAssets(); syncRotateUi(); schedulePreview(true);
 }
-function selectAll(on) { S.selected = new Set(on ? S.assets.filter(a => a.eligible).map(a => a.asset_id) : []); renderAssets(); updateDevelop(); }
+function selectAll(on) {
+  S.selected = new Set(on ? S.assets.filter(a => a.eligible).map(a => a.asset_id) : []);
+  renderAssets(); updateDevelop();
+}
+function clearAssets() {
+  if (S.cropMode) endCrop(false);
+  S.assets.forEach(a => S.dismissed.add(a.asset_id));
+  saveDismissed();
+  S.assets = [];
+  S.selected.clear();
+  S.current = null;
+  if (PP.chosen.size) { PP.chosen.clear(); if ($("#pp_photos") && $("#pp_photos").children.length) ppRender(); }
+  const upl = $("#uplist"); if (upl) upl.replaceChildren();
+  clearPreviewStage();
+  renderAssets(); syncRotateUi();
+  toast("Cleared selected photos");
+}
+function removeAsset(id) {
+  if (S.cropMode && S.current === id) endCrop(false);
+  S.dismissed.add(id);
+  saveDismissed();
+  S.selected.delete(id);
+  S.assets = S.assets.filter(a => a.asset_id !== id);
+  if (S.current === id) {
+    S.current = S.assets.length ? S.assets[0].asset_id : null;
+    if (!S.current) clearPreviewStage();
+    else setCurrent(S.current);
+  }
+  renderAssets(); syncRotateUi();
+}
+async function restoreAssets() {
+  S.dismissed.clear();
+  saveDismissed();
+  await refreshAssets();
+  toast(`Restored ${S.assets.length} photo(s)`);
+}
 const thumbs = {};
 function renderAssets() {
   const box = $("#assets"); if (!box) return;
   box.replaceChildren(...S.assets.map(a => {
-    const m = a.meta || {}, sel = S.selected.has(a.asset_id);
+    const m = a.meta || {}, sel = S.selected.has(a.asset_id), rot = S.rotates[a.asset_id] ? normDeg(S.rotates[a.asset_id]) : 0;
     const th = h("div", { class: "th" }, thumbs[a.asset_id] ? null : "…");
     if (thumbs[a.asset_id]) th.style.backgroundImage = `url(${thumbs[a.asset_id]})`;
     else if (!(a.asset_id in thumbs)) loadThumb(a.asset_id);
+    const rmBtn = h("button", { type: "button", class: "rm", title: "Remove from workspace",
+      onclick: ev => { ev.stopPropagation(); removeAsset(a.asset_id); } }, "×");
     const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), role: "button", tabindex: "0", "aria-pressed": String(sel),
-      title: "Click: show in the preview · tick: include in Develop" },
-      th, h("span", { class: "tick", title: "Include in Develop" }, sel ? "✓" : ""),
-      h("div", { class: "meta" }, h("b", {}, a.filename, S.crops[a.asset_id] ? " ✂" : ""), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
+      title: "Click: show in the preview · tick: include in Develop · ×: remove from workspace" },
+      th, h("span", { class: "tick", title: "Include in Develop" }, sel ? "✓" : ""), rmBtn,
+      h("div", { class: "meta" }, h("b", {}, a.filename, S.crops[a.asset_id] ? " ✂" : "", rot ? ` ⟳${rot}°` : ""), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
         (m.warnings || []).length ? h("span", { class: "err" }, " ⚠ " + m.warnings[0]) : null));
     const toggle = () => { sel ? S.selected.delete(a.asset_id) : S.selected.add(a.asset_id); renderAssets(); updateDevelop(); };
     el.addEventListener("click", ev => { if (ev.target.classList.contains("tick")) toggle(); else { if (S.cropMode && a.asset_id !== S.current) endCrop(false); setCurrent(a.asset_id); } });
     el.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); toggle(); } if (e.key === "Enter") { e.preventDefault(); setCurrent(a.asset_id); } });
     return el;
   }));
-  $("#selcount").textContent = `${S.selected.size} of ${S.assets.length} selected for Develop · click a frame to preview it, tick to include it`;
+  const desel = $("#deselectbtn"), clr = $("#clearbtn"), rest = $("#restorebtn");
+  if (desel) desel.disabled = S.selected.size === 0;
+  if (clr) clr.disabled = S.assets.length === 0 && S.selected.size === 0 && PP.chosen.size === 0;
+  if (rest) { rest.hidden = !(S.assets.length === 0 && S.allSourceCount > 0); rest.textContent = `Restore ${S.allSourceCount} archived`; }
+  $("#selcount").textContent = S.assets.length
+    ? `${S.selected.size} of ${S.assets.length} selected for Develop · click a frame to preview it, tick to include it`
+    : "Workspace empty · choose RAWs from Upload, PhotoPrism or M-Film rolls";
   updateDevelop();
 }
 async function loadThumb(id) {
@@ -540,6 +628,7 @@ function syncControls() {
   ["#sl_grain", "#sl_halation", "#sl_softness", "#sl_develop"].forEach(q => { const i = $(q); if (i) i.disabled = none; });
   if ($("#filterstr")) { $("#filterstr").disabled = S.tone.filter === "none"; $("#filter").value = S.tone.filter; }
   if ($("#wbsel")) { renderWb(); }
+  syncRotateUi();
 }
 
 /* ---------------- step 5: real-time preview + adjustments ---------------- */
@@ -570,6 +659,7 @@ const pvState = {
   neutralPx: null,
   noFxPx: null, baseFxStrength: 0,
   noLookPx: null, baseLookStrength: 1,
+  baseRotate: 0, workCanvas: null,
   outImageData: null,
   grain: null, grainKey: "",
   meta: null
@@ -577,6 +667,7 @@ const pvState = {
 function resetPvState() {
   pvState.w = pvState.h = 0;
   pvState.filmImageData = pvState.filmPx = pvState.neutralPx = pvState.noFxPx = pvState.noLookPx = pvState.outImageData = null;
+  pvState.baseRotate = 0;
   pvState.meta = null;
 }
 function extractPixels(img) {
@@ -608,10 +699,43 @@ function scheduleLiveTone() {
   liveRaf = requestAnimationFrame(() => { liveRaf = 0; renderLiveTone(); });
 }
 
+function putWithLiveRotation(c, ctx, imgData) {
+  const deltaRot = normDeg(curRotate() - (pvState.baseRotate || 0));
+  const b = $("#pv_b");
+  if (Math.abs(deltaRot) < 0.01) {
+    const resized = c.width !== pvState.w || c.height !== pvState.h;
+    if (resized) { c.width = pvState.w; c.height = pvState.h; fitStage(c); }
+    ctx.putImageData(imgData, 0, 0);
+    if (b) b.style.transform = "";
+    return false;
+  }
+  if (!pvState.workCanvas) pvState.workCanvas = document.createElement("canvas");
+  const wc = pvState.workCanvas;
+  if (wc.width !== pvState.w || wc.height !== pvState.h) { wc.width = pvState.w; wc.height = pvState.h; }
+  wc.getContext("2d").putImageData(imgData, 0, 0);
+  const q = Math.round(deltaRot / 90) * 90;
+  const rem = deltaRot - q;
+  const swap = Math.abs((q / 90) % 2) === 1;
+  const bw = swap ? pvState.h : pvState.w, bh = swap ? pvState.w : pvState.h;
+  const radRem = Math.abs(rem * Math.PI / 180);
+  const cosA = Math.cos(radRem), sinA = Math.sin(radRem);
+  const s = Math.abs(rem) >= 0.01 ? Math.min(bw / (bw * cosA + bh * sinA), bh / (bw * sinA + bh * cosA)) : 1;
+  const cw = Math.max(16, Math.round(bw * s)), ch = Math.max(16, Math.round(bh * s));
+  const resized = c.width !== cw || c.height !== ch;
+  if (resized) { c.width = cw; c.height = ch; fitStage(c); }
+  ctx.save();
+  ctx.clearRect(0, 0, cw, ch);
+  ctx.translate(cw / 2, ch / 2);
+  ctx.rotate(deltaRot * Math.PI / 180);
+  ctx.drawImage(wc, -pvState.w / 2, -pvState.h / 2);
+  ctx.restore();
+  if (b) b.style.transform = `rotate(${deltaRot}deg)`;
+  return true;
+}
+
 function renderLiveTone() {
   const c = $("#pv_c");
   if (!c || !pvState.filmPx || !pvState.w || !pvState.h) return;
-  if (c.width !== pvState.w || c.height !== pvState.h) { c.width = pvState.w; c.height = pvState.h; }
   const ctx = c.getContext("2d");
   const T = S.tone;
   const dev = S.film === "none" ? 1 : T.develop;
@@ -622,8 +746,8 @@ function renderLiveTone() {
   const lookScale = hasLookDelta ? (S.strength / pvState.baseLookStrength) : 1;
 
   if (dev === 1 && ev === 0 && con === 0 && (flt === "none" || fstr <= 0) && !hasFxDelta && !hasLookDelta) {
-    ctx.putImageData(pvState.filmImageData, 0, 0);
-    updatePvInfo(false);
+    const rotChanged = putWithLiveRotation(c, ctx, pvState.filmImageData);
+    updatePvInfo(rotChanged);
     return;
   }
 
@@ -705,16 +829,18 @@ function renderLiveTone() {
       out[p + 3] = 255;
     }
   }
-  ctx.putImageData(pvState.outImageData, 0, 0);
+  putWithLiveRotation(c, ctx, pvState.outImageData);
   updatePvInfo(true);
 }
 
 function updatePvInfo(liveAdjusted) {
   const info = $("#pvinfo"), m = pvState.meta;
   if (!info || !m) return;
+  const rot = curRotate();
   info.replaceChildren(
     h("span", {}, "recipe ", m.hash.slice(0, 12)),
     h("span", {}, `${m.width}×${m.height}px preview`),
+    rot ? h("span", { style: "color:var(--safe2)" }, `rotated ${rot > 0 ? "+" : ""}${rot}°`) : null,
     h("span", {}, `${m.elapsed_s}s${m.cached ? " (cached)" : ""}`),
     liveAdjusted ? h("span", { style: "color:var(--safe2)" }, "live adjustments active") : null,
     h("span", {}, "not export quality"));
@@ -805,20 +931,138 @@ function previewPanel() {
   cut.addEventListener("pointerdown", e => { cut.setPointerCapture(e.pointerId); cut.addEventListener("pointermove", move); });
   cut.addEventListener("pointerup", () => cut.removeEventListener("pointermove", move));
   cut.addEventListener("keydown", e => { if (e.key === "ArrowLeft") setCut(pos - 3); if (e.key === "ArrowRight") setCut(pos + 3); });
+  const rotGroup = h("span", { class: "rot-group", role: "group", "aria-label": "Rotate photograph" },
+    h("button", { type: "button", id: "rot_ccw", onclick: () => stepRotate(-90), title: "Rotate 90° counter-clockwise (left)" }, "↶ −90°"),
+    h("button", { type: "button", id: "rot_cw", onclick: () => stepRotate(90), title: "Rotate 90° clockwise (right)" }, "↷ +90°"),
+    h("select", { id: "rotpreset", "aria-label": "Rotation angle", title: "Select rotation angle", onchange: e => setRotate(Number(e.target.value), false) },
+      h("option", { value: "0" }, "0° (upright)"),
+      h("option", { value: "90" }, "90° ↷ (right)"),
+      h("option", { value: "180" }, "180° (flip)"),
+      h("option", { value: "-90" }, "−90° ↶ (270° left)")),
+    h("input", { type: "number", id: "rotdeg", min: -180, max: 180, step: 0.5, value: 0, "aria-label": "Rotation angle in degrees",
+      title: "Rotation angle in degrees (-180° to +180°)",
+      oninput: e => setRotate(Number(e.target.value) || 0, true),
+      onchange: e => setRotate(Number(e.target.value) || 0, false) }),
+    h("span", { class: "dim", style: "font:.75rem var(--mono);padding-right:.2rem" }, "°"),
+    h("button", { type: "button", id: "rotbtn", "aria-pressed": "false", onclick: toggleRotatePanel, title: "Open fine angle slider and rotation options" }, "⟳ Angle…"));
+  const rotPanel = h("div", { id: "rotctl", class: "rot-panel", hidden: true },
+    h("span", {}, "Rotate / Straighten ", h("b", { id: "rotval", class: "val" }, "0°")),
+    h("button", { type: "button", onclick: () => stepRotate(-90), title: "Rotate 90° counter-clockwise" }, "↶ −90°"),
+    h("button", { type: "button", onclick: () => nudgeRotate(-1), title: "Rotate 1° counter-clockwise" }, "−1°"),
+    h("input", { type: "range", id: "rotslider", min: -45, max: 45, step: 0.1, value: 0, "aria-label": "Fine straighten angle (-45° to +45°)",
+      title: "Fine straighten angle (-45° to +45°). Double-click resets fine angle.",
+      oninput: e => setFineRotate(Number(e.target.value), true),
+      onchange: e => setFineRotate(Number(e.target.value), false),
+      ondblclick: () => setFineRotate(0, false) }),
+    h("button", { type: "button", onclick: () => nudgeRotate(1), title: "Rotate 1° clockwise" }, "+1°"),
+    h("button", { type: "button", onclick: () => stepRotate(90), title: "Rotate 90° clockwise" }, "↷ +90°"),
+    h("button", { type: "button", onclick: () => setRotate(180, false), title: "Rotate 180°" }, "180°"),
+    h("button", { type: "button", onclick: () => setRotate(0, false), title: "Reset rotation to 0°" }, "Reset 0°"),
+    h("button", { type: "button", onclick: rotateAll, title: "Apply this rotation angle to all selected frames" }, "Apply to all selected"));
   return h("div", {}, h("div", { class: "bar", style: "margin:0 0 .6rem" },
     h("label", { for: "pvsize", style: "margin:0" }, "Preview size"), h("select", { id: "pvsize", style: "width:auto", onchange: () => schedulePreview(true) },
       h("option", { value: 1280 }, "1280 px (default)"), h("option", { value: 720 }, "720 px"), h("option", { value: 2048 }, "2048 px")),
     h("button", { onclick: () => schedulePreview(true) }, "Refresh preview"),
+    rotGroup,
     h("button", { id: "cropbtn", "aria-pressed": "false", onclick: toggleCrop, title: "Frame this photograph" }, "✂ Crop"),
     h("span", { id: "cropctl", hidden: true, class: "bar", style: "margin:0;gap:.4rem" },
       h("select", { id: "aspect", "aria-label": "Crop proportions", style: "width:auto", onchange: e => { S.aspect = e.target.value; refit(); } },
         ["free", "original", "1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"].map(a => h("option", { value: a }, a === "free" ? "Free" : a === "original" ? "Original ratio" : a))),
-      h("button", { onclick: flipCrop, title: "Swap landscape / portrait" }, "⟲ Rotate ratio"), h("button", { class: "primary", onclick: () => endCrop(true) }, "Done"),
+      h("button", { onclick: flipCrop, title: "Swap landscape / portrait crop ratio" }, "⇄ Swap ratio"), h("button", { class: "primary", onclick: () => endCrop(true) }, "Done"),
       h("button", { onclick: () => endCrop(false) }, "Cancel"), h("button", { onclick: resetCrop }, "Reset"),
       h("button", { onclick: cropAll, title: "Give every selected frame this framing" }, "Apply to all selected")),
     h("span", { class: "dim", id: "wipelabel" }, "left of the line: original (neutral) · right: treated")),
+    rotPanel,
     stage, h("div", { class: "pvinfo", id: "pvinfo" }, "Previews are real renders at reduced size and are not export quality."));
 }
+
+function rotateCropBox90(r, kCw) {
+  const k = ((kCw % 4) + 4) % 4;
+  if (!r || k === 0) return r;
+  if (k === 1) return clampRect({ x: +(1 - r.y - r.h).toFixed(4), y: +r.x.toFixed(4), w: +r.h.toFixed(4), h: +r.w.toFixed(4) });
+  if (k === 2) return clampRect({ x: +(1 - r.x - r.w).toFixed(4), y: +(1 - r.y - r.h).toFixed(4), w: +r.w.toFixed(4), h: +r.h.toFixed(4) });
+  return clampRect({ x: +r.y.toFixed(4), y: +(1 - r.x - r.w).toFixed(4), w: +r.h.toFixed(4), h: +r.w.toFixed(4) });
+}
+function toggleRotatePanel() {
+  S.rotOpen = !S.rotOpen;
+  const p = $("#rotctl"), b = $("#rotbtn");
+  if (p) p.hidden = !S.rotOpen;
+  if (b) b.setAttribute("aria-pressed", String(S.rotOpen));
+  syncRotateUi();
+}
+function syncRotateUi() {
+  const rot = curRotate();
+  const q = Math.round(rot / 90) * 90;
+  const rem = +(rot - q).toFixed(2);
+  const sel = $("#rotpreset"), deg = $("#rotdeg"), sl = $("#rotslider"), val = $("#rotval"), btn = $("#rotbtn");
+  if (sel) {
+    const std = ["0", "90", "180", "-90"];
+    const sVal = String(rot);
+    let customOpt = sel.querySelector("option[data-custom='1']");
+    if (std.includes(sVal)) {
+      if (customOpt) customOpt.remove();
+      sel.value = sVal;
+    } else {
+      if (!customOpt) { customOpt = h("option", { "data-custom": "1" }); sel.append(customOpt); }
+      customOpt.value = sVal;
+      customOpt.textContent = `${rot > 0 ? "+" : ""}${rot}° (custom)`;
+      sel.value = sVal;
+    }
+  }
+  if (deg && document.activeElement !== deg) deg.value = rot;
+  if (sl) sl.value = Math.max(-45, Math.min(45, rem));
+  if (val) val.textContent = `${rot > 0 ? "+" : ""}${rot}°`;
+  if (btn) btn.textContent = rot ? `⟳ ${rot > 0 ? "+" : ""}${rot}°` : "⟳ Angle…";
+}
+function setRotate(deg, liveOnly = false) {
+  if (!S.current) { toast("Choose a frame first"); return; }
+  const prev = curRotate();
+  const next = normDeg(deg);
+  const delta = normDeg(next - prev);
+  if (next === 0) delete S.rotates[S.current];
+  else S.rotates[S.current] = next;
+  if (delta !== 0 && Math.abs(delta % 90) < 0.01) {
+    const kCw = Math.round(delta / 90);
+    if (S.crops[S.current]) { S.crops[S.current] = rotateCropBox90(S.crops[S.current], kCw); saveCrops(); }
+    if (S.cropRect) S.cropRect = rotateCropBox90(S.cropRect, kCw);
+  }
+  saveRotates();
+  syncRotateUi();
+  renderAssets();
+  scheduleLiveTone();
+  if (S.cropMode) {
+    if (!liveOnly) startCrop();
+  } else {
+    schedulePreview(!liveOnly && Math.abs(delta % 90) < 0.01);
+  }
+}
+function stepRotate(stepDeg) {
+  if (!S.current) return toast("Choose a frame first");
+  setRotate(curRotate() + stepDeg, false);
+}
+function nudgeRotate(stepDeg) {
+  if (!S.current) return toast("Choose a frame first");
+  setRotate(curRotate() + stepDeg, false);
+}
+function setFineRotate(fineDeg, liveOnly = false) {
+  if (!S.current) return toast("Choose a frame first");
+  const cur = curRotate();
+  const q = Math.round(cur / 90) * 90;
+  setRotate(q + Number(fineDeg || 0), liveOnly);
+}
+function rotateAll() {
+  if (!S.current) return toast("Choose a frame first");
+  const r = curRotate();
+  const targets = S.selected.size ? [...S.selected] : [S.current];
+  targets.forEach(id => {
+    if (r === 0) delete S.rotates[id];
+    else S.rotates[id] = r;
+  });
+  saveRotates();
+  renderAssets();
+  toast(`Rotation ${r > 0 ? "+" : ""}${r}° set on ${targets.length} frame(s)`);
+}
+
 function schedulePreview(now) {
   const c = $("#pv_c"); if (!c) return;
   clearTimeout(pvTimer);
@@ -844,7 +1088,7 @@ async function runPreview() {
   if (!S.current) { $("#empty").hidden = false; return; }
   if (S.cropMode) return;                                  // the cropper shows the whole frame, not a render
   const seq = ++pvSeq, edge = Number($("#pvsize").value), busy = $("#busy");
-  const snapFxStrength = S.fxStrength, snapLookStrength = S.strength;
+  const snapFxStrength = S.fxStrength, snapLookStrength = S.strength, snapRotate = curRotate();
   const hasFx = S.fxPreset !== "none" || S.fx.size > 0;
   const hasLook = S.look !== "neutral";
   const needsSeparateNeutral = S.film !== "none" && (hasLook || hasFx || wbExt() !== null);
@@ -852,7 +1096,9 @@ async function runPreview() {
   try {
     const reqs = [
       api("/previews", { method: "POST", json: { asset_id: S.current, recipe: baseRecipe(), max_edge: edge, stream: "main" } }),
-      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main", white_balance: S.wb, ...(S.crops[S.current] ? { crop: S.crops[S.current] } : {}) } })
+      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main", white_balance: S.wb,
+        ...(S.crops[S.current] ? { crop: S.crops[S.current] } : {}),
+        ...(snapRotate ? { rotate: snapRotate } : {}) } })
     ];
     if (needsSeparateNeutral) {
       reqs.push(api("/previews", { method: "POST", json: { asset_id: S.current, recipe: baseRecipe({ noFilm: true }), max_edge: edge, stream: "main-nofilm" } }));
@@ -886,6 +1132,7 @@ async function runPreview() {
     pvState.neutralPx = nData ? nData.data : null;
     pvState.baseFxStrength = hasFx ? snapFxStrength : 0;
     pvState.baseLookStrength = hasLook ? snapLookStrength : 1;
+    pvState.baseRotate = snapRotate;
     if (!hasFx) pvState.noFxPx = fData.data;
     if (!hasLook) pvState.noLookPx = fData.data;
     pvState.meta = { hash: pt.recipe_hash, width: st.width, height: st.height, elapsed_s: st.elapsed_s, cached: st.cached };
@@ -895,7 +1142,7 @@ async function runPreview() {
     c.hidden = false;
     renderLiveTone();
     fitStage(c);
-    if (u2) { b.src = u2; b.hidden = false; }
+    if (u2) { b.style.transform = ""; b.src = u2; b.hidden = false; }
     busy.textContent = "";
 
     /* Pre-warm reference baselines for real-time slider interpolation of Effects strength & Look intensity */
@@ -958,7 +1205,8 @@ async function startCrop() {
   lay.hidden = false; lay.replaceChildren(h("span", { class: "dim" }, "loading the whole frame…")); $("#busy").textContent = "";
   try {
     const edge = Math.max(Number($("#pvsize").value), 1280);
-    const p = await api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: Math.min(edge, 2048), stream: "crop", white_balance: S.wb } });
+    const rot = curRotate();
+    const p = await api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: Math.min(edge, 2048), stream: "crop", white_balance: S.wb, ...(rot ? { rotate: rot } : {}) } });
     const st = await pollPreview(p.preview_id);
     if (st.status !== "DONE") throw new Error(st.error_code || st.status);
     const url = await imgUrl(p.preview_id); if (!S.cropMode) return;
@@ -1084,7 +1332,11 @@ async function develop() {
     const o = [...origins][0];
     const source = o === "photoprism" ? { kind: S.ppSource && S.ppSource.kind === "album" ? "photoprism_album" : "photoprism_folder", ...(S.ppSource ? { source_uid: S.ppSource.uid } : {}) }
       : o === "camera_roll" ? { kind: "mfilm_roll", ...(S.ppSource ? { source_uid: S.ppSource.uid } : {}) } : { kind: "upload" };
-    const j = await api("/jobs", { method: "POST", json: { schema_version: 1, source: { ...source, assets: assets.map(a => ({ asset_id: a.asset_id, ...(S.crops[a.asset_id] ? { crop: S.crops[a.asset_id] } : {}) })) },
+    const j = await api("/jobs", { method: "POST", json: { schema_version: 1, source: { ...source, assets: assets.map(a => ({
+      asset_id: a.asset_id,
+      ...(S.crops[a.asset_id] ? { crop: S.crops[a.asset_id] } : {}),
+      ...(S.rotates[a.asset_id] && normDeg(S.rotates[a.asset_id]) ? { rotate: normDeg(S.rotates[a.asset_id]) } : {})
+    })) },
       recipe: recipe(false), output: outputSpec() } });
     toast(`Job queued (${j.total} frame${j.total === 1 ? "" : "s"})`); refreshJobs();
   } catch (e) { toast(e.message); }
@@ -1119,7 +1371,7 @@ function jobCard(j) {
   if (j.counts.FAILED || j.counts.CANCELLED) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/retry`, { method: "POST" }); refreshJobs(); } }, "Retry failed / cancelled"));
   if (j.counts.COMPLETE) acts.append(h("a", { class: "btn", href: `${API}/jobs/${j.job_id}/zip`, download: "" }, `Download ZIP (${j.counts.COMPLETE})`));
   return h("div", { class: "job" }, h("header", {}, st, h("b", {}, j.film), h("span", { class: "dim" }, `${j.camera_look} · recipe ${j.recipe_hash.slice(0, 10)} · ${j.created_at.slice(0, 19).replace("T", " ")}`)),
-    h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename, i.crop ? " ✂" : ""),
+    h("div", { class: "items" }, j.items.map(i => h("div", {}, h("span", {}, i.filename, i.crop ? " ✂" : "", i.rotate ? ` ⟳${i.rotate}°` : ""),
       i.published_path ? h("span", { class: i.state === "COMPLETE" ? "okc" : "dim", title: i.publish_note || i.published_path }, i.state === "COMPLETE" ? "in PhotoPrism ✓" : i.state.toLowerCase()) : null,
       i.render ? h("a", { href: `${API}/renders/${i.render.render_id}/file`, style: "color:var(--ok)" }, `${i.render.width}×${i.render.height} ↓`)
         : h("span", { class: i.state === "FAILED" ? "err" : "dim", title: i.error_detail || "" }, i.error_code || i.state)))), acts);

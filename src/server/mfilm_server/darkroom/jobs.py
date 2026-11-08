@@ -67,6 +67,7 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict,
     for a in src["assets"]:
         try:
             crops[a["asset_id"]] = cropping.normalize_crop(a.get("crop"))
+            cropping.normalize_rotate(a.get("rotate"))
         except cropping.CropError as e:
             raise JobError("INVALID_CROP", f"{a['asset_id']}: {e}") from None
     rows = []
@@ -160,9 +161,10 @@ def job_view(conn: sqlite3.Connection, job_id: str, *, items: bool = True) -> di
             "album_uid": j["album_uid"]}
     if items:
         view["recipe"] = recipe
-        req_assets = {a["asset_id"]: a.get("crop") for a in json.loads(j["request"])["source"]["assets"]}
-        view["items"] = [{"crop": req_assets.get(r["source_id"]),
-            
+        req_assets = {a["asset_id"]: a for a in json.loads(j["request"])["source"]["assets"]}
+        view["items"] = [{
+            "crop": (req_assets.get(r["source_id"]) or {}).get("crop"),
+            "rotate": (req_assets.get(r["source_id"]) or {}).get("rotate"),
             "item_id": r["id"], "asset_id": r["source_id"], "filename": r["filename"], "ordinal": r["ordinal"],
             "state": r["state"], "attempt": r["attempt"], "error_code": r["error_code"],
             "error_detail": r["error_detail"], "published_path": r["pub_path"], "photoprism_photo_uid": r["pp_photo_uid"],
@@ -257,8 +259,9 @@ def run_one(conn: sqlite3.Connection, store: Store, bundles: Bundles, skip: set[
     src = conn.execute("SELECT * FROM sources WHERE id=?", (item["source_id"],)).fetchone()
     try:
         base = json.loads(job["recipe"])
-        crop = next((a.get("crop") for a in json.loads(job["request"])["source"]["assets"] if a["asset_id"] == src["id"]), None)
-        recipe = recipe2.with_crop(base, crop) if crop else base  # this frame's own framing (else the job-level one, if any)
+        asset_req = next((a for a in json.loads(job["request"])["source"]["assets"] if a["asset_id"] == src["id"]), {})
+        crop, rotate = asset_req.get("crop"), asset_req.get("rotate")
+        recipe = recipe2.with_crop(base, crop, rotate) if (crop or rotate is not None) else base
         rhash = recipe2.recipe_hash(recipe)
         rd = recipe["render"]
         v1 = recipe2.to_v1(recipe, width=int(rd.get("width") or 0), height=int(rd.get("height") or 0))

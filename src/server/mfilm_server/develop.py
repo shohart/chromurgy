@@ -221,10 +221,13 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
                            recipe.get("demosaic_mode", "reference"))
     lin, lens_info = normalize_geometry(input_path, lin)
     lin = upright(lin, flip)
-    if recipe.get("crop"):                        # Web Darkroom crop: first, so every later stage sees the kept picture
+    if recipe.get("rotate") or recipe.get("crop"):  # Web Darkroom rotate + crop: first, so every later stage sees the kept picture
         from .darkroom import cropping
         try:
-            lin = cropping.apply_crop(lin, recipe["crop"])
+            if recipe.get("rotate"):
+                lin = cropping.apply_rotate(lin, recipe["rotate"])
+            if recipe.get("crop"):
+                lin = cropping.apply_crop(lin, recipe["crop"])
         except cropping.CropError as e:
             raise DevelopError("INVALID_CROP", str(e)) from None
     if recipe.get("wb_profile"):                  # Web Darkroom white-balance profile (gains in sRGB-linear)

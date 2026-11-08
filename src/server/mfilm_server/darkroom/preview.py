@@ -38,12 +38,15 @@ def wb_mode(v2: dict) -> str:
 
 
 def preview_key(*, sha: str, kind: str, recipe_hash: str, max_edge: int, bundle_hash: str, wb: str = "daylight",
-                crop: dict | None = None) -> str:
+                crop: dict | None = None, rotate: float | None = None) -> str:
     """Cache identity: source + recipe + engine versions + size (never a file name)."""
-    return hashlib.sha256(canonical_json({
+    doc = {
         "v": "mfilm-preview-v1", "kind": kind, "source": sha, "recipe": recipe_hash, "edge": max_edge,
         "core": core.core_version(), "bundle": bundle_hash, "norm": develop.INPUT_NORMALIZATION,
-        "demosaic": PREVIEW_DEMOSAIC, "wb": wb, "crop": crop})).hexdigest()
+        "demosaic": PREVIEW_DEMOSAIC, "wb": wb, "crop": crop}
+    if rotate:
+        doc["rotate"] = rotate
+    return hashlib.sha256(canonical_json(doc)).hexdigest()
 
 
 def _shrink(img: np.ndarray, edge: int) -> np.ndarray:
@@ -113,17 +116,19 @@ def _render(job: dict) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
     if job["kind"] == "before":
         lin = normalized_small(root, Path(job["src_path"]), job["sha"], job["wb"])
+        lin = cropping.apply_rotate(lin, job.get("rotate"))
         lin = cropping.apply_crop(lin, job.get("crop"))          # same fractions as the full render
         lin = _shrink(lin, job["max_edge"])
         img = _srgb_oetf(lin)
         info = {"scanner_ev": None}
     else:
         v1 = job["v1"]
-        ckey = canonical_json({"sha": job["sha"], "wb": job["wb"], "crop": job.get("crop"), "edge": job["max_edge"],
-                               "wb_profile": v1.get("wb_profile"), "creative": v1.get("creative")}).decode()
+        ckey = canonical_json({"sha": job["sha"], "wb": job["wb"], "rotate": job.get("rotate"), "crop": job.get("crop"),
+                               "edge": job["max_edge"], "wb_profile": v1.get("wb_profile"), "creative": v1.get("creative")}).decode()
         lin = _CREATIVE_CACHE.get(ckey)
         if lin is None:
             lin = normalized_small(root, Path(job["src_path"]), job["sha"], job["wb"])
+            lin = cropping.apply_rotate(lin, job.get("rotate"))
             lin = cropping.apply_crop(lin, job.get("crop"))
             lin = _shrink(lin, job["max_edge"])
             if v1.get("wb_profile"):

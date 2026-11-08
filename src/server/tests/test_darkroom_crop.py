@@ -57,6 +57,34 @@ def test_recipe_carries_the_crop_and_a_crop_changes_identity():
     assert e.value.code == "INVALID_CROP"
 
 
+def test_rotate_normalization_and_geometry():
+    assert cropping.normalize_rotate(None) is None
+    assert cropping.normalize_rotate(0) is None
+    assert cropping.normalize_rotate(360) is None
+    assert cropping.normalize_rotate(90) == 90
+    assert cropping.normalize_rotate(270) == -90
+    assert cropping.normalize_rotate(-180) == 180
+    assert cropping.normalize_rotate(3.456) == 3.46
+    for bad in ("90", True, 500, -400, float("nan")):
+        with pytest.raises(cropping.CropError):
+            cropping.normalize_rotate(bad)
+    img = np.zeros((100, 160, 3), np.float32)
+    img[0, 0] = [1.0, 0.0, 0.0]
+    r90 = cropping.apply_rotate(img, 90)
+    assert r90.shape == (160, 100, 3) and np.allclose(r90[0, -1], [1.0, 0.0, 0.0])
+    rm90 = cropping.apply_rotate(img, -90)
+    assert rm90.shape == (160, 100, 3) and np.allclose(rm90[-1, 0], [1.0, 0.0, 0.0])
+    r5 = cropping.apply_rotate(np.ones((100, 160, 3), np.float32), 5.0)
+    assert r5.shape[0] < 100 and r5.shape[1] < 160 and r5.min() > 0.95
+    from mfilm_server.darkroom import engine
+    b = engine.current_bundle()
+    r = recipe2.default("portra400", b)
+    r_rot = recipe2.with_crop(r, None, rotate=90)
+    assert recipe2.to_v1(r_rot)["rotate"] == 90
+    assert recipe2.recipe_hash(r_rot) != recipe2.recipe_hash(r)
+    assert recipe2.recipe_hash(recipe2.with_crop(r_rot, None, rotate=0)) == recipe2.recipe_hash(r)
+
+
 # ---- through the service --------------------------------------------------------------------------
 pytestmark_real = [pytest.mark.skipif(not core.lib_path().is_file(), reason="needs the built film core"),
                    pytest.mark.skipif(not DNG.is_file(), reason="needs a real CHDK DNG")]

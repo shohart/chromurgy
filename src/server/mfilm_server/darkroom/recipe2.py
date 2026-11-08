@@ -96,6 +96,15 @@ def normalize(recipe: dict, bundle: core.Bundle, wb_lookup=None) -> dict:
             ext["crop"] = canon
         else:
             ext.pop("crop")                                  # the whole frame is no crop: one identity for it
+    if "rotate" in ext:
+        try:
+            canon_rot = cropping.normalize_rotate(ext["rotate"])
+        except cropping.CropError as e:
+            raise RecipeError("INVALID_CROP", str(e)) from None
+        if canon_rot:
+            ext["rotate"] = canon_rot
+        else:
+            ext.pop("rotate")                                # 0° is no rotation: one identity for it
     if ext:
         r["extensions"] = ext
     else:
@@ -255,19 +264,27 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
     crop = ext.get("crop")
     if crop:
         v1["crop"] = crop                         # absent when uncropped: those render ids stay as before
+    rotate = ext.get("rotate")
+    if rotate:
+        v1["rotate"] = rotate                     # absent when unrotated: those render ids stay as before
     if creative:                                  # absent for neutral/no-effect: those render ids stay as before
         v1["creative"] = {"version": VERSION, **creative}
     return v1
 
 
-def with_crop(r: dict, crop: dict | None) -> dict:
-    """Copy of a normalized recipe carrying this frame's crop (None/whole frame = no crop)."""
+def with_crop(r: dict, crop: dict | None, rotate: float | None = None) -> dict:
+    """Copy of a normalized recipe carrying this frame's crop and rotation (None/0 = unchanged)."""
     out = copy.deepcopy(r)
     ext = dict(out.get("extensions") or {})
     ext.pop("crop", None)
     c = cropping.normalize_crop(crop) if crop else None
     if c:
         ext["crop"] = c
+    if rotate is not None:
+        ext.pop("rotate", None)
+        rot = cropping.normalize_rotate(rotate)
+        if rot:
+            ext["rotate"] = rot
     if ext:
         out["extensions"] = ext
     else:

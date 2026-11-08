@@ -233,3 +233,4 @@ def test_two_pane_layout_loader_and_preset_separation_in_ui_assets(client):
     assert ".workspace{" in css.replace(" ", "") and ".pane-right{position:sticky" in css.replace(" ", "")
     assert ".preset-card[aria-pressed=true]" in css.replace(" ", "") and ".fx-divider{" in css.replace(" ", "")
     assert "renderLiveTone" in js and "withLoading" in js and "isCompositeActive" in js
+    assert "clearAssets" in js and "stepRotate" in js and "rotpreset" in js and "rotdeg" in js

@@ -83,6 +83,12 @@
                     "type": "number"
                   }
                 }
+              },
+              "rotate": {
+                "description": "EXTENSION (not in spec v0.5): clockwise rotation of this frame in degrees (-180..360)",
+                "type": "number",
+                "minimum": -360,
+                "maximum": 360
               }
             }
           }
