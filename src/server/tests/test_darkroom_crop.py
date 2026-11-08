@@ -41,6 +41,25 @@ def test_same_fractions_give_the_same_framing_at_every_resolution():
         cropping.apply_crop(np.zeros((100, 100, 3), np.float32), {"x": 0, "y": 0, "w": 0.05, "h": 0.5})   # 5x50 px
 
 
+def test_fit_output_orientation_and_oversize():
+    from mfilm_server import develop
+    # Portrait image 2000x3000
+    portrait = np.zeros((3000, 2000, 3), dtype=np.float32)
+    # 1. Landscape preset 3000x2000 fits rotated to 2000x3000
+    res = develop.fit_output(portrait, 3000, 2000)
+    assert res.shape == (3000, 2000, 3)
+
+    # 2. Downscaled landscape preset 1500x1000 fits rotated to 1000x1500
+    res2 = develop.fit_output(portrait, 1500, 1000)
+    assert res2.shape == (1500, 1000, 3)
+
+    # 3. Oversized preset 4000x3000 raises OUTPUT_LARGER_THAN_SOURCE
+    with pytest.raises(develop.DevelopError) as e:
+        develop.fit_output(portrait, 4000, 3000)
+    assert e.value.code == "OUTPUT_LARGER_THAN_SOURCE"
+
+
+
 def test_recipe_carries_the_crop_and_a_crop_changes_identity():
     from mfilm_server.darkroom import engine
     b = engine.current_bundle()

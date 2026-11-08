@@ -1645,6 +1645,8 @@ function endCrop(apply) {
     const r = S.cropRect, full = r.x < 0.001 && r.y < 0.001 && r.w > 0.998 && r.h > 0.998;
     if (full) delete S.crops[S.current]; else S.crops[S.current] = { x: +r.x.toFixed(4), y: +r.y.toFixed(4), w: +r.w.toFixed(4), h: +r.h.toFixed(4) };
     saveCrops();
+    const curVal = $("#outsize") ? $("#outsize").value : "";
+    if (curVal) checkAndFitOutputSize(curVal, true);
   }
   S.cropMode = false; S.cropRect = null; $("#cropbtn").setAttribute("aria-pressed", "false"); $("#cropctl").hidden = true;
   const lay = $("#cropLayer"); lay.hidden = true; lay.replaceChildren();
@@ -1777,9 +1779,92 @@ function wireCrop(box) {
 }
 
 /* ---------------- develop + jobs ---------------- */
+const OUTPUT_SIZES = [
+  { val: "3000x2000", label: "3000 × 2000 (3:2)", w: 3000, h: 2000 },
+  { val: "2000x1333", label: "2000 × 1333 (3:2)", w: 2000, h: 1333 },
+  { val: "1600x1200", label: "1600 × 1200 (4:3)", w: 1600, h: 1200 },
+  { val: "1200x800",  label: "1200 × 800 (3:2)",  w: 1200, h: 800 },
+  { val: "",          label: "Original size",      w: 0,    h: 0 }
+];
+
+function getAssetEffectiveDimensions(a) {
+  if (!a) return null;
+  const m = a.meta || {};
+  let w = m.width || 0;
+  let h = m.height || 0;
+  if (!w || !h) return null;
+  const crop = S.crops[a.asset_id];
+  if (crop && crop.w > 0 && crop.h > 0) {
+    w = Math.round(w * crop.w);
+    h = Math.round(h * crop.h);
+  }
+  const rot = S.rotates[a.asset_id] ? normDeg(S.rotates[a.asset_id]) : 0;
+  if (rot === 90 || rot === 270) {
+    const t = w; w = h; h = t;
+  }
+  return { w, h, maxEdge: Math.max(w, h), minEdge: Math.min(w, h) };
+}
+
+function checkAndFitOutputSize(requestedVal, showWarning = true) {
+  if (!requestedVal) {
+    S.width = 0; S.height = 0;
+    const sel = $("#outsize");
+    if (sel && sel.value !== "") sel.value = "";
+    return "";
+  }
+  const [reqW, reqH] = requestedVal.split("x").map(Number);
+  const reqMax = Math.max(reqW, reqH);
+  const reqMin = Math.min(reqW, reqH);
+
+  const targetAssets = S.selected.size ?
+    [...S.selected].map(id => S.assets.find(a => a.asset_id === id)).filter(Boolean) :
+    (S.current ? [S.assets.find(a => a.asset_id === S.current)].filter(Boolean) : []);
+
+  let minMaxEdge = Infinity, minMinEdge = Infinity;
+  for (const a of targetAssets) {
+    const d = getAssetEffectiveDimensions(a);
+    if (d) {
+      if (d.maxEdge < minMaxEdge) minMaxEdge = d.maxEdge;
+      if (d.minEdge < minMinEdge) minMinEdge = d.minEdge;
+    }
+  }
+
+  if (minMaxEdge < Infinity && (reqMax > minMaxEdge || reqMin > minMinEdge)) {
+    const reqIdx = OUTPUT_SIZES.findIndex(s => s.val === requestedVal);
+    const searchSlice = reqIdx >= 0 ? OUTPUT_SIZES.slice(reqIdx + 1) : OUTPUT_SIZES;
+    const fit = searchSlice.find(s => {
+      if (!s.val) return true;
+      const sMax = Math.max(s.w, s.h);
+      const sMin = Math.min(s.w, s.h);
+      return sMax <= minMaxEdge && sMin <= minMinEdge;
+    }) || OUTPUT_SIZES[OUTPUT_SIZES.length - 1];
+
+    const sel = $("#outsize");
+    if (sel) sel.value = fit.val;
+    [S.width, S.height] = fit.val ? fit.val.split("x").map(Number) : [0, 0];
+
+    if (showWarning) {
+      const origOpt = OUTPUT_SIZES.find(s => s.val === requestedVal);
+      const origLabel = origOpt ? origOpt.label : `${reqW}×${reqH}`;
+      const assetDesc = targetAssets.length > 1 ? "одного из выбранных кадров" : "кадра";
+      toast(`⚠️ Размер ${origLabel} превышает разрешение ${assetDesc} (${minMaxEdge}×${minMinEdge}). Автоматически выбран: ${fit.label}.`);
+    }
+    return fit.val;
+  }
+
+  [S.width, S.height] = [reqW, reqH];
+  const sel = $("#outsize");
+  if (sel && sel.value !== requestedVal) sel.value = requestedVal;
+  return requestedVal;
+}
+
 function developPanel() {
-  const sizeSel = h("select", { id: "outsize", onchange: e => { const v = e.target.value; [S.width, S.height] = v ? v.split("x").map(Number) : [0, 0]; schedulePreview(); } },
-    h("option", { value: "" }, "Original size"), h("option", { value: "3000x2000" }, "3000 × 2000 (3:2)"), h("option", { value: "2000x1333" }, "2000 × 1333 (3:2)"), h("option", { value: "1600x1200" }, "1600 × 1200 (4:3)"));
+  const sizeSel = h("select", { id: "outsize", onchange: e => { checkAndFitOutputSize(e.target.value, true); schedulePreview(); } },
+    h("option", { value: "" }, "Original size"),
+    h("option", { value: "3000x2000" }, "3000 × 2000 (3:2)"),
+    h("option", { value: "2000x1333" }, "2000 × 1333 (3:2)"),
+    h("option", { value: "1600x1200" }, "1600 × 1200 (4:3)"),
+    h("option", { value: "1200x800" }, "1200 × 800 (3:2)"));
   return h("div", { style: "margin-top:1.4rem" }, h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Develop (full size, from the original RAW)"),
     h("div", { class: "row3" }, h("div", {}, h("label", { for: "outsize" }, "Output size (never upscaled)"), sizeSel),
       h("div", {}, h("label", { for: "q" }, "JPEG quality"), h("input", { type: "number", id: "q", min: 1, max: 100, value: 92, onchange: e => { S.quality = Number(e.target.value); } })),
@@ -1818,6 +1903,9 @@ function outputSpec() {
 async function develop() {
   try {
     const assets = [...S.selected].map(id => S.assets.find(a => a.asset_id === id)).filter(Boolean);
+    if (!assets.length) return toast("Select at least one frame to develop");
+    const curVal = $("#outsize") ? $("#outsize").value : (S.width && S.height ? `${S.width}x${S.height}` : "");
+    if (curVal) checkAndFitOutputSize(curVal, true);
     const origins = new Set(assets.map(a => a.origin));
     if (origins.size > 1) return toast("Develop frames from one kind of source per job (uploads, PhotoPrism or a roll)");
     const o = [...origins][0];

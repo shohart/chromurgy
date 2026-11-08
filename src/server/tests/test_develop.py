@@ -84,3 +84,4 @@ def test_errors(tmp_path, bundle):
 def test_cli_json_error(capsys):
     assert develop.main(["--input", str(SAMPLE), "--output", "/nonexistent/x.jpg", "--profile", "nope", "--json"]) == 1
     assert json.loads(capsys.readouterr().out) == {"ok": False, "error_code": "UNSUPPORTED_PROFILE", "detail": "nope"}
+

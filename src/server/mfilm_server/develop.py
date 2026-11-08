@@ -126,6 +126,9 @@ def fit_output(img: np.ndarray, width: int, height: int) -> np.ndarray:
     h, w, _ = img.shape
     if not width and not height:
         return img
+    if (h > w and width > height) or (w > h and height > width):
+        if max(width, height) <= max(w, h) and min(width, height) <= min(w, h):
+            width, height = height, width
     if width > w or height > h:
         raise DevelopError("OUTPUT_LARGER_THAN_SOURCE", f"requested {width}x{height}, source {w}x{h}")
     if width * h != height * w:
