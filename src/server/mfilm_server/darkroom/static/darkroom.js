@@ -79,7 +79,7 @@ const S = { catalog: null, assets: [], allSourceCount: 0, selected: new Set(), c
   crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"),
   rotates: JSON.parse(localStorage.getItem("mfilm.rotates") || "{}"), rotOpen: false,
   aspect: "free", cropMode: false, cropRect: null, cropImg: null };
-const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "My presets", "Preview · Develop"];
+const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "My presets"];
 
 function saveDismissed() {
   try { localStorage.setItem("mfilm.dismissed", JSON.stringify([...S.dismissed])); } catch (e) {}
@@ -284,8 +284,69 @@ function switchRightTab(tabId) {
   if (paneJobs) paneJobs.hidden = tabId !== "jobs";
 }
 
+function getCollapsedSteps() {
+  try {
+    const raw = localStorage.getItem("mfilm.collapsed_steps");
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { return []; }
+}
+function setStepCollapsedState(n, isCollapsed) {
+  try {
+    const list = new Set(getCollapsedSteps());
+    if (isCollapsed) list.add(n); else list.delete(n);
+    localStorage.setItem("mfilm.collapsed_steps", JSON.stringify([...list]));
+  } catch (e) {}
+}
+
+function toggleStep(n, sec, arrow, bodyEl) {
+  const isCollapsed = sec.classList.toggle("collapsed");
+  bodyEl.hidden = isCollapsed;
+  const h2 = sec.querySelector("h2");
+  if (h2) h2.setAttribute("aria-expanded", String(!isCollapsed));
+  if (arrow) arrow.textContent = isCollapsed ? "◂" : "▾";
+  setStepCollapsedState(n, isCollapsed);
+}
+
+function expandStep(n) {
+  const sec = $("#s" + n);
+  if (!sec) return;
+  if (sec.classList.contains("collapsed")) {
+    const h2 = sec.querySelector("h2");
+    if (h2) h2.click();
+  }
+}
+
 function step(n, title, hint, ...body) {
-  return h("section", { class: "step", id: "s" + n }, h("h2", {}, h("span", { class: "n" }, n), title, hint ? h("span", { class: "hint" }, hint) : null), body);
+  const isCollapsible = n >= 1 && n <= 5;
+  if (!isCollapsible) {
+    return h("section", { class: "step", id: "s" + n },
+      h("h2", {}, h("span", { class: "n" }, n), title, hint ? h("span", { class: "hint" }, hint) : null),
+      body
+    );
+  }
+  const bodyEl = h("div", { class: "step-body" }, body);
+  const isCollapsed = getCollapsedSteps().includes(n);
+  if (isCollapsed) bodyEl.hidden = true;
+
+  const arrow = h("span", { class: "step-arrow", "aria-hidden": "true" }, isCollapsed ? "◂" : "▾");
+  const h2 = h("h2", {
+    role: "button",
+    tabindex: "0",
+    "aria-expanded": String(!isCollapsed),
+    title: "Click to collapse or expand section"
+  }, h("span", { class: "n" }, n), title, hint ? h("span", { class: "hint" }, hint) : null, arrow);
+
+  const sec = h("section", { class: "step collapsible" + (isCollapsed ? " collapsed" : ""), id: "s" + n }, h2, bodyEl);
+
+  h2.addEventListener("click", () => toggleStep(n, sec, arrow, bodyEl));
+  h2.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleStep(n, sec, arrow, bodyEl);
+    }
+  });
+
+  return sec;
 }
 async function boot() {
   try { S.catalog = await api("/catalog"); } catch (e) { if (e.status !== 401) toast(e.message); return; }
@@ -293,7 +354,7 @@ async function boot() {
   try { const c = await api("/combos"); S.combos = c.items || []; } catch (e) { S.combos = []; }
   if (!S.film) S.film = S.catalog.films.find(f => f.id === "portra400") ? "portra400" : S.catalog.films[0].id;
   $("#logout").hidden = false;
-  $("#steps").replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1) }, h("b", {}, i + 1), t)));
+  $("#steps").replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1), onclick: () => expandStep(i + 1) }, h("b", {}, i + 1), t)));
   const left = h("div", { class: "pane-left", id: "leftPane" },
     step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),

@@ -60,6 +60,13 @@ section.step:nth-of-type(4){animation-delay:.15s}section.step:nth-of-type(5){ani
 section.step>h2{margin:0 0 .85rem;font-size:1.05rem;font-weight:600;display:flex;align-items:baseline;gap:.8rem}
 section.step>h2 .n{font:.8rem var(--mono);color:var(--safe);border:1px solid var(--safe);border-radius:50%;width:1.7rem;height:1.7rem;display:inline-grid;place-items:center}
 section.step>h2 .hint{font:.75rem var(--mono);color:var(--dim);margin-left:auto;font-weight:400}
+section.step.collapsible>h2{cursor:pointer;user-select:none;transition:color .15s}
+section.step.collapsible>h2:hover{color:var(--safe2)}
+section.step.collapsible>h2:hover .step-arrow{color:var(--safe2);transform:scale(1.15)}
+section.step.collapsible>h2 .step-arrow{font-size:.85rem;color:var(--dim);margin-left:auto;align-self:center;line-height:1;transition:all .15s}
+section.step.collapsible>h2 .hint + .step-arrow{margin-left:.6rem}
+section.step.collapsed{padding-bottom:1.15rem}
+section.step.collapsed>h2{margin-bottom:0}
 .tabs{display:flex;gap:.3rem;margin-bottom:1rem;border-bottom:1px solid var(--line)}
 .tabs button{background:none;border:0;color:var(--dim);font:.8rem var(--mono);padding:.5rem .9rem;border-bottom:2px solid transparent;cursor:pointer}
 .tabs button[aria-selected=true]{color:var(--ink);border-color:var(--safe)}
