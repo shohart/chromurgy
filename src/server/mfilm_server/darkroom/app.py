@@ -473,9 +473,9 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         return {"items": [info]}
 
     @app.get(f"{API}/photoprism/{{inst}}/albums")
-    def pp_albums(inst: str, q: str = "", count: int = 100, offset: int = 0, _t: str = Depends(session)):
+    def pp_albums(inst: str, q: str = "", order: str = "name", count: int = 100, offset: int = 0, _t: str = Depends(session)):
         instance_ok(inst)
-        items = pp_call(pp_client().albums, q, max(1, min(count, 500)), max(0, offset))
+        items = pp_call(pp_client().albums, q, max(1, min(count, 500)), max(0, offset), order=order)
         for a in items:
             th = a.get("thumb")
             a["thumb_url"] = (f"{API}/photoprism/{inst}/thumb/{th}?size=tile_224"
@@ -489,13 +489,13 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             raise ApiError(400, "UNSAFE_PATH", parent_id)
         return {"parent": parent_id, "items": pp_call(pp_client().folders, parent_id)}
 
-    def pp_page(client, source_kind: str, source_uid: str, count: int, offset: int) -> list[dict]:
+    def pp_page(client, source_kind: str, source_uid: str, count: int, offset: int, order: str = "newest") -> list[dict]:
         if source_kind == "album":
-            return pp_call(client.photos, album_uid=source_uid, count=count, offset=offset)
+            return pp_call(client.photos, album_uid=source_uid, count=count, offset=offset, order=order)
         if source_kind == "folder":
             if source_uid.startswith("/") or ".." in source_uid.split("/"):
                 raise ApiError(400, "UNSAFE_PATH", source_uid)
-            return pp_call(client.photos, folder=source_uid, count=count, offset=offset)
+            return pp_call(client.photos, folder=source_uid, count=count, offset=offset, order=order)
         raise ApiError(422, "INVALID_REQUEST", "source_kind: album|folder")
 
     def pp_step_and_more(page: list[dict], req_count: int) -> tuple[int, bool]:
@@ -510,12 +510,12 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
 
     @app.get(f"{API}/photoprism/{{inst}}/photos")
     def pp_photos(inst: str, source_kind: str, source_uid: str, count: int = 60, offset: int = 0,
-                  _t: str = Depends(session), c=Depends(conn)):
+                  order: str = "newest", _t: str = Depends(session), c=Depends(conn)):
         instance_ok(inst)
         client = pp_client()
         req_count = max(1, min(count, 200))
         req_offset = max(0, offset)
-        page = pp_page(client, source_kind, source_uid, req_count, req_offset)
+        page = pp_page(client, source_kind, source_uid, req_count, req_offset, order=order)
         need_detail = [ph["UID"] for ph in page
                        if ph.get("Type") in ("raw", "image", "live") and "Files" not in ph]
         details: dict[str, dict] = {}

@@ -104,8 +104,8 @@ class Client:
             raise PPError("THUMB_EMPTY", thumb_hash, 502)
         return bytes(data)
 
-    def albums(self, q: str = "", count: int = 100, offset: int = 0) -> list[dict]:
-        rows = self._get("albums", type="album", q=q, count=count, offset=offset, order="name")
+    def albums(self, q: str = "", count: int = 100, offset: int = 0, order: str = "name") -> list[dict]:
+        rows = self._get("albums", type="album", q=q, count=count, offset=offset, order=order)
         return [{"uid": a["UID"], "title": a["Title"], "photo_count": a.get("PhotoCount", 0), "type": a.get("Type"),
                  "manual": not a.get("Filter"), "thumb": a.get("Thumb")} for a in rows]
 
@@ -119,12 +119,12 @@ class Client:
                 for f in data.get("folders", []) if not f.get("Ignore")]
 
     def photos(self, *, album_uid: str | None = None, folder: str | None = None, count: int = 100,
-               offset: int = 0) -> list[dict]:
+               offset: int = 0, order: str = "newest") -> list[dict]:
         """One page of photos of an album or of one folder (not recursive: merged stacks per folder)."""
         if bool(album_uid) == bool(folder is not None):
             raise PPError("BAD_REQUEST", "exactly one of album_uid / folder", 400)
-        return self._get("photos", merged="true", count=count, offset=offset, s=album_uid,
-                         **({"path": folder} if folder is not None else {}))
+        return self._get("photos", merged="true", count=count, offset=offset, order=order,
+                         s=album_uid, **({"path": folder} if folder is not None else {}))
 
     def photo(self, uid: str) -> dict:
         return self._get(f"photos/{urllib.parse.quote(uid)}")

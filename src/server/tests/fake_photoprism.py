@@ -73,7 +73,13 @@ class FakePhotoPrism:
             if self.deny_albums:
                 return 400, {"error": "Permission denied"}
             q = params.get("q", "").lower()
-            return 200, [a for a in self.albums.values() if q in a["Title"].lower()]
+            ord = params.get("order", "name")
+            res = [a for a in self.albums.values() if q in a["Title"].lower()]
+            if ord == "name":
+                res.sort(key=lambda a: a["Title"].lower())
+            elif ord == "count":
+                res.sort(key=lambda a: a.get("photo_count", len(a.get("members", []))), reverse=True)
+            return 200, res
         if method == "GET" and path.startswith("folders/originals"):
             parent = path[len("folders/originals"):].strip("/")
             subs = sorted({str(p.relative_to(self.root)) for p in (self.root / parent).iterdir() if p.is_dir()
@@ -83,9 +89,16 @@ class FakePhotoPrism:
         if method == "GET" and path == "photos":
             if "s" in params:
                 members = self.albums.get(params["s"], {"members": []})["members"]
-                sel = [self.photos[u] for u in members]
+                sel = [self.photos[u] for u in members if u in self.photos]
             else:
                 sel = [p for p in self.photos.values() if p["Path"] == params.get("path", "")]
+            ord = params.get("order", "newest")
+            if ord == "name":
+                sel.sort(key=lambda p: (p.get("Name") or "").lower())
+            elif ord == "oldest":
+                sel.sort(key=lambda p: p.get("TakenAt") or p.get("created_at") or "")
+            elif ord == "newest":
+                sel.sort(key=lambda p: p.get("TakenAt") or p.get("created_at") or "", reverse=True)
             off, cnt = int(params.get("offset", 0)), int(params.get("count", 100))
             if params.get("merged") == "true":
                 rows = [(p, f) for p in sel for f in (p.get("Files") or [None])]

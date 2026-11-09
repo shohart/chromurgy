@@ -201,7 +201,7 @@ def test_publish_to_folder_and_new_album_in_stages(pp, store):
     assert out.is_file() and out.name.startswith("IMG_1_portra400_") and not list(out.parent.glob(".*"))
     assert not pp.fake.albums.get("a2")
     s, seen = run_publish(pp, store, index_into_fake(pp))
-    assert s["completed"] == 1 and seen == [["index", "M-Film/Developed/test"]]
+    assert s["completed"] == 1 and seen == [["index", "--cleanup", "M-Film/Developed/test"]]
     v = pp.get(f"{dapp.API}/jobs/{jid}").json()
     assert v["state"] == "COMPLETE" and v["items"][0]["photoprism_photo_uid"].startswith("new-IMG_1_portra400_")
     new_album = [a for a in pp.fake.albums.values() if a["Title"] == "Autumn — M-Film"]
