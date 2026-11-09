@@ -120,7 +120,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             raise ApiError(404, "NOT_FOUND")
         return FileResponse(p, headers={"Cache-Control": "no-cache"})
 
-    @app.get("/favicon.ico")
+    @app.api_route("/favicon.ico", methods=["GET", "HEAD"])
     def favicon_root():
         f = STATIC / "favicon.ico"
         if f.is_file():
