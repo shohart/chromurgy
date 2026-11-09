@@ -273,6 +273,17 @@ function showLogin() {
 }
 
 /* ---------------- layout ---------------- */
+let currentRightTab = "adjust_dev";
+function switchRightTab(tabId) {
+  currentRightTab = tabId;
+  const tabBtnAdj = $("#tab_btn_adjust"), tabBtnJobs = $("#tab_btn_jobs");
+  const paneAdj = $("#tab_pane_adjust"), paneJobs = $("#tab_pane_jobs");
+  if (tabBtnAdj) tabBtnAdj.setAttribute("aria-selected", String(tabId === "adjust_dev"));
+  if (tabBtnJobs) tabBtnJobs.setAttribute("aria-selected", String(tabId === "jobs"));
+  if (paneAdj) paneAdj.hidden = tabId !== "adjust_dev";
+  if (paneJobs) paneJobs.hidden = tabId !== "jobs";
+}
+
 function step(n, title, hint, ...body) {
   return h("section", { class: "step", id: "s" + n }, h("h2", {}, h("span", { class: "n" }, n), title, hint ? h("span", { class: "hint" }, hint) : null), body);
 }
@@ -289,10 +300,21 @@ async function boot() {
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared M-Film engine`, filmPanel()),
     step(4, "Optical effects", "presets, bundles and individual operators", opticsPanel()),
     step(5, "My presets", "the whole setting — look, film, optics, adjustments — saved under a name", presetsPanel()));
+  const tabBtnAdj = h("button", { id: "tab_btn_adjust", role: "tab", "aria-selected": "true", onclick: () => switchRightTab("adjust_dev") }, "✦ Adjust & Develop");
+  const tabBtnJobs = h("button", { id: "tab_btn_jobs", role: "tab", "aria-selected": "false", onclick: () => switchRightTab("jobs") }, "⚙ Jobs & History");
+  const rightTabs = h("div", { class: "right-tabs", role: "tablist" }, tabBtnAdj, tabBtnJobs);
+  const paneAdjust = h("div", { class: "right-tab-pane", id: "tab_pane_adjust" },
+    h("div", { class: "adjust-develop-grid" }, adjustPanel(), developPanel())
+  );
+  const paneJobs = h("div", { class: "right-tab-pane", id: "tab_pane_jobs", hidden: true },
+    jobsPanel()
+  );
   const right = h("div", { class: "pane-right", id: "rightPane" },
     step(6, "Preview, develop", "",
       h("div", { class: "pv-pin" }, previewPanel()),
-      h("div", { class: "dev-scroll" }, adjustPanel(), developPanel())));
+      rightTabs,
+      paneAdjust,
+      paneJobs));
   $("#app").replaceChildren(h("div", { class: "workspace" }, left, right));
   await refreshAssets(); refreshJobs(); syncControls(); refreshPresets();
 }
@@ -1779,26 +1801,28 @@ function adjustPanel() {
     h("option", { value: "none" }, "No filter"), h("option", { value: "grayscale" }, "Black & white (plain grayscale)"), h("option", { value: "silver" }, "Silver B&W film (grain, film curve)"), h("option", { value: "sepia" }, "Sepia"));
   const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => { S.wbSel = e.target.value; S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight"; markFrameAdjusted(); renderWb(); schedulePreview(true); } });
   const file = h("input", { type: "file", id: "wbfile", multiple: true, hidden: true, accept: ".json,.csv,.xmp,.lrtemplate,.pp3", onchange: wbImport });
-  return h("div", { class: "adjust" },
-    h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Adjustments ", h("small", { class: "dim" }, "· real-time in preview and kept in every full render")),
-    h("div", { class: "row3" },
+  return h("div", { class: "adjust-box" },
+    h("h3", { class: "sub-head" }, "Adjustments ", h("small", { class: "dim" }, "· real-time in preview & full render")),
+    h("div", { class: "adjust-stack" },
       slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => S.tone.brightness, v => { S.tone.brightness = v; markFrameAdjusted(); }, sg, 0, "Exposure compensation in stops.", true),
       slider("sl_contrast", "Contrast", -1, 1, 0.01, () => S.tone.contrast, v => { S.tone.contrast = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones.", true),
-      slider("sl_develop", "Development strength", 0, 1, 0.01, () => S.tone.develop, v => { S.tone.develop = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.", true)),
-    h("div", { class: "grid2", style: "margin-top:.8rem" },
-      h("div", {}, h("label", { for: "filter" }, "Filter"), filter,
-        h("div", { style: "margin-top:.4rem" }, slider("filterstr", "Filter strength", 0, 1, 0.01, () => S.tone.filterStrength, v => { S.tone.filterStrength = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 1, "Filter blend strength.", true))),
-      h("div", {}, h("label", { for: "wbsel" }, "White balance"), wbsel,
-        h("div", { class: "bar", style: "margin-top:.4rem" }, h("button", { onclick: () => $("#wbfile").click(), title: "Import .json .csv .xmp .lrtemplate .pp3" }, "Import profile…"),
-          h("button", { id: "wbdel", hidden: true, onclick: wbDelete }, "Delete imported"), file),
-        h("div", { id: "wbcustom", hidden: true, style: "margin-top:.4rem" },
-          slider("sl_kelvin", "Light colour temperature", 2000, 12000, 50, () => S.wbCustom.k, v => { S.wbCustom.k = v; markFrameAdjusted(); }, v => v + " K", 5500),
-          slider("sl_tint", "Tint (− green · + magenta)", -100, 100, 1, () => S.wbCustom.t, v => { S.wbCustom.t = v; markFrameAdjusted(); }, v => (v > 0 ? "+" : "") + v, 0)),
-        h("p", { class: "dim", id: "wbnote", style: "font:.68rem var(--mono);margin:.3rem 0 0" }))),
-    h("div", { class: "bar" },
-      h("button", { onclick: resetAdjust, title: "Reset adjustments for this frame back to preset/defaults" }, "Reset adjustments"),
-      h("button", { onclick: adjustAll, title: "Apply adjustments of this frame to all selected frames" }, "Apply to all selected"),
-      h("button", { onclick: everythingOff, title: "Neutral look, no optics, no film, no filter, no adjustments: the plain developed RAW" }, "Everything off")));
+      slider("sl_develop", "Development strength", 0, 1, 0.01, () => S.tone.develop, v => { S.tone.develop = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.", true),
+      h("div", { class: "grid2-compact", style: "margin-top:.2rem" },
+        h("div", {}, h("label", { for: "filter" }, "Filter"), filter,
+          h("div", { style: "margin-top:.3rem" }, slider("filterstr", "Strength", 0, 1, 0.01, () => S.tone.filterStrength, v => { S.tone.filterStrength = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 1, "Filter blend strength.", true))),
+        h("div", {}, h("label", { for: "wbsel" }, "White balance"), wbsel,
+          h("div", { class: "bar compact", style: "margin-top:.3rem" },
+            h("button", { onclick: () => $("#wbfile").click(), title: "Import .json .csv .xmp .lrtemplate .pp3" }, "Import profile…"),
+            h("button", { id: "wbdel", hidden: true, onclick: wbDelete }, "Delete"), file))),
+      h("div", { id: "wbcustom", hidden: true, style: "margin-top:.2rem" },
+        slider("sl_kelvin", "Light colour temperature", 2000, 12000, 50, () => S.wbCustom.k, v => { S.wbCustom.k = v; markFrameAdjusted(); }, v => v + " K", 5500),
+        slider("sl_tint", "Tint (− green · + magenta)", -100, 100, 1, () => S.wbCustom.t, v => { S.wbCustom.t = v; markFrameAdjusted(); }, v => (v > 0 ? "+" : "") + v, 0)),
+      h("p", { class: "dim", id: "wbnote", style: "font:.68rem var(--mono);margin:.1rem 0 0" }),
+      h("div", { class: "bar compact", style: "margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--line)" },
+        h("button", { onclick: resetAdjust, title: "Reset adjustments for this frame back to preset/defaults" }, "Reset adjustments"),
+        h("button", { onclick: adjustAll, title: "Apply adjustments of this frame to all selected frames" }, "Apply to all selected"),
+        h("button", { onclick: everythingOff, title: "Neutral look, no optics, no film, no filter, no adjustments: the plain developed RAW" }, "Everything off"))
+    ));
 }
 function renderWb() {
   const sel = $("#wbsel"); if (!sel) return;
@@ -2386,26 +2410,62 @@ function developPanel() {
     h("option", { value: "2000x1333" }, "2000 × 1333 (3:2)"),
     h("option", { value: "1600x1200" }, "1600 × 1200 (4:3)"),
     h("option", { value: "1200x800" }, "1200 × 800 (3:2)"));
-  return h("div", { style: "margin-top:1.4rem" }, h("h3", { style: "font-size:.95rem;margin:0 0 .6rem" }, "Develop (full size, from the original RAW)"),
-    h("div", { class: "row3" }, h("div", {}, h("label", { for: "outsize" }, "Output size (never upscaled)"), sizeSel),
-      h("div", {}, h("label", { for: "q" }, "JPEG quality"), h("input", { type: "number", id: "q", min: 1, max: 100, value: 92, onchange: e => { S.quality = Number(e.target.value); } })),
-      h("div", {})),
-    destPanel(),
-    h("div", { class: "bar" }, h("button", { class: "primary", id: "develop", onclick: develop }, "Develop selected"), h("span", { class: "dim", id: "devinfo" })),
-    h("h3", { style: "font-size:.95rem;margin:1.6rem 0 .6rem" }, "Jobs"), h("div", { class: "jobs", id: "jobs" }),
-    h("h3", { style: "font-size:.95rem;margin:1.6rem 0 .6rem" }, "History of renditions"),
-    h("p", { class: "dim", style: "font:.72rem var(--mono)" }, "Every recipe gives its own file; nothing is overwritten. Publish uses the destination chosen above."),
-    h("div", { class: "jobs", id: "history" }));
+  return h("div", { class: "develop-box" },
+    h("h3", { class: "sub-head" }, "Develop ", h("small", { class: "dim" }, "· full size from original RAW")),
+    h("div", { class: "develop-stack" },
+      h("div", { class: "grid2-compact" },
+        h("div", {}, h("label", { for: "outsize" }, "Output size"), sizeSel),
+        h("div", {}, h("label", { for: "q" }, "JPEG quality"), h("input", { type: "number", id: "q", min: 1, max: 100, value: 92, onchange: e => { S.quality = Number(e.target.value); } }))),
+      destPanel(),
+      h("div", { class: "bar", style: "margin-top:.6rem" },
+        h("button", { class: "primary", id: "develop", style: "flex:1 1 auto;padding:.6rem 1.2rem;font-size:.88rem", onclick: develop }, "Develop selected"),
+        h("span", { class: "dim", id: "devinfo", style: "font-size:.78rem" }))
+    ));
+}
+
+let jobsHistoryCollapsed = false;
+function toggleJobsCollapse() {
+  jobsHistoryCollapsed = !jobsHistoryCollapsed;
+  const el = $("#jobs_history_wrapper");
+  const btn = $("#btn_toggle_jobs_history");
+  if (el) el.hidden = jobsHistoryCollapsed;
+  if (btn) btn.textContent = jobsHistoryCollapsed ? "▸ Expand history" : "▾ Collapse history";
+}
+
+function jobsPanel() {
+  return h("div", { class: "jobs-panel" },
+    h("div", { class: "active-job-container" },
+      h("div", { class: "jobs-section-title" },
+        h("span", {}, "Active processing"),
+        h("span", { class: "dim", id: "active_job_status_label" }, "")),
+      h("div", { id: "active_job_card" },
+        h("p", { class: "dim", style: "font:.78rem var(--mono);margin:.4rem 0" }, "No active jobs running."))
+    ),
+    h("div", { style: "display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line);padding-top:.6rem;margin-top:.4rem" },
+      h("span", { style: "font:600 .78rem var(--mono);color:var(--ink);letter-spacing:.04em;text-transform:uppercase" }, "Job & Rendition History"),
+      h("button", { id: "btn_toggle_jobs_history", style: "font-size:.74rem;padding:.25rem .55rem", onclick: toggleJobsCollapse },
+        jobsHistoryCollapsed ? "▸ Expand history" : "▾ Collapse history")
+    ),
+    h("div", { id: "jobs_history_wrapper", hidden: jobsHistoryCollapsed },
+      h("div", { class: "jobs-section-title", style: "margin-top:.6rem" }, h("span", {}, "Recent jobs")),
+      h("div", { class: "jobs", id: "jobs" }),
+      h("div", { class: "jobs-section-title", style: "margin-top:1rem" },
+        h("span", {}, "History of renditions"),
+        h("span", { class: "dim", style: "font-size:.7rem" }, "re-download or publish")),
+      h("p", { class: "dim", style: "font:.72rem var(--mono);margin:0 0 .5rem" }, "Every recipe gives its own file; nothing is overwritten. Publish uses the destination chosen in Develop."),
+      h("div", { class: "jobs", id: "history" })
+    )
+  );
 }
 function updateDevelop() { const b = $("#develop"); if (!b) return; b.disabled = S.selected.size === 0; $("#devinfo").textContent = S.selected.size ? `${S.selected.size} frame(s) → ${S.selected.size} JPEG` : "select at least one frame"; }
 function destPanel() {
   const mode = h("select", { id: "dest", onchange: () => { const on = $("#dest").value !== "none"; $("#destbox").hidden = !on; if (on) loadDestAlbums(); } },
     h("option", { value: "none" }, "Save on the server only (download later)"), h("option", { value: "pp" }, "Publish to PhotoPrism"));
-  return h("div", { style: "margin-top:1rem" }, h("label", { for: "dest" }, "Destination (independent of where the sources came from)"), mode,
-    h("div", { id: "destbox", hidden: true, class: "grid2", style: "margin-top:.7rem" },
+  return h("div", { style: "margin-top:.7rem" }, h("label", { for: "dest" }, "Destination (independent of sources)"), mode,
+    h("div", { id: "destbox", hidden: true, class: "grid2-compact", style: "margin-top:.55rem" },
       h("div", {}, h("label", { for: "dfolder" }, "Output folder under originals (blank = managed default)"), h("input", { type: "text", id: "dfolder", placeholder: "M-Film/Developed/<year>/<job>" })),
       h("div", {}, h("label", { for: "dalbum" }, "Album"), h("select", { id: "dalbum" }, h("option", { value: "" }, "No album")),
-        h("input", { type: "text", id: "dnew", placeholder: "…or a new album name", style: "margin-top:.4rem" }))));
+        h("input", { type: "text", id: "dnew", placeholder: "…or a new album name", style: "margin-top:.35rem" }))));
 }
 async function loadDestAlbums(force = false) {
   const sel = $("#dalbum"); if (!sel) return;
@@ -2454,7 +2514,9 @@ async function develop() {
     });
     const j = await api("/jobs", { method: "POST", json: { schema_version: 1, source: { ...source, assets: assetsPayload },
       recipe: baseJobRecipe(), output: outputSpec() } });
-    toast(`Job queued (${j.total} frame${j.total === 1 ? "" : "s"})`); refreshJobs();
+    toast(`Job queued (${j.total} frame${j.total === 1 ? "" : "s"})`);
+    switchRightTab("jobs");
+    refreshJobs(true);
   } catch (e) { toast(e.message); }
 }
 let jobsTimer;
@@ -2462,11 +2524,26 @@ async function refreshJobs(force = false) {
   clearTimeout(jobsTimer);
   let list; try { list = await api("/jobs?count=15"); } catch (e) { return; }
   const full = await Promise.all(list.items.map(j => api("/jobs/" + j.job_id)));
+
+  const activeJobs = full.filter(j => ["QUEUED", "RUNNING", "PUBLISHING"].includes(j.state));
+  const activeCard = $("#active_job_card");
+  const tabBtnJobs = $("#tab_btn_jobs");
+  if (tabBtnJobs) {
+    tabBtnJobs.textContent = activeJobs.length ? `⚙ Jobs (${activeJobs.length} active)` : "⚙ Jobs & History";
+  }
+  if (activeCard) {
+    if (activeJobs.length > 0) {
+      activeCard.replaceChildren(...activeJobs.map(jobCard));
+    } else {
+      activeCard.replaceChildren(h("p", { class: "dim", style: "font:.78rem var(--mono);margin:.4rem 0" }, "No active jobs running."));
+    }
+  }
+
   const box = $("#jobs"); if (!box) return;
   const typing = !force && document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === "INPUT";
   if (!typing) box.replaceChildren(...full.map(jobCard));
   refreshHistory();
-  if (full.some(j => ["QUEUED", "RUNNING", "PUBLISHING"].includes(j.state))) jobsTimer = setTimeout(refreshJobs, 2500);
+  if (activeJobs.length > 0) jobsTimer = setTimeout(refreshJobs, 2500);
   else jobsTimer = setTimeout(refreshJobs, 15000);
 }
 async function refreshHistory() {
