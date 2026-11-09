@@ -1,188 +1,320 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/mfilm/contracts/render-recipe-v2.schema.json",
-  "description": "SPECIFICATION CONTRACT ONLY; replace example.invalid in production",
-  "title": "M-Film Creative Render Recipe v2",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "camera_look",
-    "film",
-    "optical",
-    "render",
-    "seed"
-  ],
-  "properties": {
-    "schema_version": {
-      "type": "integer",
-      "const": 2
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://example.invalid/mfilm/contracts/render-recipe-v2.schema.json",
+ "description": "SPECIFICATION CONTRACT ONLY; replace example.invalid in production",
+ "title": "M-Film Creative Render Recipe v2",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "schema_version",
+  "camera_look",
+  "film",
+  "optical",
+  "render",
+  "seed"
+ ],
+ "properties": {
+  "schema_version": {
+   "type": "integer",
+   "const": 2
+  },
+  "preset_id": {
+   "type": "string",
+   "minLength": 1
+  },
+  "camera_look": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "version",
+    "strength"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
     },
-    "preset_id": {
-      "type": "string",
-      "minLength": 1
+    "version": {
+     "type": "string",
+     "minLength": 1
     },
-    "camera_look": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "version",
-        "strength"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "version": {
-          "type": "string",
-          "minLength": 1
-        },
-        "strength": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 4
-        },
-        "bundle_hash": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
-        }
-      }
+    "strength": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 4
     },
-    "film": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "bundle_hash": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
-        },
-        "grain_scale": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 4
-        },
-        "halation_scale": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 4
-        },
-        "softness_scale": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 4
-        }
-      }
-    },
-    "optical": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "preset_id",
-        "strength",
-        "stack"
-      ],
-      "properties": {
-        "preset_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "strength": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 4
-        },
-        "halation_policy": {
-          "enum": [
-            "film",
-            "optical",
-            "stacked",
-            "disabled"
-          ]
-        },
-        "stack": {
-          "type": "array",
-          "maxItems": 8,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "enabled",
-              "parameters"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "enabled": {
-                "type": "boolean"
-              },
-              "parameters": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "number"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "render": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "output_format",
-        "output_color_space",
-        "quality"
-      ],
-      "properties": {
-        "output_format": {
-          "enum": [
-            "jpeg",
-            "tiff",
-            "png"
-          ]
-        },
-        "output_color_space": {
-          "enum": [
-            "srgb",
-            "display_p3",
-            "rec2020"
-          ]
-        },
-        "quality": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 100
-        },
-        "width": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "height": {
-          "type": "integer",
-          "minimum": 1
-        }
-      }
-    },
-    "seed": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "extensions": {
-      "type": "object",
-      "additionalProperties": true
+    "bundle_hash": {
+     "type": "string",
+     "pattern": "^[a-f0-9]{64}$"
     }
+   }
+  },
+  "film": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    },
+    "bundle_hash": {
+     "type": "string",
+     "pattern": "^[a-f0-9]{64}$"
+    },
+    "grain_scale": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 4
+    },
+    "halation_scale": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 4
+    },
+    "softness_scale": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 4
+    }
+   }
+  },
+  "optical": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "preset_id",
+    "strength",
+    "stack"
+   ],
+   "properties": {
+    "preset_id": {
+     "type": "string",
+     "minLength": 1
+    },
+    "strength": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 4
+    },
+    "halation_policy": {
+     "enum": [
+      "film",
+      "optical",
+      "stacked",
+      "disabled"
+     ]
+    },
+    "stack": {
+     "type": "array",
+     "maxItems": 16,
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "id",
+       "enabled",
+       "parameters"
+      ],
+      "properties": {
+       "id": {
+        "type": "string",
+        "minLength": 1
+       },
+       "enabled": {
+        "type": "boolean"
+       },
+       "parameters": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "number"
+        }
+       },
+       "source_selection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "mode"
+        ],
+        "properties": {
+         "mode": {
+          "enum": [
+           "auto",
+           "manual",
+           "auto_plus_manual",
+           "off"
+          ]
+         },
+         "points": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+           "type": "object",
+           "additionalProperties": false,
+           "required": [
+            "x",
+            "y"
+           ],
+           "properties": {
+            "x": {
+             "type": "number",
+             "minimum": 0,
+             "maximum": 1
+            },
+            "y": {
+             "type": "number",
+             "minimum": 0,
+             "maximum": 1
+            },
+            "weight": {
+             "type": "number",
+             "minimum": 0,
+             "maximum": 4
+            },
+            "radius": {
+             "type": "number",
+             "minimum": 0,
+             "maximum": 1
+            },
+            "label": {
+             "type": "string",
+             "maxLength": 96
+            }
+           }
+          }
+         },
+         "excluded_ids": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+           "type": "string",
+           "maxLength": 128
+          }
+         }
+        }
+       },
+       "mask": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "mode"
+        ],
+        "properties": {
+         "mode": {
+          "enum": [
+           "whole_image",
+           "radial",
+           "linear",
+           "mask_asset"
+          ]
+         },
+         "asset_id": {
+          "type": "string",
+          "maxLength": 128
+         },
+         "invert": {
+          "type": "boolean"
+         },
+         "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+         },
+         "center_x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+         },
+         "center_y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+         },
+         "radius": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+         },
+         "feather": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+         },
+         "angle_degrees": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+         }
+        }
+       },
+       "implementation_version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "description": "Pinned operator version; optional for legacy recipes, resolved by engine."
+       }
+      }
+     }
+    },
+    "vignette_policy": {
+     "enum": [
+      "film",
+      "optical",
+      "stacked",
+      "disabled"
+     ],
+     "description": "Optional film/optical vignetting ownership; omitted in old recipes."
+    }
+   }
+  },
+  "render": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "output_format",
+    "output_color_space",
+    "quality"
+   ],
+   "properties": {
+    "output_format": {
+     "enum": [
+      "jpeg",
+      "tiff",
+      "png"
+     ]
+    },
+    "output_color_space": {
+     "enum": [
+      "srgb",
+      "display_p3",
+      "rec2020"
+     ]
+    },
+    "quality": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 100
+    },
+    "width": {
+     "type": "integer",
+     "minimum": 1
+    },
+    "height": {
+     "type": "integer",
+     "minimum": 1
+    }
+   }
+  },
+  "seed": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "extensions": {
+   "type": "object",
+   "additionalProperties": true
   }
+ }
 }

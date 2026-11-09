@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mfilm.local/schemas/web-darkroom-job-v1.json",
+  "title": "M-Film Web Darkroom Job v1 (proposed)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "recipe",
+    "output"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "assets"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "upload",
+            "photoprism_album",
+            "photoprism_folder",
+            "mfilm_roll"
+          ]
+        },
+        "instance_id": {
+          "type": "string"
+        },
+        "source_uid": {
+          "type": "string"
+        },
+        "assets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "asset_id"
+            ],
+            "properties": {
+              "asset_id": {
+                "type": "string"
+              },
+              "photoprism_photo_uid": {
+                "type": "string"
+              },
+              "photoprism_file_uid": {
+                "type": "string"
+              },
+              "source_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "recipe": {
+      "$ref": "render-recipe-v2.schema.json"
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "jpeg"
+          ]
+        },
+        "quality": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "publish": {
+          "type": "boolean"
+        },
+        "photoprism_instance_id": {
+          "type": "string"
+        },
+        "photoprism_folder": {
+          "type": "string"
+        },
+        "photoprism_album_uid": {
+          "type": "string"
+        },
+        "create_album_name": {
+          "type": "string"
+        },
+        "save_to_local_library": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "format",
+        "publish"
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "maxLength": 128
+    }
+  }
+}

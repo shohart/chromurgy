@@ -289,7 +289,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
         lin = wb.apply(lin, recipe["wb_profile"])
     if recipe.get("creative"):                    # Web Darkroom optical effects + Camera Look, before the film stage
         from .darkroom import creative
-        lin = creative.apply_creative(lin, recipe["creative"])
+        lin = creative.apply_creative(lin, recipe["creative"], salt=src_sha)
     lens_info = {**lens_info, "orientation_flip": flip}
     look = recipe.get("look_controls", {})
     if recipe.get("tone") or profile == "none":    # Web Darkroom: film off / development strength / contrast / filters

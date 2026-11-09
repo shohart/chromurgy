@@ -77,7 +77,7 @@ def normalize(recipe: dict, bundle: core.Bundle, wb_lookup=None) -> dict:
     if r["film"]["id"] == "none":
         for k in ("grain_scale", "halation_scale", "softness_scale"):
             r["film"][k] = 1.0                       # nothing to scale: one identity for "no film"
-    r["optical"] = _optical(r["optical"])
+    r["optical"] = _optical(r["optical"], r["film"]["id"])
     wb = (r.get("extensions") or {}).get("white_balance", "daylight")
     if wb not in ("daylight", "as-shot"):
         raise RecipeError("INVALID_RECIPE", f"extensions.white_balance={wb!r}: use daylight or as-shot")
@@ -175,29 +175,67 @@ def _wb_profile(ext: dict, lookup) -> None:
         ext.pop("wb_profile")                        # identity gains: the same picture as no profile
 
 
-def _optical(opt: dict) -> dict:
-    """Canonical optical block: effects expanded, every parameter explicit, engine order, halation rules."""
-    from .creative import EFFECT_ORDER, PARAM_RANGE, PRESETS
+def _source_selection(eid: str, sel: dict) -> dict:
+    """Canonical `source_selection` of a source-driven effect (points rounded, defaults dropped)."""
+    mode = sel["mode"]
+    pts = [{k: (round(float(v), 4) if k != "label" else v) for k, v in p.items()} for p in sel.get("points", [])]
+    if mode in ("manual", "auto_plus_manual") and not pts:
+        raise RecipeError("INVALID_RECIPE", f"{eid}: source_selection mode {mode!r} needs points")
+    if mode in ("auto", "off") and pts:
+        raise RecipeError("INVALID_RECIPE", f"{eid}: source_selection mode {mode!r} takes no points")
+    out: dict = {"mode": mode}
+    if pts:
+        out["points"] = pts
+    if sel.get("excluded_ids"):
+        out["excluded_ids"] = sorted(set(sel["excluded_ids"]))
+    return out
+
+
+def _optical(opt: dict, film_id: str = "") -> dict:
+    """Canonical optical block: effects expanded, every parameter explicit, engine order, halation/vignette rules."""
+    from . import optical_registry as reg
+    from .creative import EFFECT_ORDER, LEGACY_ORDER, PARAM_RANGE, PRESETS
     from .creative_params import EFFECTS
-    known = {i for i, _ in catalog.OPTICAL_EFFECTS}
+    from .optics import IMPLEMENTATION_VERSION, SOURCE_DRIVEN
+    known = set(catalog.ALL_EFFECT_IDS)
     pid, policy = opt["preset_id"], opt.get("halation_policy", "film")
-    if pid != "none" and pid not in known and pid not in PRESETS:
+    vpolicy = opt.get("vignette_policy", "film")
+    from . import combos
+    if pid != "none" and pid not in known and pid not in PRESETS and not combos.is_combo_id(pid):
         raise RecipeError("UNKNOWN_OPTICAL_PRESET", pid)
     items: dict[str, dict] = {}
     for s in opt["stack"]:
-        if s["id"] not in known:
-            raise RecipeError("UNKNOWN_OPTICAL_EFFECT", s["id"])
-        if s["id"] in items:
-            raise RecipeError("INVALID_RECIPE", f"optical.stack lists {s['id']} twice")
-        allowed = EFFECTS[s["id"]]
+        eid = s["id"]
+        if eid not in known:
+            raise RecipeError("UNKNOWN_OPTICAL_EFFECT", eid)
+        if eid in items:
+            raise RecipeError("INVALID_RECIPE", f"optical.stack lists {eid} twice")
+        allowed = EFFECTS[eid]
+        new = eid not in LEGACY_ORDER
         for k, v in s["parameters"].items():
             if k not in allowed:
-                raise RecipeError("INVALID_RECIPE", f"{s['id']}: unknown parameter {k!r} (allowed: {', '.join(sorted(allowed))})")
-            lo, hi = PARAM_RANGE[k]
-            if not lo <= v <= hi:
-                raise RecipeError("INVALID_RECIPE", f"{s['id']}.{k}={v} outside {lo}..{hi}")
-        items[s["id"]] = {"id": s["id"], "enabled": bool(s["enabled"]), "parameters": {**allowed, **s["parameters"]}}
-    if not items and pid != "none":                      # a preset name alone selects its bundle
+                raise RecipeError("INVALID_RECIPE", f"{eid}: unknown parameter {k!r} (allowed: {', '.join(sorted(allowed))})")
+            if new:
+                why = reg.check_value(eid, k, v)
+                if why:
+                    raise RecipeError("INVALID_RECIPE", f"{eid}.{k}={v!r} {why}")
+            else:
+                lo, hi = PARAM_RANGE[k]
+                if not lo <= v <= hi:
+                    raise RecipeError("INVALID_RECIPE", f"{eid}.{k}={v} outside {lo}..{hi}")
+        item = {"id": eid, "enabled": bool(s["enabled"]), "parameters": {**allowed, **s["parameters"]}}
+        if "source_selection" in s:
+            if eid not in SOURCE_DRIVEN:
+                raise RecipeError("INVALID_RECIPE", f"{eid}: source_selection applies to ghosting, starburst and anamorphic streak only")
+            sel = _source_selection(eid, s["source_selection"])
+            if sel != {"mode": "auto"}:
+                item["source_selection"] = sel                       # auto is the default: one identity for it
+        if "mask" in s and s["mask"].get("mode", "whole_image") != "whole_image":
+            raise RecipeError("UNSUPPORTED_MASK", f"{eid}: mask mode {s['mask']['mode']!r} is not implemented (whole_image only)")
+        if "implementation_version" in s and new and s["implementation_version"] != IMPLEMENTATION_VERSION:
+            raise RecipeError("UNSUPPORTED_OPERATOR_VERSION", f"{eid}: {s['implementation_version']!r}; this engine has {IMPLEMENTATION_VERSION!r}")
+        items[eid] = item
+    if not items and pid != "none" and (pid in PRESETS or pid in known):   # a preset name alone selects its bundle
         for eid, over in PRESETS.get(pid, [(pid, {})]):
             items[eid] = {"id": eid, "enabled": True, "parameters": {**EFFECTS[eid], **over}}
     active = [e for e in EFFECT_ORDER if e in items and items[e]["enabled"]]
@@ -210,10 +248,23 @@ def _optical(opt: dict) -> dict:
         raise RecipeError("HALATION_CONFLICT", "halation_policy 'optical' needs film_halation_extra enabled")
     if policy == "disabled" and extra:
         raise RecipeError("HALATION_CONFLICT", "halation_policy 'disabled' contradicts an enabled film_halation_extra")
+    vig = "optical_vignetting" in active
+    if vig and film_id == "none" and vpolicy == "film":
+        vpolicy = "optical"                                  # no film stage, so no film vignette to own it
+    if vig and vpolicy == "film":
+        raise RecipeError("VIGNETTE_CONFLICT", "optical_vignetting with vignette_policy 'film' would darken the corners twice: "
+                          "use 'optical' (the optical vignette is the intended one) or 'stacked' (both, deliberately)")
+    if not vig and vpolicy != "disabled":
+        vpolicy = "film"                                     # nothing optical to own the vignette: the film's own stays (the C core cannot switch it off)
+    if vpolicy == "disabled" and vig:
+        raise RecipeError("VIGNETTE_CONFLICT", "vignette_policy 'disabled' contradicts an enabled optical_vignetting")
     if not active or strength <= 0:
         return {"preset_id": "none", "strength": 0, "halation_policy": policy if policy == "disabled" else "film", "stack": []}
-    return {"preset_id": pid, "strength": strength, "halation_policy": policy,
-            "stack": [items[e] for e in EFFECT_ORDER if e in items]}
+    out = {"preset_id": pid, "strength": strength, "halation_policy": policy,
+           "stack": [items[e] for e in EFFECT_ORDER if e in items]}
+    if vpolicy != "film":
+        out["vignette_policy"] = vpolicy                     # absent in old recipes: their identity is unchanged
+    return out
 
 
 def recipe_hash(r: dict, *, look_only: bool = False) -> str:
@@ -240,8 +291,11 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
     creative: dict = {}
     if r["camera_look"]["id"] != "neutral":
         creative["camera_look"] = {"id": r["camera_look"]["id"], "strength": r["camera_look"]["strength"]}
+    uses_new = False
     if r["optical"]["stack"] and r["optical"]["strength"] > 0:
         creative["optical"] = {"strength": r["optical"]["strength"], "stack": r["optical"]["stack"]}
+        from .creative import NEW_EFFECTS
+        uses_new = any(s["id"] in NEW_EFFECTS and s["enabled"] for s in r["optical"]["stack"])
     v1 = {"schema_version": 1, "recipe_id": f"web2-{h[:16]}", "film_profile_id": r["film"]["id"],
             "profile_bundle_hash": r["film"]["bundle_hash"], "film_core_abi_version": core.abi_version(),
             "input_normalization_version": INPUT_NORMALIZATION,
@@ -268,7 +322,12 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
     if rotate:
         v1["rotate"] = rotate                     # absent when unrotated: those render ids stay as before
     if creative:                                  # absent for neutral/no-effect: those render ids stay as before
-        v1["creative"] = {"version": VERSION, **creative}
+        if uses_new:                              # v0.6 operators: new identity (version + the seed of the stochastic ones)
+            from .creative import VERSION_OPTICS
+            from .optics import IMPLEMENTATION_VERSION
+            v1["creative"] = {"version": VERSION_OPTICS, "optics": IMPLEMENTATION_VERSION, "seed": int(r["seed"]), **creative}
+        else:
+            v1["creative"] = {"version": VERSION, **creative}
     return v1
 
 

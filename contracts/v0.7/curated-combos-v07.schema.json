@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "M-Film Curated Combination Catalog v0.7",
+  "type": "object",
+  "required": [
+    "catalog_version",
+    "schema_version",
+    "presets",
+    "evidence_sources",
+    "film_resolution_aliases"
+  ],
+  "properties": {
+    "catalog_version": {
+      "const": "0.7.0"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "presets": {
+      "type": "array",
+      "minItems": 21,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "wave_required",
+          "camera_look",
+          "film",
+          "optical",
+          "render",
+          "evidence_refs",
+          "evidence_tier",
+          "status",
+          "best_for",
+          "avoid_when",
+          "seed_policy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+-v07$"
+          },
+          "wave_required": {
+            "enum": [
+              1,
+              2,
+              3,
+              5,
+              10
+            ]
+          },
+          "camera_look": {
+            "type": "object",
+            "required": [
+              "id",
+              "version",
+              "strength"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "strength": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "film": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "optical": {
+            "type": "object",
+            "required": [
+              "preset_id",
+              "strength",
+              "stack"
+            ],
+            "properties": {
+              "stack": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "enabled",
+                    "parameters"
+                  ]
+                }
+              }
+            }
+          },
+          "render": {
+            "type": "object",
+            "required": [
+              "output_format",
+              "output_color_space",
+              "quality"
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_tier": {
+            "enum": [
+              "direct_recipe_family_adapted",
+              "component_backed_editorial",
+              "editorial_only"
+            ]
+          },
+          "status": {
+            "const": "PROPOSED_NOT_VISUALLY_VALIDATED"
+          },
+          "best_for": {
+            "type": "string",
+            "minLength": 10
+          },
+          "avoid_when": {
+            "type": "string",
+            "minLength": 10
+          },
+          "seed_policy": {
+            "type": "object",
+            "required": [
+              "mode",
+              "derivation"
+            ]
+          }
+        }
+      }
+    },
+    "evidence_sources": {
+      "type": "object"
+    },
+    "film_resolution_aliases": {
+      "type": "object"
+    }
+  }
+}

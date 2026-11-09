@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/mfilm/roll-manifest.schema.json",
+  "title": "M-Film Roll Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "device_id",
+    "roll_id",
+    "roll_state",
+    "roll_length",
+    "captured_frames",
+    "film_profile_id",
+    "profile_bundle_hash",
+    "frames"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "mfilm.roll_manifest"
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "roll_id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "roll_state": {
+      "enum": [
+        "LOADED",
+        "CAPTURING",
+        "SEALED",
+        "READY_FOR_SYNC"
+      ]
+    },
+    "roll_length": {
+      "enum": [
+        12,
+        24,
+        36
+      ]
+    },
+    "captured_frames": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 36
+    },
+    "film_profile_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile_bundle_hash": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sealed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "render_recipe_id": {
+      "type": "string"
+    },
+    "frames": {
+      "type": "array",
+      "maxItems": 36,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "frame_id",
+          "ordinal",
+          "source_path",
+          "source_size_bytes",
+          "source_sha256",
+          "original_status"
+        ],
+        "properties": {
+          "frame_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 36
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "source_size_bytes": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          },
+          "original_status": {
+            "enum": [
+              "WRITTEN",
+              "VERIFIED",
+              "UPLOADING",
+              "UPLOADED"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

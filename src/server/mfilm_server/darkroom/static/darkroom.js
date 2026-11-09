@@ -70,7 +70,8 @@ const S = { catalog: null, assets: [], allSourceCount: 0, selected: new Set(), c
   dismissed: new Set(JSON.parse(localStorage.getItem("mfilm.dismissed") || "[]")),
   traySort: localStorage.getItem("mfilm.tray_sort") || "default",
   look: "neutral", film: null, strength: 1, grain: 1, halation: 1, softness: 1, quality: 92, seed: 0, wb: "daylight",
-  width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film", activePreset: null,
+  width: 0, height: 0, filmQuery: "", fxPreset: "none", fx: new Set(), fxStrength: 0.5, policy: "film", vpolicy: "film",
+  activePreset: null, comboPreset: null, combos: [], comboSceneFilter: "", comboQuery: "", fxParams: {},
   baseTone: { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 },
   baseWbSel: "daylight", baseWbCustom: { k: 5500, t: 0 },
   tone: { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, wbSel: "daylight", wbCustom: { k: 5500, t: 0 }, wbl: null, sliders: [],
@@ -202,10 +203,24 @@ function wbExt() {
   return frameWbExt(S.wbSel, S.wbCustom);
 }
 function opticalBlock() {
-  if (S.fxPreset === "golden_haze") return { preset_id: "golden_haze", strength: S.fxStrength, halation_policy: S.policy, stack: [] };
+  const vpol = S.vpolicy || (S.fx.has("optical_vignetting") ? "optical" : "film");
+  if (S.fxPreset === "golden_haze" && (!S.fxParams || !Object.keys(S.fxParams).length)) {
+    return { preset_id: "golden_haze", strength: S.fxStrength, halation_policy: S.policy, vignette_policy: vpol, stack: [] };
+  }
+  if (S.fxPreset === "vintage_glass" && (!S.fxParams || !Object.keys(S.fxParams).length)) {
+    return { preset_id: "vintage_glass", strength: S.fxStrength, halation_policy: S.policy, vignette_policy: vpol, stack: [] };
+  }
   const on = [...S.fx];
-  if (!on.length) return { preset_id: "none", strength: 0, halation_policy: S.policy === "disabled" ? "disabled" : "film", stack: [] };
-  return { preset_id: on[0], strength: S.fxStrength, halation_policy: S.policy, stack: on.map(id => ({ id, enabled: true, parameters: {} })) };
+  if (!on.length && S.fxPreset === "none") {
+    return { preset_id: "none", strength: 0, halation_policy: S.policy === "disabled" ? "disabled" : "film", stack: [] };
+  }
+  const pid = S.fxPreset && S.fxPreset !== "none" ? S.fxPreset : (on.length ? on[0] : "none");
+  const stack = on.map(id => ({
+    id,
+    enabled: true,
+    parameters: (S.fxParams && S.fxParams[id]) ? { ...S.fxParams[id] } : {}
+  }));
+  return { preset_id: pid, strength: S.fxStrength, halation_policy: S.policy, vignette_policy: vpol, stack };
 }
 function recipe(withCrop = true) {
   const r = { schema_version: 2,
@@ -214,6 +229,7 @@ function recipe(withCrop = true) {
     optical: opticalBlock(),
     render: { output_format: "jpeg", output_color_space: "srgb", quality: S.quality },
     seed: S.seed, extensions: { white_balance: S.wbSel === "as-shot" ? "as-shot" : "daylight" } };
+  if (S.comboPreset) r.preset_id = S.comboPreset;
   const tn = toneExt(); if (Object.keys(tn).length) r.extensions.tone = tn;
   const wp = wbExt(); if (wp) r.extensions.wb_profile = wp;
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
@@ -228,6 +244,7 @@ function baseJobRecipe() {
     optical: opticalBlock(),
     render: { output_format: "jpeg", output_color_space: "srgb", quality: S.quality },
     seed: S.seed, extensions: { white_balance: S.baseWbSel === "as-shot" ? "as-shot" : "daylight" } };
+  if (S.comboPreset) r.preset_id = S.comboPreset;
   const tn = frameToneExt(S.baseTone); if (Object.keys(tn).length) r.extensions.tone = tn;
   const wp = frameWbExt(S.baseWbSel, S.baseWbCustom); if (wp) r.extensions.wb_profile = wp;
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
@@ -262,11 +279,13 @@ function step(n, title, hint, ...body) {
 async function boot() {
   try { S.catalog = await api("/catalog"); } catch (e) { if (e.status !== 401) toast(e.message); return; }
   try { S.wbl = await api("/wb-profiles"); } catch (e) { S.wbl = { builtin: [], imported: [] }; }
+  try { const c = await api("/combos"); S.combos = c.items || []; } catch (e) { S.combos = []; }
   if (!S.film) S.film = S.catalog.films.find(f => f.id === "portra400") ? "portra400" : S.catalog.films[0].id;
   $("#logout").hidden = false;
   $("#steps").replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1) }, h("b", {}, i + 1), t)));
   const left = h("div", { class: "pane-left", id: "leftPane" },
     step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
+    combosSection(),
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared M-Film engine`, filmPanel()),
     step(4, "Optical effects", "optional · applied before the look and film", opticsPanel()),
@@ -845,6 +864,147 @@ async function pollPreview(pid, tries = 400) {
   return { status: "FAILED", error_code: "TIMEOUT" };
 }
 
+/* ---------------- curated combinations (spec v0.7) ---------------- */
+function combosSection() {
+  const scenes = [
+    { id: "", label: "Все сцены" },
+    { id: "street", label: "Street" },
+    { id: "portrait", label: "Portrait" },
+    { id: "golden_hour", label: "Golden Hour" },
+    { id: "night", label: "Night" },
+    { id: "neon", label: "Neon" },
+    { id: "cinematic", label: "Cinematic" },
+    { id: "landscape", label: "Landscape" },
+    { id: "fashion", label: "Fashion" }
+  ];
+  const chips = h("div", { class: "chips", id: "combochips", style: "margin-bottom:.6rem;flex-wrap:wrap;gap:.35rem" },
+    ...scenes.map(s => h("button", {
+      class: "combo-chip",
+      "aria-pressed": String(S.comboSceneFilter === s.id),
+      onclick: () => { S.comboSceneFilter = s.id; combosChipsSync(); renderCombos(); }
+    }, s.label))
+  );
+  const search = h("input", {
+    type: "search",
+    id: "combosearch",
+    placeholder: "Поиск по связкам (название, камера, плёнка, эффект)...",
+    style: "margin-bottom:.6rem;width:100%",
+    oninput: e => { S.comboQuery = e.target.value.toLowerCase().trim(); renderCombos(); }
+  });
+  return h("section", { class: "step combos-section", id: "s-combos" },
+    h("h2", {},
+      h("span", { class: "n" }, "✦"),
+      "Кураторские связки (Curated Combos)",
+      h("span", { class: "hint" }, "21 авторская адаптация · задаёт камеру, плёнку и оптику в один клик")),
+    h("p", { class: "dim", style: "margin-top:0;font-size:.82rem" },
+      "Адаптации классических сочетаний сообщества: камера + эмульсия + оптический фильтр. Все параметры остаются полностью доступными для редактирования в шагах ниже."),
+    search,
+    chips,
+    h("div", { class: "cards", id: "combocards" })
+  );
+}
+
+function combosChipsSync() {
+  const box = $("#combochips"); if (!box) return;
+  for (const b of box.children) {
+    const isAll = b.textContent === "Все сцены" && !S.comboSceneFilter;
+    const match = b.textContent.toLowerCase() === S.comboSceneFilter.replace(/_/g, " ").toLowerCase();
+    b.setAttribute("aria-pressed", String(isAll || match));
+  }
+}
+
+function selectCombo(c) {
+  if (S.comboPreset === c.id) {
+    S.comboPreset = null;
+    syncControls();
+    schedulePreview(true);
+    toast("Кураторский пресет отключён: " + c.name);
+    return;
+  }
+  S.comboPreset = c.id;
+  if (c.camera_look) S.look = c.camera_look;
+  if (c.look_strength !== undefined) S.strength = c.look_strength;
+  if (c.film_stock) {
+    const f = findFilmId(c.film_stock);
+    if (f) S.film = f;
+  }
+  if (c.grain !== undefined) S.grain = c.grain;
+  if (c.halation !== undefined) S.halation = c.halation;
+  if (c.softness !== undefined) S.softness = c.softness;
+  if (c.halation_policy) S.policy = c.halation_policy;
+  if (c.vignette_policy) S.vpolicy = c.vignette_policy;
+
+  S.fx.clear();
+  S.fxParams = {};
+  if (c.optical_effects && c.optical_effects.length) {
+    c.optical_effects.forEach(eff => {
+      S.fx.add(eff.id);
+      if (eff.parameters) S.fxParams[eff.id] = { ...eff.parameters };
+    });
+    S.fxPreset = c.optical_effects[0].id;
+  } else if (c.optical_preset && c.optical_preset !== "none") {
+    S.fxPreset = c.optical_preset;
+    if (c.optical_preset === "golden_haze") {
+      S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
+    } else if (c.optical_preset === "vintage_glass") {
+      S.fx = new Set(["vintage_glass_barrel_distortion", "vintage_glass_chromatic_aberration", "vintage_glass_edge_softness"]);
+    }
+  } else {
+    S.fxPreset = "none";
+  }
+  if (c.optical_strength !== undefined) S.fxStrength = c.optical_strength;
+  S.activePreset = null;
+  resetAllFrameOverrides();
+  loadFrameAdjustments(S.current);
+  syncControls();
+  renderAssets();
+  schedulePreview(true);
+  toast(`Применена связка: ${c.name}`);
+}
+
+function renderCombos() {
+  const box = $("#combocards"); if (!box) return;
+  const list = S.combos || [];
+  const q = S.comboQuery || "";
+  const sf = S.comboSceneFilter || "";
+  const filtered = list.filter(c => {
+    if (sf && c.scene !== sf && !(sf === "neon" && c.scene === "neon_cyberpunk")) return false;
+    if (q) {
+      const hay = [c.id, c.name, c.camera_look, c.film_stock, c.description, c.scene, c.category, c.curator_intent].join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  box.replaceChildren(...filtered.map(c => {
+    const on = S.comboPreset === c.id;
+    const fxSummary = (c.optical_effects && c.optical_effects.length)
+      ? c.optical_effects.map(e => e.id.replace(/_/g, " ")).join(", ")
+      : (c.optical_preset && c.optical_preset !== "none" ? c.optical_preset.replace(/_/g, " ") : "no fx");
+    const summary = `${c.camera_look.replace(/_/g, " ")} + ${c.film_stock} + ${fxSummary}`;
+    const waveBadge = `Wave ${c.wave_gate || 1}`;
+    const sceneBadge = c.scene ? c.scene.replace(/_/g, " ") : "";
+    const evBadge = (c.evidence && c.evidence.status) ? c.evidence.status : "documented";
+
+    return h("button", {
+      class: "card combo-card",
+      "aria-pressed": String(on),
+      title: `${c.name}: ${c.description || summary}`,
+      onclick: () => selectCombo(c)
+    },
+      h("div", { class: "combo-badges" },
+        h("span", { class: "badge gold" }, "✦ Combo"),
+        h("span", { class: "badge wave" }, waveBadge),
+        sceneBadge ? h("span", { class: "badge" }, sceneBadge) : null,
+        h("span", { class: "badge evidence" }, evBadge)
+      ),
+      h("strong", {}, c.name),
+      h("small", { class: "combo-summary" }, summary),
+      c.curator_intent ? h("span", { class: "combo-intent" }, c.curator_intent) : null
+    );
+  }));
+}
+
 /* ---------------- step 2: camera look ---------------- */
 const LOOK_SIGNATURES = {
   neutral: {
@@ -1014,22 +1174,64 @@ function opticsPanel() {
   const fxGroup = h("div", { class: "effects-group" },
     h("div", { class: "group-head" },
       h("span", {}, "Individual optical effects"),
-      h("small", {}, "combinable · effects included in an active bundle are also highlighted")),
-    h("div", { class: "cards", id: "fxcards" }));
+      h("small", {}, "combinable · grouped by stage · active effects highlighted")),
+    h("div", { class: "fx-group-container", id: "fxgroups" }));
   const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 400, value: 50, "aria-label": "Optical effects strength", title: "Double-click resets to 0.50",
     ondblclick: e => { e.target.value = 50; S.fxStrength = 0.5; $("#fxv").textContent = "0.50"; scheduleLiveTone(); schedulePreview(); },
     oninput: e => { S.fxStrength = e.target.value / 100; $("#fxv").textContent = S.fxStrength.toFixed(2); scheduleLiveTone(); schedulePreview(); } });
-  const policy = h("select", { id: "policy", onchange: e => { S.policy = e.target.value; schedulePreview(); } },
+  const policy = h("select", { id: "policy", onchange: e => { S.policy = e.target.value; renderFxWarnings(); schedulePreview(); } },
     h("option", { value: "film" }, "film: the film stock owns halation"), h("option", { value: "optical" }, "optical: replaces the film's halation"),
     h("option", { value: "stacked" }, "stacked: film + optical (deliberate)"), h("option", { value: "disabled" }, "disabled: no halation at all"));
+  const vpolicy = h("select", { id: "vpolicy", onchange: e => { S.vpolicy = e.target.value; renderFxWarnings(); schedulePreview(); } },
+    h("option", { value: "film" }, "film: film stock owns vignetting"),
+    h("option", { value: "optical" }, "optical: replaces film vignette with optical vignetting"),
+    h("option", { value: "stacked" }, "stacked: combine film and optical falloff"),
+    h("option", { value: "disabled" }, "disabled: no vignetting"));
+  const warnings = h("div", { id: "fx_warnings", style: "margin-top:.7rem" });
   return h("div", {}, h("p", { class: "dim", style: "margin-top:0" }, "Effects run on scene-linear light before the look and film, in the engine's fixed order. Starter parameters are provisional artistic approximations, not measured recreations of any filter."),
     presetGroup, divider, fxGroup, h("div", { class: "grid2", style: "margin-top:1rem" },
       h("div", {}, h("label", { for: "fxstrength" }, "Effects strength ", h("span", { id: "fxv", class: "val" }, "0.50")), strength),
-      h("div", {}, h("label", { for: "policy" }, "Halation (applied exactly once)"), policy)));
+      h("div", {}, h("label", { for: "policy" }, "Halation policy"), policy),
+      h("div", { style: "grid-column: 1 / -1; margin-top:.4rem" }, h("label", { for: "vpolicy" }, "Vignetting policy"), vpolicy)),
+    warnings);
 }
+
+const FX_STAGE_GROUPS = [
+  { id: "diffusion", name: "Diffusion & Glow", ids: ["soft_sun_glow", "black_pro_mist_like", "warm_diffusion"] },
+  { id: "flares", name: "Flares & Streaks", ids: ["lens_flare_ghosting", "starburst_cross_screen", "anamorphic_streak", "horizontal_streak_blue"] },
+  { id: "artifacts", name: "Light & Film Artifacts", ids: ["analog_light_leaks", "light_leak_warm", "film_halation_extra"] },
+  { id: "lens", name: "Lens Character", ids: ["optical_vignetting", "vintage_glass_barrel_distortion", "vintage_glass_chromatic_aberration", "vintage_glass_edge_softness"] },
+  { id: "focus", name: "Creative Focus", ids: ["lensbaby_sweet_spot", "tilt_shift_miniature"] }
+];
+
+function renderFxWarnings() {
+  const box = $("#fx_warnings"); if (!box) return;
+  const warns = [];
+  if (S.policy === "optical" && !S.fx.has("film_halation_extra")) {
+    warns.push("Halation policy 'optical' is active, but film_halation_extra is not in the optical stack.");
+  }
+  if (S.vpolicy === "optical" && !S.fx.has("optical_vignetting")) {
+    warns.push("Vignette policy 'optical' is active, but optical_vignetting is not in the optical stack (falls back to film vignetting).");
+  }
+  if (S.fx.size > 5) {
+    warns.push(`Heavy optical stack: ${S.fx.size} active effects. Previews and development may take longer.`);
+  }
+  if (!warns.length) {
+    box.replaceChildren();
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  box.replaceChildren(
+    h("div", { style: "font-size:.76rem;color:var(--safe2);background:rgba(255,138,61,.1);border:1px solid rgba(255,138,61,.3);padding:.4rem .6rem;border-radius:2px;display:flex;flex-direction:column;gap:.2rem" },
+      ...warns.map(w => h("div", {}, "⚠ " + w))
+    )
+  );
+}
+
 function renderFx() {
-  const pbox = $("#presetcards"), box = $("#fxcards");
-  if (!box || !S.catalog) return;
+  const pbox = $("#presetcards"), gbox = $("#fxgroups");
+  if (!S.catalog) return;
   if (pbox) {
     const compCards = S.catalog.composites.map(c => {
       const on = isCompositeActive(c);
@@ -1037,17 +1239,20 @@ function renderFx() {
       return h("button", { class: "card preset-card", "aria-pressed": String(on), title: "Sets camera look, film and optical effect together",
         onclick: () => {
           if (on) {
-            S.activePreset = null; S.fxPreset = "none"; S.fx.clear(); S.policy = "film";
+            S.activePreset = null; S.fxPreset = "none"; S.fx.clear(); S.policy = "film"; S.comboPreset = null;
             resetAllFrameOverrides();
             loadFrameAdjustments(S.current);
             syncControls(); renderAssets(); schedulePreview(true); toast("Preset cleared: " + c.name);
             return;
           }
           S.activePreset = c.id;
+          S.comboPreset = null;
           S.look = c.camera_look; S.strength = c.look_strength;
           const f = c.film && findFilmId(c.film); if (f) S.film = f;
           if (c.optical_preset === "golden_haze") {
             S.fxPreset = "golden_haze"; S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
+          } else if (c.optical_preset === "vintage_glass") {
+            S.fxPreset = "vintage_glass"; S.fx = new Set(["vintage_glass_barrel_distortion", "vintage_glass_chromatic_aberration", "vintage_glass_edge_softness"]);
           } else {
             S.fxPreset = "none"; S.fx = new Set([c.optical_preset]);
           }
@@ -1063,6 +1268,10 @@ function renderFx() {
     const anyCompOn = S.catalog.composites.some(isCompositeActive);
     const optPresets = S.catalog.optical_presets.filter(p => p.id !== "none").map(p => {
       const on = S.fxPreset === p.id && (!anyCompOn || S.activePreset === "opt:" + p.id);
+      const isVG = p.id === "vintage_glass";
+      const desc = isVG
+        ? "Barrel Distortion + Chromatic Aberration + Edge Softness"
+        : "Soft Sun Glow + Black Pro-Mist (keeps Look & Film)";
       return h("button", { class: "card preset-card", "aria-pressed": String(on), "aria-disabled": String(!p.supported),
         title: "Applies the optical bundle without changing Camera Look or Film",
         onclick: () => {
@@ -1071,35 +1280,67 @@ function renderFx() {
             S.activePreset = null; S.fxPreset = "none"; S.fx.clear();
           } else {
             S.activePreset = "opt:" + p.id; S.fxPreset = p.id;
-            S.fx = new Set(p.id === "golden_haze" ? ["soft_sun_glow", "black_pro_mist_like"] : []);
+            if (p.id === "golden_haze") {
+              S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
+            } else if (p.id === "vintage_glass") {
+              S.fx = new Set(["vintage_glass_barrel_distortion", "vintage_glass_chromatic_aberration", "vintage_glass_edge_softness"]);
+            } else {
+              S.fx = new Set();
+            }
           }
           syncControls(); schedulePreview();
         } },
         h("span", { class: "badge" }, "✦ Optics bundle"),
         h("strong", {}, p.name),
-        h("small", {}, "Soft Sun Glow + Black Pro-Mist (keeps Look & Film)"));
+        h("small", {}, desc));
     });
     pbox.replaceChildren(...compCards, ...optPresets);
   }
-  box.replaceChildren(...S.catalog.optical_effects.map(o => {
-    const inGoldenHaze = S.fxPreset === "golden_haze" && (o.id === "soft_sun_glow" || o.id === "black_pro_mist_like");
-    const on = inGoldenHaze || S.fx.has(o.id);
-    return h("button", { class: "card fx-card", "aria-pressed": String(on), "aria-disabled": String(!o.supported), onclick: () => {
-      if (!o.supported) return toast(`${o.name}: not available`);
-      if (S.fxPreset === "golden_haze") {
-        S.fxPreset = "none";
-        S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
-      }
-      S.activePreset = null;
-      on ? S.fx.delete(o.id) : S.fx.add(o.id);
-      if (o.id === "film_halation_extra") S.policy = S.fx.has(o.id) ? "optical" : "film";
-      syncControls(); schedulePreview(); } },
-      h("span", { class: "badge" }, inGoldenHaze ? "Effect · in preset" : "Individual effect"),
-      h("strong", {}, o.name),
-      h("small", {}, "optical effect"));
-  }));
+  if (gbox) {
+    const allFx = new Map(S.catalog.optical_effects.map(o => [o.id, o]));
+    const groupElements = FX_STAGE_GROUPS.map(grp => {
+      const groupItems = grp.ids.map(id => allFx.get(id)).filter(Boolean);
+      if (!groupItems.length) return null;
+      const cards = groupItems.map(o => {
+        const inPreset = (S.fxPreset === "golden_haze" && (o.id === "soft_sun_glow" || o.id === "black_pro_mist_like"))
+          || (S.fxPreset === "vintage_glass" && (o.id === "vintage_glass_barrel_distortion" || o.id === "vintage_glass_chromatic_aberration" || o.id === "vintage_glass_edge_softness"));
+        const on = inPreset || S.fx.has(o.id);
+        return h("button", { class: "card fx-card", "aria-pressed": String(on), "aria-disabled": String(!o.supported), onclick: () => {
+          if (!o.supported) return toast(`${o.name}: not available`);
+          if (S.fxPreset === "golden_haze") {
+            S.fxPreset = "none";
+            S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
+          } else if (S.fxPreset === "vintage_glass") {
+            S.fxPreset = "none";
+            S.fx = new Set(["vintage_glass_barrel_distortion", "vintage_glass_chromatic_aberration", "vintage_glass_edge_softness"]);
+          }
+          S.activePreset = null;
+          S.comboPreset = null;
+          if (on) {
+            S.fx.delete(o.id);
+            if (S.fxParams) delete S.fxParams[o.id];
+          } else {
+            S.fx.add(o.id);
+          }
+          if (o.id === "film_halation_extra") S.policy = S.fx.has(o.id) ? "optical" : "film";
+          if (o.id === "optical_vignetting") S.vpolicy = S.fx.has(o.id) ? "optical" : "film";
+          syncControls(); schedulePreview(); } },
+          h("span", { class: "badge" }, inPreset ? "In bundle" : (o.wave ? `Wave ${o.wave}` : "Effect")),
+          h("strong", {}, o.name),
+          h("small", {}, o.category ? o.category.replace(/_/g, " ") : "optical effect"));
+      });
+      return h("div", { class: "fx-stage-group" },
+        h("div", { class: "fx-group-title" },
+          h("span", {}, grp.name),
+          h("small", { class: "dim" }, `${groupItems.length} ops`)),
+        h("div", { class: "cards" }, ...cards));
+    }).filter(Boolean);
+    gbox.replaceChildren(...groupElements);
+  }
+  renderFxWarnings();
 }
 function syncControls() {
+  renderCombos();
   renderLooks(); renderFilms(); renderFx();
   if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; }
   if ($("#fxstrength")) { $("#fxstrength").value = Math.round(S.fxStrength * 100); $("#fxv").textContent = S.fxStrength.toFixed(2); }
@@ -1109,6 +1350,7 @@ function syncControls() {
     if (val) val.textContent = (S[k] !== undefined ? S[k] : 1).toFixed(2);
   });
   if ($("#policy")) $("#policy").value = S.policy;
+  if ($("#vpolicy")) $("#vpolicy").value = S.vpolicy || "film";
   S.sliders.forEach(x => { x.inp.value = x.get(); x.out.textContent = x.fmt(x.get()); });
   const none = S.film === "none";
   ["#sl_grain", "#sl_halation", "#sl_softness", "#sl_develop"].forEach(q => { const i = $(q); if (i) i.disabled = none; });
@@ -1123,7 +1365,7 @@ const PRESET_V = 1;
 let userPresets = [], activeUserPreset = null;
 function snapshotState() {
   return { v: PRESET_V, look: S.look, strength: S.strength, film: S.film, grain: S.grain, halation: S.halation, softness: S.softness,
-    fxPreset: S.fxPreset, fx: [...S.fx], fxStrength: S.fxStrength, policy: S.policy, activePreset: S.activePreset,
+    fxPreset: S.fxPreset, fx: [...S.fx], fxStrength: S.fxStrength, policy: S.policy, vpolicy: S.vpolicy, comboPreset: S.comboPreset, fxParams: { ...S.fxParams }, activePreset: S.activePreset,
     tone: { ...S.tone }, wbSel: S.wbSel, wbCustom: { ...S.wbCustom }, seed: S.seed };
 }
 function canon(x) {
@@ -1145,6 +1387,9 @@ function applyPresetState(st, name) {
   S.fxPreset = st.fxPreset && C.optical_presets.some(p => p.id === st.fxPreset) ? st.fxPreset : "none";
   S.fxStrength = num(st.fxStrength, 0.5);
   S.policy = ["film", "optical", "stacked", "disabled"].includes(st.policy) ? st.policy : "film";
+  S.vpolicy = ["film", "optical", "stacked", "disabled"].includes(st.vpolicy) ? st.vpolicy : "film";
+  S.comboPreset = st.comboPreset || null;
+  S.fxParams = (st.fxParams && typeof st.fxParams === "object") ? { ...st.fxParams } : {};
   S.activePreset = st.activePreset || null;
   if (st.tone) {
     Object.assign(S.baseTone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, st.tone);

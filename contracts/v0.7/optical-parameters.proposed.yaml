@@ -1,0 +1,147 @@
+version: 0.6-proposed-integrated
+units:
+  threshold: scene-linear Luma after normalized exposure, reference middle gray 0.18
+  knee: scene-linear threshold blend width
+  radius_fraction: fraction of output image diagonal
+  strength: '[0,1] mix factor'
+effects:
+- id: soft_sun_glow
+  default:
+    threshold: 1.0
+    knee: 0.28
+    radius_fraction: 0.012
+    warm_shift: 0.1
+    veil: 0.08
+- id: ricoh_hdf_diffusion
+  default:
+    threshold: 0.75
+    knee: 0.35
+    radius_fraction: 0.006
+    broad_radius_fraction: 0.02
+    veil: 0.045
+- id: black_pro_mist_like
+  default:
+    threshold: 0.85
+    knee: 0.3
+    radius_fraction: 0.015
+    veil: 0.035
+- id: vintage_veiling_flare
+  default:
+    threshold: 0.9
+    knee: 0.4
+    radius_fraction: 0.05
+    veil: 0.13
+- id: film_halation_extra
+  default:
+    threshold: 1.15
+    knee: 0.2
+    radius_fraction: 0.003
+    red_gain: 0.12
+- id: orton_glow
+  default:
+    threshold: 0.5
+    knee: 0.4
+    radius_fraction: 0.03
+    mix: 0.28
+- id: none
+  default: {}
+- id: optical_vignetting
+  default:
+    strength_stops: 0.45
+    inner_radius: 0.55
+    feather: 0.35
+    center_x: 0.5
+    center_y: 0.5
+    aspect_ratio: 1.0
+    shape_power: 2
+    highlight_protection: 0
+- id: lens_flare_ghosting
+  default:
+    amount: 0.35
+    ghost_count: 5
+    spread: 0.6
+    radius_fraction: 0.018
+    chromatic_separation: 0.12
+    hue_bias: 0
+    aperture_blades: 6
+    softness: 0.5
+    source_threshold: 1.1
+    auto_source_limit: 5
+- id: starburst_cross_screen
+  default:
+    points: 6
+    angle_degrees: 0
+    ray_length_fraction: 0.16
+    ray_width: 0.004
+    falloff: 2
+    highlight_threshold: 1.2
+    knee: 0.25
+    max_sources: 8
+    amount: 0.4
+- id: anamorphic_streak
+  default:
+    angle_degrees: 0
+    length_fraction: 0.26
+    core_width: 0.005
+    falloff: 2.5
+    chromatic_split: 0.12
+    threshold: 1.1
+    knee: 0.25
+    amount: 0.4
+    auto_source_limit: 5
+- id: analog_light_leaks
+  default:
+    seed_offset: 0
+    amount: 0.35
+    coverage: 0.32
+    width_fraction: 0.24
+    feather: 0.3
+    warmth: 0.75
+    hue_variance: 0.15
+    irregularity: 0.5
+    bleed: 0.2
+    frame_variation: 0.15
+- id: lensbaby_sweet_spot
+  default:
+    focus_x: 0.5
+    focus_y: 0.5
+    focus_radius_fraction: 0.15
+    transition_width: 0.25
+    max_blur_radius_fraction: 0.011
+    falloff_power: 2
+    edge_bloom: 0
+    amount: 0.55
+- id: tilt_shift_miniature
+  default:
+    band_center_x: 0.5
+    band_center_y: 0.5
+    angle_degrees: 0
+    sharp_band_width_fraction: 0.2
+    transition_width: 0.22
+    max_blur_radius_fraction: 0.017
+    falloff: 2
+    amount: 0.7
+    vividness_boost: 0
+- id: vintage_glass_barrel_distortion
+  default:
+    k1: -0.035
+    k2: 0
+    center_x: 0.5
+    center_y: 0.5
+    amount: 0.5
+- id: vintage_glass_chromatic_aberration
+  default:
+    red_shift_fraction: 0.001
+    blue_shift_fraction: 0.0015
+    radial_power: 2
+    center_x: 0.5
+    center_y: 0.5
+    amount: 0.5
+- id: vintage_glass_edge_softness
+  default:
+    center_clear_fraction: 0.4
+    edge_blur_radius_fraction: 0.002
+    falloff_power: 2
+    amount: 0.5
+notes: Existing six effect IDs and initial defaults retained. New effects added to the same optical.stack and existing Linux
+  renderer. See optical-effects-catalog.yaml for bounds and stage grouping.

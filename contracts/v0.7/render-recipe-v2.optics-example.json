@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "preset_id": "leica-m9-portra-sun-with-ghosts-v06",
+  "camera_look": {
+    "id": "leica_m9_ccd",
+    "version": "1.0.0",
+    "strength": 0.8
+  },
+  "film": {
+    "id": "kodak-portra-400",
+    "grain_scale": 1.0,
+    "halation_scale": 1.0,
+    "softness_scale": 1.0
+  },
+  "optical": {
+    "preset_id": "sunny_film",
+    "strength": 0.45,
+    "halation_policy": "film",
+    "stack": [
+      {
+        "id": "soft_sun_glow",
+        "enabled": true,
+        "parameters": {
+          "threshold": 1.0,
+          "knee": 0.25,
+          "radius_fraction": 0.012
+        }
+      },
+      {
+        "id": "lens_flare_ghosting",
+        "enabled": true,
+        "parameters": {
+          "amount": 0.25,
+          "ghost_count": 5,
+          "radius_fraction": 0.018
+        },
+        "source_selection": {
+          "mode": "manual",
+          "points": [
+            {
+              "x": 0.78,
+              "y": 0.21,
+              "weight": 1.0,
+              "radius": 0.05
+            }
+          ]
+        }
+      },
+      {
+        "id": "optical_vignetting",
+        "enabled": true,
+        "parameters": {
+          "strength_stops": 0.45,
+          "center_x": 0.5,
+          "center_y": 0.5,
+          "inner_radius": 0.55
+        }
+      }
+    ],
+    "vignette_policy": "optical"
+  },
+  "render": {
+    "output_format": "jpeg",
+    "output_color_space": "srgb",
+    "quality": 92,
+    "width": 4000,
+    "height": 3000
+  },
+  "seed": 12345
+}

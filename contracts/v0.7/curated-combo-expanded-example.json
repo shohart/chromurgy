@@ -1,0 +1,42 @@
+{
+  "schema_version": 2,
+  "preset_id": "classic-neg-kodak-gold-v07",
+  "camera_look": {
+    "id": "fujifilm_xpro3_classic_negative",
+    "version": "1.0.0",
+    "strength": 0.3
+  },
+  "film": {
+    "id": "kodak-gold-200",
+    "grain_scale": 1.0,
+    "halation_scale": 1.0,
+    "softness_scale": 1.0
+  },
+  "optical": {
+    "preset_id": "classic-neg-kodak-gold-v07",
+    "strength": 1.0,
+    "halation_policy": "film",
+    "vignette_policy": "optical",
+    "stack": [
+      {
+        "id": "optical_vignetting",
+        "enabled": true,
+        "parameters": {
+          "strength_stops": 0.32,
+          "inner_radius": 0.6,
+          "feather": 0.3
+        }
+      }
+    ]
+  },
+  "render": {
+    "output_format": "jpeg",
+    "output_color_space": "srgb",
+    "quality": 93
+  },
+  "seed": 987654,
+  "extensions": {
+    "preset_catalog_version": "0.7.0",
+    "evidence_tier": "direct_recipe_family_adapted"
+  }
+}

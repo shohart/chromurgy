@@ -13,78 +13,32 @@ not in the shared C core, so they run on the Linux server only (the camera never
 from __future__ import annotations
 
 import numpy as np
-from PIL import Image
 
+from .imgops import LUMA, blur, luma, smoothstep  # noqa: F401  (re-exported: other modules/tests use creative.blur etc.)
 from .creative_params import EFFECTS as EFFECT_DEFAULTS
 from .creative_params import LOOKS as LOOK_PARAMS
 
-VERSION = "mfilm-creative-1"
-EFFECT_ORDER = ["vintage_veiling_flare", "soft_sun_glow", "ricoh_hdf_diffusion", "black_pro_mist_like",
+VERSION = "mfilm-creative-1"             # recipes that use none of the NEW_EFFECTS keep this identity
+VERSION_OPTICS = "mfilm-creative-2"      # recipes with a v0.6 operator (see optics.IMPLEMENTATION_VERSION)
+LEGACY_ORDER = ["vintage_veiling_flare", "soft_sun_glow", "ricoh_hdf_diffusion", "black_pro_mist_like",
                 "orton_glow", "film_halation_extra"]
-LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)
+# Canonical execution order (docs/optical-engine/integration.md): geometry -> channel warp -> softening/focus ->
+# source-driven light optics -> the six original diffusion/glow effects (their relative order is unchanged, so
+# archived recipes render exactly as before) -> light leaks -> exposure vignette.
+EFFECT_ORDER = ["vintage_glass_barrel_distortion", "vintage_glass_chromatic_aberration", "vintage_glass_edge_softness",
+                "lensbaby_sweet_spot", "tilt_shift_miniature",
+                "lens_flare_ghosting", "starburst_cross_screen", "anamorphic_streak",
+                *LEGACY_ORDER, "analog_light_leaks", "optical_vignetting"]
+NEW_EFFECTS = [e for e in EFFECT_ORDER if e not in LEGACY_ORDER]
 # composite optical presets: the stack they expand to (per-effect parameter overrides; strength scales them)
 PRESETS = {"golden_haze": [("soft_sun_glow", {"warm_shift": 0.18, "veil": 0.12}),
-                           ("black_pro_mist_like", {"veil": 0.03})]}
+                           ("black_pro_mist_like", {"veil": 0.03})],
+           # compound preset: expands to its three real operators plus the exposure vignette, all editable (algorithms.md H4)
+           "vintage_glass": [("vintage_glass_barrel_distortion", {}), ("vintage_glass_chromatic_aberration", {}),
+                             ("vintage_glass_edge_softness", {}), ("optical_vignetting", {})]}
 # every parameter a recipe may set, with its allowed range
 PARAM_RANGE = {"threshold": (0.0, 4.0), "knee": (0.01, 2.0), "radius_fraction": (0.0005, 0.2), "broad_radius_fraction": (0.001, 0.4),
                "warm_shift": (-0.5, 0.5), "veil": (0.0, 0.6), "red_gain": (0.0, 1.0), "mix": (0.0, 1.0)}
-
-
-def luma(x: np.ndarray) -> np.ndarray:
-    return x @ LUMA
-
-
-def smoothstep(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
-    t = np.clip((x - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
-    return t * t * (3 - 2 * t)
-
-
-# ---- blur -------------------------------------------------------------------------------------------
-def _box(a: np.ndarray, r: int, axis: int) -> np.ndarray:
-    """Box blur of radius r along axis, edges replicated (cumulative-sum form: O(n) per radius)."""
-    if r < 1:
-        return a
-    n = a.shape[axis]
-    pad = [(0, 0)] * a.ndim
-    pad[axis] = (r + 1, r)
-    c = np.cumsum(np.pad(a, pad, mode="edge"), axis=axis, dtype=np.float64)
-    hi = np.take(c, range(2 * r + 1, 2 * r + 1 + n), axis=axis)
-    lo = np.take(c, range(0, n), axis=axis)
-    return ((hi - lo) / (2 * r + 1)).astype(np.float32)
-
-
-def _gauss_small(a: np.ndarray, sigma: float) -> np.ndarray:
-    """Gaussian approximated by three box blurs per axis ('boxes for gauss')."""
-    if sigma < 0.5:
-        return a
-    n = 3
-    w = np.sqrt(12 * sigma * sigma / n + 1)
-    wl = int(np.floor(w))
-    wl -= (wl % 2 == 0)
-    wu = wl + 2
-    m = round((12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4))
-    out = a
-    for i in range(n):
-        r = ((wl if i < m else wu) - 1) // 2
-        out = _box(_box(out, r, 0), r, 1)
-    return out
-
-
-def blur(a: np.ndarray, sigma: float) -> np.ndarray:
-    """Gaussian blur of an HxWxC float image. Large sigmas run on a reduced copy (far-field glow needs no
-    full-resolution kernel); the factor is a pure function of sigma, so results are reproducible."""
-    if sigma < 0.5:
-        return a
-    f = 1
-    while sigma / f > 6 and f < 64:
-        f *= 2
-    if f == 1:
-        return _gauss_small(a, sigma)
-    h, w = a.shape[:2]
-    sw, sh = max(1, w // f), max(1, h // f)
-    small = np.stack([np.asarray(Image.fromarray(a[..., c], "F").resize((sw, sh), Image.BOX)) for c in range(a.shape[2])], -1)
-    small = _gauss_small(small, sigma / f)
-    return np.stack([np.asarray(Image.fromarray(small[..., c], "F").resize((w, h), Image.BICUBIC)) for c in range(a.shape[2])], -1)
 
 
 # ---- optical effects --------------------------------------------------------------------------------
@@ -92,10 +46,28 @@ def _soft_mask(lum: np.ndarray, thr: float, knee: float) -> np.ndarray:
     return smoothstep(lum, thr - knee, thr + knee)       # smooth knee, no hard threshold
 
 
-def apply_effect(x: np.ndarray, eid: str, p: dict, k: float, diag: float) -> np.ndarray:
+class Ctx:
+    """Per-render context of the optical stage: seed/salt of the stochastic operators and the per-effect source
+    selection; `sources` collects what each source-driven effect actually acted on (for no-source reporting)."""
+
+    def __init__(self, seed: int = 0, salt: str = "", items: dict | None = None):
+        self.seed, self.salt, self.items = int(seed), str(salt), items or {}
+        self.sources: dict[str, list[dict]] = {}
+
+    def selection(self, eid: str) -> dict | None:
+        return (self.items.get(eid) or {}).get("source_selection")
+
+    def note(self, eid: str, srcs: list[dict]) -> None:
+        self.sources[eid] = srcs
+
+
+def apply_effect(x: np.ndarray, eid: str, p: dict, k: float, diag: float, ctx: Ctx | None = None) -> np.ndarray:
     """One effect at strength k (0..1), on scene-linear RGB. k == 0 returns the input unchanged."""
     if k <= 0:
         return x
+    if eid in NEW_EFFECTS:
+        from . import optics
+        return optics.OPERATORS[eid](x, p, k, ctx or Ctx())
     lum = luma(x)
     m = _soft_mask(lum, p.get("threshold", 1.0), p.get("knee", 0.3))
     hi = x * m[..., None]                                  # bright branch keeps its colour
@@ -135,15 +107,17 @@ def apply_effect(x: np.ndarray, eid: str, p: dict, k: float, diag: float) -> np.
     raise ValueError(f"unknown effect {eid}")
 
 
-def apply_optics(x: np.ndarray, stack: list[dict], strength: float) -> np.ndarray:
+def apply_optics(x: np.ndarray, stack: list[dict], strength: float, ctx: Ctx | None = None) -> np.ndarray:
     """stack: normalized items [{id, enabled, parameters}] (all parameters present). Legal order is the
     engine's (EFFECT_ORDER), never the order the client listed them in."""
     h, w = x.shape[:2]
     diag = float(np.hypot(h, w))
     by = {s["id"]: s for s in stack if s["enabled"]}
+    ctx = ctx or Ctx(items=by)
+    ctx.items = by
     for eid in EFFECT_ORDER:
         if eid in by:
-            x = apply_effect(x, eid, by[eid]["parameters"], strength, diag)
+            x = apply_effect(x, eid, by[eid]["parameters"], strength, diag, ctx)
     return x
 
 
@@ -181,14 +155,20 @@ def apply_look(x: np.ndarray, look_id: str, strength: float) -> np.ndarray:
     return np.maximum(x + strength * (out - x), 0.0)
 
 
-def apply_creative(lin: np.ndarray, creative: dict | None) -> np.ndarray:
+def apply_creative(lin: np.ndarray, creative: dict | None, salt: str = "", report: dict | None = None) -> np.ndarray:
     """The whole pre-film creative stage for one v1-bridge `creative` block; no block = identity."""
     if not creative:
         return lin
     x = np.asarray(lin, dtype=np.float32)
     opt = creative.get("optical")
     if opt and opt["strength"] > 0 and opt["stack"]:
-        x = apply_optics(x, opt["stack"], opt["strength"])
+        ctx = Ctx(creative.get("seed", 0), salt)
+        x = apply_optics(x, opt["stack"], opt["strength"], ctx)
+        if report is not None:       # what the source-driven effects acted on: "no light source detected" must be visible
+            from .optics import source_id
+            for eid, srcs in ctx.sources.items():
+                report[eid] = [{"id": source_id(s), "x": round(s["x"], 4), "y": round(s["y"], 4),
+                                "confidence": round(s["confidence"], 3), "manual": bool(s.get("manual"))} for s in srcs]
     look = creative.get("camera_look")
     if look and look["strength"] > 0 and look["id"] != "neutral":
         x = apply_look(x, look["id"], look["strength"])

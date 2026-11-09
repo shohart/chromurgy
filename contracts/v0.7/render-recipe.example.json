@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "recipe_id": "recipe-portra400-demo-v1",
+  "film_profile_id": "kodak-portra-400",
+  "profile_bundle_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "film_core_abi_version": 1,
+  "film_core_commit": "UNPINNED_EXAMPLE_REPLACE_WITH_GIT_HASH",
+  "input_normalization_version": "mfilm-linear-rgb-v1",
+  "white_balance_mode": "as-shot",
+  "demosaic_mode": "reference",
+  "exposure_compensation_ev": 0.0,
+  "grain_seed_mode": "derived-per-frame",
+  "user_seed": 0,
+  "look_controls": {
+    "grain_scale": 1.0,
+    "halation_scale": 1.0,
+    "softness_scale": 1.0
+  },
+  "output_spec": {
+    "format": "image/jpeg",
+    "colorspace": "sRGB",
+    "width": 4000,
+    "height": 3000,
+    "jpeg_quality": 92,
+    "orientation_policy": "normalize-pixels"
+  }
+}

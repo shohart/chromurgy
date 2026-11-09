@@ -1,0 +1,718 @@
+{
+ "schema_version": "0.6",
+ "status": "required_specification_not_claimed_implemented",
+ "integration": "same_linux_server_optical_stack",
+ "existing_effect_ids_preserved": [
+  "soft_sun_glow",
+  "ricoh_hdf_diffusion",
+  "black_pro_mist_like",
+  "vintage_veiling_flare",
+  "film_halation_extra",
+  "orton_glow"
+ ],
+ "standalone_effect_count": 13,
+ "compound_presets": [
+  "vintage_glass"
+ ],
+ "wave_labels": [
+  1,
+  2,
+  3,
+  5,
+  10
+ ],
+ "effects": [
+  {
+   "id": "soft_sun_glow",
+   "name": "Soft Sun Glow",
+   "group": "Diffusion & Glow",
+   "kind": "effect",
+   "origin": "existing_v0.5",
+   "required": "preserve_and_regression_test",
+   "stage": "existing_implementation_pinned"
+  },
+  {
+   "id": "ricoh_hdf_diffusion",
+   "name": "Ricoh HDF Diffusion",
+   "group": "Diffusion & Glow",
+   "kind": "effect",
+   "origin": "existing_v0.5",
+   "required": "preserve_and_regression_test",
+   "stage": "existing_implementation_pinned"
+  },
+  {
+   "id": "black_pro_mist_like",
+   "name": "Black Pro-Mist Like",
+   "group": "Diffusion & Glow",
+   "kind": "effect",
+   "origin": "existing_v0.5",
+   "required": "preserve_and_regression_test",
+   "stage": "existing_implementation_pinned"
+  },
+  {
+   "id": "vintage_veiling_flare",
+   "name": "Vintage Veiling Flare",
+   "group": "Flares & Streaks",
+   "kind": "effect",
+   "origin": "existing_v0.5",
+   "required": "preserve_and_regression_test",
+   "stage": "existing_implementation_pinned"
+  },
+  {
+   "id": "film_halation_extra",
+   "name": "Film Halation Extra",
+   "group": "Light & Film Artifacts",
+   "kind": "effect",
+   "origin": "existing_v0.5",
+   "required": "preserve_and_regression_test",
+   "stage": "existing_implementation_pinned"
+  },
+  {
+   "id": "orton_glow",
+   "name": "Orton Glow",
+   "group": "Diffusion & Glow",
+   "kind": "effect",
+   "origin": "existing_v0.5",
+   "required": "preserve_and_regression_test",
+   "stage": "existing_implementation_pinned"
+  },
+  {
+   "id": "optical_vignetting",
+   "name": "Optical Vignetting",
+   "group": "Lens Character",
+   "kind": "effect",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 1,
+   "stage": "pre_tone_exposure",
+   "description": "Creative radial/elliptical exposure falloff independent of lens correction",
+   "tags": [
+    "portrait",
+    "street",
+    "landscape"
+   ],
+   "controls": {
+    "strength_stops": {
+     "default": 0.45,
+     "minimum": 0,
+     "maximum": 3,
+     "unit": "ev"
+    },
+    "inner_radius": {
+     "default": 0.55,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "feather": {
+     "default": 0.35,
+     "minimum": 0.01,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "center_x": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "center_y": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "aspect_ratio": {
+     "default": 1.0,
+     "minimum": 0.25,
+     "maximum": 4,
+     "unit": "ratio"
+    },
+    "shape_power": {
+     "default": 2,
+     "minimum": 1.1,
+     "maximum": 8,
+     "unit": "exponent"
+    },
+    "highlight_protection": {
+     "default": 0,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    }
+   }
+  },
+  {
+   "id": "lens_flare_ghosting",
+   "name": "Lens Flare Ghosting",
+   "group": "Flares & Streaks",
+   "kind": "effect",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 2,
+   "stage": "pre_tone_light",
+   "description": "Source-linked internal-lens reflections distinct from veiling flare",
+   "tags": [
+    "sunset",
+    "backlight",
+    "night"
+   ],
+   "controls": {
+    "amount": {
+     "default": 0.35,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "ghost_count": {
+     "default": 5,
+     "minimum": 2,
+     "maximum": 12,
+     "unit": "integer"
+    },
+    "spread": {
+     "default": 0.6,
+     "minimum": 0,
+     "maximum": 2,
+     "unit": "fraction"
+    },
+    "radius_fraction": {
+     "default": 0.018,
+     "minimum": 0.0001,
+     "maximum": 0.15,
+     "unit": "diagonal_fraction"
+    },
+    "chromatic_separation": {
+     "default": 0.12,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "hue_bias": {
+     "default": 0,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "aperture_blades": {
+     "default": 6,
+     "minimum": 4,
+     "maximum": 12,
+     "unit": "integer"
+    },
+    "softness": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "source_threshold": {
+     "default": 1.1,
+     "minimum": 0.01,
+     "maximum": 16,
+     "unit": "scene_linear_luma"
+    },
+    "auto_source_limit": {
+     "default": 5,
+     "minimum": 1,
+     "maximum": 20,
+     "unit": "integer"
+    }
+   }
+  },
+  {
+   "id": "starburst_cross_screen",
+   "name": "Starburst / Cross Screen",
+   "group": "Light & Film Artifacts",
+   "kind": "effect",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 2,
+   "stage": "pre_tone_light",
+   "description": "4/6/8 ray source-based diffraction/star filter",
+   "tags": [
+    "night",
+    "city",
+    "holiday"
+   ],
+   "controls": {
+    "points": {
+     "default": 6,
+     "minimum": 4,
+     "maximum": 8,
+     "unit": "enum_4_6_8"
+    },
+    "angle_degrees": {
+     "default": 0,
+     "minimum": 0,
+     "maximum": 180,
+     "unit": "degrees"
+    },
+    "ray_length_fraction": {
+     "default": 0.16,
+     "minimum": 0.001,
+     "maximum": 0.75,
+     "unit": "diagonal_fraction"
+    },
+    "ray_width": {
+     "default": 0.004,
+     "minimum": 0.0001,
+     "maximum": 0.06,
+     "unit": "diagonal_fraction"
+    },
+    "falloff": {
+     "default": 2,
+     "minimum": 0.1,
+     "maximum": 8,
+     "unit": "exponent"
+    },
+    "highlight_threshold": {
+     "default": 1.2,
+     "minimum": 0.01,
+     "maximum": 16,
+     "unit": "scene_linear_luma"
+    },
+    "knee": {
+     "default": 0.25,
+     "minimum": 0.01,
+     "maximum": 2,
+     "unit": "scene_linear_luma"
+    },
+    "max_sources": {
+     "default": 8,
+     "minimum": 1,
+     "maximum": 30,
+     "unit": "integer"
+    },
+    "amount": {
+     "default": 0.4,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    }
+   }
+  },
+  {
+   "id": "anamorphic_streak",
+   "name": "Anamorphic Streak",
+   "group": "Flares & Streaks",
+   "kind": "effect",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 3,
+   "stage": "pre_tone_light",
+   "description": "Directional light streak centered on actual bright sources",
+   "tags": [
+    "night",
+    "neon",
+    "cinematic"
+   ],
+   "controls": {
+    "angle_degrees": {
+     "default": 0,
+     "minimum": 0,
+     "maximum": 180,
+     "unit": "degrees"
+    },
+    "length_fraction": {
+     "default": 0.26,
+     "minimum": 0.001,
+     "maximum": 1.5,
+     "unit": "diagonal_fraction"
+    },
+    "core_width": {
+     "default": 0.005,
+     "minimum": 0.0001,
+     "maximum": 0.07,
+     "unit": "diagonal_fraction"
+    },
+    "falloff": {
+     "default": 2.5,
+     "minimum": 0.1,
+     "maximum": 9,
+     "unit": "exponent"
+    },
+    "chromatic_split": {
+     "default": 0.12,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "threshold": {
+     "default": 1.1,
+     "minimum": 0.01,
+     "maximum": 16,
+     "unit": "scene_linear_luma"
+    },
+    "knee": {
+     "default": 0.25,
+     "minimum": 0.01,
+     "maximum": 2,
+     "unit": "scene_linear_luma"
+    },
+    "amount": {
+     "default": 0.4,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "auto_source_limit": {
+     "default": 5,
+     "minimum": 1,
+     "maximum": 20,
+     "unit": "integer"
+    }
+   }
+  },
+  {
+   "id": "analog_light_leaks",
+   "name": "Analog Light Leaks",
+   "group": "Light & Film Artifacts",
+   "kind": "effect",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 3,
+   "stage": "pre_tone_light",
+   "description": "Deterministic procedural edge fogging / leak patterns",
+   "tags": [
+    "film",
+    "summer",
+    "travel"
+   ],
+   "controls": {
+    "seed_offset": {
+     "default": 0,
+     "minimum": 0,
+     "maximum": 4294967295,
+     "unit": "integer"
+    },
+    "amount": {
+     "default": 0.35,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "coverage": {
+     "default": 0.32,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "width_fraction": {
+     "default": 0.24,
+     "minimum": 0.001,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "feather": {
+     "default": 0.3,
+     "minimum": 0.001,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "warmth": {
+     "default": 0.75,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "hue_variance": {
+     "default": 0.15,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "irregularity": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "bleed": {
+     "default": 0.2,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "frame_variation": {
+     "default": 0.15,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    }
+   }
+  },
+  {
+   "id": "lensbaby_sweet_spot",
+   "name": "Lensbaby Sweet Spot",
+   "group": "Creative Focus",
+   "kind": "effect",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 5,
+   "stage": "pre_tone_focus",
+   "description": "Adjustable isolated sharp focus center with progressive 2D blur",
+   "tags": [
+    "portrait",
+    "flowers",
+    "subject"
+   ],
+   "controls": {
+    "focus_x": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "focus_y": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "focus_radius_fraction": {
+     "default": 0.15,
+     "minimum": 0.005,
+     "maximum": 1,
+     "unit": "diagonal_fraction"
+    },
+    "transition_width": {
+     "default": 0.25,
+     "minimum": 0.001,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "max_blur_radius_fraction": {
+     "default": 0.011,
+     "minimum": 0,
+     "maximum": 0.1,
+     "unit": "diagonal_fraction"
+    },
+    "falloff_power": {
+     "default": 2,
+     "minimum": 0.1,
+     "maximum": 8,
+     "unit": "exponent"
+    },
+    "edge_bloom": {
+     "default": 0,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "amount": {
+     "default": 0.55,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    }
+   }
+  },
+  {
+   "id": "tilt_shift_miniature",
+   "name": "Tilt-Shift Miniature",
+   "group": "Creative Focus",
+   "kind": "effect",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 10,
+   "stage": "pre_tone_focus",
+   "description": "Rotatable band of focus with progressive blur",
+   "tags": [
+    "city",
+    "architecture",
+    "high_angle"
+   ],
+   "controls": {
+    "band_center_x": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "band_center_y": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "angle_degrees": {
+     "default": 0,
+     "minimum": -180,
+     "maximum": 180,
+     "unit": "degrees"
+    },
+    "sharp_band_width_fraction": {
+     "default": 0.2,
+     "minimum": 0.01,
+     "maximum": 1,
+     "unit": "image_height_fraction"
+    },
+    "transition_width": {
+     "default": 0.22,
+     "minimum": 0.001,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "max_blur_radius_fraction": {
+     "default": 0.017,
+     "minimum": 0,
+     "maximum": 0.15,
+     "unit": "diagonal_fraction"
+    },
+    "falloff": {
+     "default": 2,
+     "minimum": 0.1,
+     "maximum": 8,
+     "unit": "exponent"
+    },
+    "amount": {
+     "default": 0.7,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "vividness_boost": {
+     "default": 0,
+     "minimum": 0,
+     "maximum": 0.5,
+     "unit": "fraction"
+    }
+   }
+  },
+  {
+   "id": "vintage_glass_barrel_distortion",
+   "name": "Vintage Glass: Barrel Distortion",
+   "group": "Lens Character",
+   "kind": "advanced_vintage_glass_component",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 5,
+   "stage": "geometry",
+   "description": "Editable radial geometric distortion",
+   "controls": {
+    "k1": {
+     "default": -0.035,
+     "minimum": -0.4,
+     "maximum": 0.4,
+     "unit": "coefficient"
+    },
+    "k2": {
+     "default": 0,
+     "minimum": -0.15,
+     "maximum": 0.15,
+     "unit": "coefficient"
+    },
+    "center_x": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "center_y": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "amount": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    }
+   }
+  },
+  {
+   "id": "vintage_glass_chromatic_aberration",
+   "name": "Vintage Glass: Lateral Chromatic Aberration",
+   "group": "Lens Character",
+   "kind": "advanced_vintage_glass_component",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 5,
+   "stage": "geometry",
+   "description": "Radial RGB channel sampling offset",
+   "controls": {
+    "red_shift_fraction": {
+     "default": 0.001,
+     "minimum": 0,
+     "maximum": 0.025,
+     "unit": "diagonal_fraction"
+    },
+    "blue_shift_fraction": {
+     "default": 0.0015,
+     "minimum": 0,
+     "maximum": 0.025,
+     "unit": "diagonal_fraction"
+    },
+    "radial_power": {
+     "default": 2,
+     "minimum": 0.1,
+     "maximum": 8,
+     "unit": "exponent"
+    },
+    "center_x": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "center_y": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "position"
+    },
+    "amount": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    }
+   }
+  },
+  {
+   "id": "vintage_glass_edge_softness",
+   "name": "Vintage Glass: Edge Softness",
+   "group": "Lens Character",
+   "kind": "advanced_vintage_glass_component",
+   "origin": "new_v0.6",
+   "required": "implement_linux",
+   "wave": 5,
+   "stage": "pre_tone_focus",
+   "description": "Peripheral softness, with sharp center",
+   "controls": {
+    "center_clear_fraction": {
+     "default": 0.4,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    },
+    "edge_blur_radius_fraction": {
+     "default": 0.002,
+     "minimum": 0,
+     "maximum": 0.1,
+     "unit": "diagonal_fraction"
+    },
+    "falloff_power": {
+     "default": 2,
+     "minimum": 0.1,
+     "maximum": 8,
+     "unit": "exponent"
+    },
+    "amount": {
+     "default": 0.5,
+     "minimum": 0,
+     "maximum": 1,
+     "unit": "fraction"
+    }
+   }
+  }
+ ],
+ "validation_notes": [
+  "UI and service must validate parameter types and bounds against this registry, not silently ignore invalid values.",
+  "Additional enum controls are typed on recipe params; refer to docs/optical-engine/algorithms.md.",
+  "Effects marked existing_v0.5 must continue to match prior golden fixtures for pinned engine versions."
+ ]
+}

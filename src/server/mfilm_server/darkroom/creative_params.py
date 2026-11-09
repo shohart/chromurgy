@@ -136,3 +136,5 @@ EFFECTS = {
  },
  "none": {}
 }
+from .optical_registry import extend as _extend  # noqa: E402
+_extend(EFFECTS)

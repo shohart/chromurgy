@@ -125,8 +125,11 @@ def _render(job: dict) -> dict:
         v1 = job["v1"]
         ckey = canonical_json({"sha": job["sha"], "wb": job["wb"], "rotate": job.get("rotate"), "crop": job.get("crop"),
                                "edge": job["max_edge"], "wb_profile": v1.get("wb_profile"), "creative": v1.get("creative")}).decode()
-        lin = _CREATIVE_CACHE.get(ckey)
-        if lin is None:
+        cached = _CREATIVE_CACHE.get(ckey)
+        report: dict = {}
+        if cached is not None:
+            lin, report = cached
+        else:
             lin = normalized_small(root, Path(job["src_path"]), job["sha"], job["wb"])
             lin = cropping.apply_rotate(lin, job.get("rotate"))
             lin = cropping.apply_crop(lin, job.get("crop"))
@@ -134,8 +137,8 @@ def _render(job: dict) -> dict:
             if v1.get("wb_profile"):
                 lin = wb.apply(lin, v1["wb_profile"])
             if v1.get("creative"):
-                lin = creative.apply_creative(lin, v1["creative"])
-            _cache_put(_CREATIVE_CACHE, ckey, lin)
+                lin = creative.apply_creative(lin, v1["creative"], salt=job["sha"], report=report)
+            _cache_put(_CREATIVE_CACHE, ckey, (lin, report))
         bundle = engine.current_bundle()
         seed = develop.recipe_seed(v1, *job["seed_ids"])
         t = v1.get("tone") or {}
@@ -163,6 +166,8 @@ def _render(job: dict) -> dict:
                                    develop_strength=s, filter_name=t.get("filter", "none"),
                                    filter_strength=float(t.get("filter_strength", 1.0)), seed=seed)
         info = {"scanner_ev": None if scanner is None else round(scanner, 4)}
+        if report:
+            info["optics_sources"] = report
     meta = {"width": int(img.shape[1]), "height": int(img.shape[0]), "elapsed_s": round(time.monotonic() - t0, 3),
             "recipe_hash": job["recipe_hash"], "kind": job["kind"], "max_edge": job["max_edge"], **info}
     tmp = out.with_suffix(".json.part")

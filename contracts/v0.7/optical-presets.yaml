@@ -1,0 +1,65 @@
+schema_version: '0.6'
+status: specification_examples_to_implement
+presets:
+- id: vintage_glass
+  name: Vintage Glass
+  kind: composite
+  wave: 5
+  description: Editable optical character stack; expands to real operators, not LUT
+  stack:
+  - id: vintage_glass_barrel_distortion
+    strength: 0.5
+  - id: vintage_glass_chromatic_aberration
+    strength: 0.35
+  - id: vintage_glass_edge_softness
+    strength: 0.4
+  - id: optical_vignetting
+    strength: 0.3
+- id: sunny_film
+  name: Sunny Film
+  kind: composite
+  wave: 2
+  description: Existing Soft Sun Glow plus delicate source-linked Ghosting
+  stack:
+  - id: soft_sun_glow
+    strength: 0.45
+  - id: lens_flare_ghosting
+    strength: 0.2
+- id: city_after_dark
+  name: City After Dark
+  kind: composite
+  wave: 3
+  description: Controlled night stars and anamorphic streaks
+  stack:
+  - id: starburst_cross_screen
+    strength: 0.4
+  - id: anamorphic_streak
+    strength: 0.3
+- id: summer_light_leak
+  name: Summer Light Leak
+  kind: composite
+  wave: 3
+  description: Existing warm glow plus edge-anchored leaks
+  stack:
+  - id: soft_sun_glow
+    strength: 0.3
+  - id: analog_light_leaks
+    strength: 0.35
+- id: intimate_focus
+  name: Intimate Focus
+  kind: composite
+  wave: 5
+  description: Lensbaby sweet spot with subtle optical vignette
+  stack:
+  - id: lensbaby_sweet_spot
+    strength: 0.55
+  - id: optical_vignetting
+    strength: 0.25
+- id: miniature_city
+  name: Miniature City
+  kind: composite
+  wave: 10
+  description: Tilt shift miniature focus band; no forced saturation
+  stack:
+  - id: tilt_shift_miniature
+    strength: 0.65

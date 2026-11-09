@@ -1,0 +1,194 @@
+purpose: FIRST-PASS INDEPENDENT ARTISTIC LOOK SETTINGS ONLY
+warning: NOT MEASURED RECREATIONS. Implement functions, visually tune with references
+  and held-out tests before release. These values alone are not proof of camera fidelity.
+version: 0.1-provisional
+entries:
+- id: leica_m8_ccd
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.16
+    toe_strength: 0.1
+    highlight_shoulder: 0.17
+    global_chroma_gain: 1.07
+    shadow_warm_cool: -0.02
+    highlight_warm_cool: 0.01
+    green_hue_bias: 0.03
+    microcontrast_amount: 0.12
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: leica_m9_ccd
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.12
+    toe_strength: 0.11
+    highlight_shoulder: 0.18
+    global_chroma_gain: 1.1
+    shadow_warm_cool: 0.0
+    highlight_warm_cool: 0.02
+    green_hue_bias: 0.08
+    microcontrast_amount: 0.09
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: fujifilm_s5_pro
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: inspired
+  params:
+    contrast_gain: 0.94
+    toe_strength: 0.09
+    highlight_shoulder: 0.32
+    global_chroma_gain: 0.94
+    shadow_warm_cool: 0.01
+    highlight_warm_cool: 0.02
+    green_hue_bias: -0.04
+    microcontrast_amount: 0.01
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: nikon_d200_ccd
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.14
+    toe_strength: 0.08
+    highlight_shoulder: 0.13
+    global_chroma_gain: 1.11
+    shadow_warm_cool: -0.01
+    highlight_warm_cool: 0.0
+    green_hue_bias: 0.04
+    microcontrast_amount: 0.08
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: pentax_645d_ccd
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.04
+    toe_strength: 0.07
+    highlight_shoulder: 0.23
+    global_chroma_gain: 1.0
+    shadow_warm_cool: 0.0
+    highlight_warm_cool: 0.01
+    green_hue_bias: 0.03
+    microcontrast_amount: 0.06
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: ricoh_gr_iii_positive
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.21
+    toe_strength: 0.13
+    highlight_shoulder: 0.14
+    global_chroma_gain: 1.13
+    shadow_warm_cool: -0.01
+    highlight_warm_cool: 0.01
+    green_hue_bias: 0.02
+    microcontrast_amount: 0.11
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: sigma_dp2_merrill_foveon
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.08
+    toe_strength: 0.07
+    highlight_shoulder: 0.14
+    global_chroma_gain: 1.02
+    shadow_warm_cool: 0.0
+    highlight_warm_cool: 0.0
+    green_hue_bias: -0.01
+    microcontrast_amount: 0.2
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: fujifilm_xpro3_classic_negative
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.23
+    toe_strength: 0.14
+    highlight_shoulder: 0.12
+    global_chroma_gain: 0.9
+    shadow_warm_cool: 0.0
+    highlight_warm_cool: 0.0
+    green_hue_bias: -0.07
+    microcontrast_amount: 0.1
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: neutral
+  status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
+  evidence_tier: baseline
+  params:
+    contrast_gain: 1.0
+    toe_strength: 0.0
+    highlight_shoulder: 0.0
+    global_chroma_gain: 1.0
+    shadow_warm_cool: 0.0
+    highlight_warm_cool: 0.0
+    green_hue_bias: 0.0
+    microcontrast_amount: 0.0
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control

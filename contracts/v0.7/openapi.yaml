@@ -1,0 +1,214 @@
+openapi: 3.0.3
+info:
+  title: M-Film Server-First Receiver API
+  description: Proposed, unimplemented sync contract; device native Wi-Fi support is not established.
+  version: '0.3-draft'
+servers:
+  - url: http://127.0.0.1:8765
+    description: Development-only local endpoint; deployment must use protected LAN or HTTPS.
+security:
+  - DeviceBearer: []
+paths:
+  /v1/health:
+    get:
+      security: []
+      summary: Liveness check
+      responses:
+        '200':
+          description: Receiver is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  protocol_major: { type: integer, example: 1 }
+  /v1/capabilities:
+    get:
+      summary: Get protocol and server rendering capabilities
+      responses:
+        '200':
+          description: Profile bundles, max chunk size, and output specs
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/rolls/{roll_id}:
+    parameters:
+      - $ref: '#/components/parameters/RollId'
+    put:
+      summary: Upsert immutable sealed roll manifest by ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RollManifest' }
+      responses:
+        '200': { description: Same manifest already committed }
+        '201': { description: Manifest created }
+        '409': { description: Conflicting immutable manifest }
+    get:
+      summary: Roll originals, development, publication and sync state
+      responses:
+        '200':
+          description: State and per-frame results
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/uploads:
+    post:
+      summary: Initialize resumable upload session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadInit' }
+      responses:
+        '201':
+          description: Upload session and next expected offset
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [upload_id, next_offset, chunk_size]
+                properties:
+                  upload_id: { type: string }
+                  next_offset: { type: integer, format: int64 }
+                  chunk_size: { type: integer, example: 65536 }
+        '409': { description: Conflicting identity }
+  /v1/uploads/{upload_id}:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    get:
+      summary: Query current upload offset
+      responses:
+        '200':
+          description: Upload state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string }
+                  next_offset: { type: integer, format: int64 }
+  /v1/uploads/{upload_id}/chunk:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    put:
+      summary: Append one validated byte chunk at X-Upload-Offset
+      parameters:
+        - in: header
+          name: X-Upload-Offset
+          required: true
+          schema: { type: integer, format: int64, minimum: 0 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200': { description: Chunk committed, offset advanced }
+        '409': { description: Offset conflict }
+        '413': { description: Chunk too large }
+  /v1/uploads/{upload_id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    post:
+      summary: Validate final hash and commit immutable asset
+      responses:
+        '200':
+          description: Durable server receipt (safe to replay)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetReceipt' }
+        '422': { description: Failed validation }
+  /v1/rolls/{roll_id}/finalize:
+    parameters:
+      - $ref: '#/components/parameters/RollId'
+    post:
+      summary: Verify complete DNG input set and enqueue development once
+      responses:
+        '200': { description: Already finalized }
+        '202': { description: Development queued }
+        '409': { description: Originals missing or manifest mismatch }
+  /v1/rolls/{roll_id}/renders:
+    parameters:
+      - $ref: '#/components/parameters/RollId'
+    get:
+      summary: List committed rendition IDs and download metadata
+      responses:
+        '200':
+          description: Available results
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+  /v1/renders/{render_id}/file:
+    get:
+      summary: Download committed JPEG rendition / camera-compatible derivative
+      parameters:
+        - in: path
+          name: render_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: JPEG bytes; hash returned in X-Asset-SHA256
+          headers:
+            X-Asset-SHA256:
+              schema: { type: string }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '404': { description: Rendition not found or not committed }
+components:
+  securitySchemes:
+    DeviceBearer:
+      type: http
+      scheme: bearer
+      description: Only use under TLS or on explicitly trusted, restricted local transports.
+  parameters:
+    RollId:
+      name: roll_id
+      in: path
+      required: true
+      schema: { type: string }
+    UploadId:
+      name: upload_id
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    RollManifest:
+      type: object
+      description: For strict validation, use the companion JSON Schema.
+      required: [schema_version, device_id, roll_id, roll_state, frames]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        device_id: { type: string }
+        roll_id: { type: string }
+        roll_state: { type: string, enum: [SEALED, READY_FOR_SYNC] }
+        frames:
+          type: array
+          items: { type: object, additionalProperties: true }
+      additionalProperties: true
+    UploadInit:
+      type: object
+      required: [device_id, roll_id, frame_id, media_role, bytes, sha256, media_type]
+      properties:
+        device_id: { type: string }
+        roll_id: { type: string }
+        frame_id: { type: string }
+        media_role: { type: string, enum: [original_dng, camera_render, auxiliary] }
+        filename: { type: string }
+        bytes: { type: integer, format: int64, minimum: 1 }
+        sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+        media_type: { type: string }
+    AssetReceipt:
+      type: object
+      required: [server_asset_id, asset_sha256, bytes, durable]
+      properties:
+        server_asset_id: { type: string }
+        asset_sha256: { type: string }
+        bytes: { type: integer, format: int64 }
+        durable: { type: boolean, enum: [true] }

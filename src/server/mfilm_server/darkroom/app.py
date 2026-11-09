@@ -26,7 +26,7 @@ from .. import core, db
 from ..bundles import Bundles
 from ..store import Store, UnsafePath, safe_id
 from . import wb as wbmod
-from . import auth, catalog, cropping, engine, jobs, pp_sources, preview, recipe2, rolls, sources
+from . import auth, catalog, combos, cropping, engine, jobs, optics, pp_sources, preview, recipe2, rolls, sources
 from . import photoprism as pp
 
 API = "/api/v1/darkroom"
@@ -178,6 +178,77 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         except recipe2.RecipeError as e:
             raise ApiError(422, e.code, e.detail) from None
         return {"recipe": r, "recipe_hash": recipe2.recipe_hash(r)}
+
+    # ---- curated combination presets (spec v0.7, docs/35-37): listing, detail, resolve ------------------------
+    @app.get(f"{API}/combos")
+    def list_combos(scene: str = "", category: str = "", available: bool | None = None, wave: int | None = None,
+                    q: str = "", _t: str = Depends(session)):
+        items = combos.list_view(bundle(), scene=scene, category=category, available=available, wave=wave, q=q)
+        return {"items": items, "active_wave": combos.ACTIVE_WAVE, "total": len(combos.document()["presets"]),
+                "catalog_version": combos.document()["catalog_version"]}
+
+    def combo_or_404(cid: str) -> dict:
+        p = combos.get(cid)
+        if not p:
+            raise ApiError(404, "UNKNOWN_PRESET", cid)
+        return p
+
+    @app.get(f"{API}/combos/{{cid}}")
+    def get_combo(cid: str, _t: str = Depends(session)):
+        return combos.view(combo_or_404(cid), bundle(), detail=True)
+
+    @app.post(f"{API}/combos/{{cid}}/resolve")
+    async def resolve_combo(cid: str, request: Request, _t: str = Depends(session), c=Depends(conn)):
+        p = combo_or_404(cid)
+        try:
+            body = json.loads(await request.body() or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError
+        except ValueError:
+            raise ApiError(400, "BAD_REQUEST", "JSON object body required") from None
+        digest = ""
+        if body.get("asset_id"):
+            digest = source_row(c, str(body["asset_id"]))["sha256"]
+        try:
+            seed = body.get("seed")
+            return combos.resolve(p, bundle(), source_digest=digest, overrides=body.get("overrides"),
+                                  variation=int(body.get("variation", 0)), seed=None if seed is None else int(seed))
+        except combos.ComboError as e:
+            raise ApiError(422, e.code, e.detail) from None
+        except (TypeError, ValueError):
+            raise ApiError(422, "INVALID_REQUEST", "variation and seed are integers") from None
+
+    @app.post(f"{API}/optical-sources")
+    async def detect_optical_sources(request: Request, _t: str = Depends(session), c=Depends(conn)):
+        """Bright-source candidates of a frame (normalized coordinates) for the editable source handles of Step 4."""
+        try:
+            body = json.loads(await request.body())
+            asset_id, eid = str(body["asset_id"]), str(body["effect_id"])
+            crop_req = cropping.normalize_crop(body.get("crop"))
+            rotate_req = cropping.normalize_rotate(body.get("rotate"))
+            override = body.get("parameters") or {}
+        except cropping.CropError as e:
+            raise ApiError(422, "INVALID_CROP", str(e)) from None
+        except (ValueError, KeyError, TypeError):
+            raise ApiError(400, "BAD_REQUEST", "asset_id and effect_id required") from None
+        if eid not in optics.SOURCE_DRIVEN:
+            raise ApiError(422, "INVALID_REQUEST", f"{eid}: not a source-driven effect")
+        row = source_row(c, asset_id)
+        from .creative_params import EFFECTS
+        p = {**EFFECTS[eid], **{k: v for k, v in override.items() if k in EFFECTS[eid] and isinstance(v, (int, float))}}
+        thr = float(p.get("source_threshold", p.get("highlight_threshold", p.get("threshold", 1.1))))
+        lim = int(p.get("auto_source_limit", p.get("max_sources", 8)))
+
+        def work():
+            lin = preview.normalized_small(store.root, pp_sources.source_file(store, cfg.photoprism, row), row["sha256"], "daylight")
+            lin = cropping.apply_crop(cropping.apply_rotate(lin, rotate_req), crop_req)
+            lin = preview._shrink(lin, 1280)
+            return optics.detect_sources(lin, thr, lim)
+        found = await run_in_threadpool(work)
+        return {"effect_id": eid, "threshold": thr, "algorithm": optics.IMPLEMENTATION_VERSION,
+                "sources": [{"id": optics.source_id(s), "x": round(s["x"], 4), "y": round(s["y"], 4), "peak": round(s["peak"], 3),
+                             "confidence": round(s["confidence"], 3)} for s in found],
+                "message": None if found else "No suitable bright point detected; place a source manually"}
 
     # ---- white-balance profiles (built-in library + imports) ------------------------------------------
     def wb_public(p: dict) -> dict:

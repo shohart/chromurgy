@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "device_id": "sx510hs-demo-001",
+  "camera_model": "Canon PowerShot SX510 HS",
+  "canon_firmware": "UNKNOWN_BEFORE_PROBE",
+  "chdk_version": "UNKNOWN_BEFORE_PROBE",
+  "transports": {
+    "sd_import": true,
+    "usb_ptp": "UNTESTED",
+    "wifi_http": "UNTESTED"
+  },
+  "offline_development": {
+    "enabled": false,
+    "status": "UNTIL_HARDWARE_VALIDATED",
+    "candidate_max_width": 720,
+    "candidate_max_height": 480
+  },
+  "supported_profile_bundle_hashes": [],
+  "return_policy": "camera_compatible",
+  "protocol_major": 1,
+  "device_is_awake": true
+}

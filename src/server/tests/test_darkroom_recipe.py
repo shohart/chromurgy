@@ -31,10 +31,12 @@ def test_catalog_lists_every_look_and_effect_as_available(bundle):
     c = catalog.build(bundle)
     looks = {x["id"]: x["supported"] for x in c["camera_looks"]}
     assert len(looks) == 9 and all(looks.values()) and "leica_m9_ccd" in looks
-    assert {x["id"] for x in c["optical_effects"]} == {"soft_sun_glow", "ricoh_hdf_diffusion", "black_pro_mist_like",
-                                                       "vintage_veiling_flare", "film_halation_extra", "orton_glow"}
+    legacy = ["vintage_veiling_flare", "soft_sun_glow", "ricoh_hdf_diffusion", "black_pro_mist_like", "orton_glow", "film_halation_extra"]
+    ids = {x["id"] for x in c["optical_effects"]}
+    assert set(legacy) <= ids and len(ids) == 16                    # the six originals + the ten v0.6 operators (7 standalone + 3 Vintage Glass parts)
     assert all(x["supported"] and x["defaults"] for x in c["optical_effects"])
-    assert len(c["films"]) == 72 and c["effect_order"][0] == "vintage_veiling_flare"
+    assert len(c["films"]) == 72
+    assert [e for e in c["effect_order"] if e in legacy] == legacy      # the originals keep their relative order: archived recipes render as before
 
 
 def test_neutral_recipe_normalizes_and_pins_bundle(bundle):

@@ -11,7 +11,8 @@ import json
 from pathlib import Path
 
 from .. import core
-from . import creative
+from . import creative, optics
+from . import optical_registry as reg
 from .creative_params import EFFECTS as _FX
 from .creative_params import LOOKS as _LOOKS
 
@@ -35,9 +36,12 @@ OPTICAL_EFFECTS = [
     ("film_halation_extra", "Film halation (extra)"),
     ("orton_glow", "Orton glow"),
 ]
-# implemented in darkroom/creative.py (numpy, Linux server only)
+# the operators added in spec v0.6 (darkroom/optics.py), in engine order; the six above keep their own list
+OPTICAL_EFFECTS_V06 = [(i, reg.new_effects()[i]["name"]) for i in creative.NEW_EFFECTS]
+ALL_EFFECT_IDS = [i for i, _ in OPTICAL_EFFECTS] + [i for i, _ in OPTICAL_EFFECTS_V06]
+# implemented in darkroom/creative.py + optics.py (numpy, Linux server only)
 SUPPORTED_LOOKS = {i for i, _, _ in CAMERA_LOOKS}
-SUPPORTED_EFFECTS = {i for i, _ in OPTICAL_EFFECTS} | {"golden_haze"}
+SUPPORTED_EFFECTS = set(ALL_EFFECT_IDS) | {"golden_haze", "vintage_glass"}
 
 
 # camera-presets.yaml composites: a one-click combination of look, film and optics (film names resolved at use)
@@ -53,6 +57,20 @@ COMPOSITES = [
     {"id": "cine-halo", "name": "Cine Halo", "camera_look": "neutral", "look_strength": 1.0, "film": "cinestill-800t",
      "optical_preset": "film_halation_extra", "optical_strength": 0.35, "halation_policy": "optical"},
 ]
+
+
+def effect_view(eid: str, name: str) -> dict:
+    """One optical effect as the API/UI sees it: group, description, typed controls with bounds, source support."""
+    base = {"id": eid, "name": name, "supported": eid in SUPPORTED_EFFECTS, "defaults": _FX[eid]}
+    if eid in reg.new_effects():
+        d = reg.new_effects()[eid]
+        return {**base, "group": d["group"], "kind": d["kind"], "wave": d["wave"], "stage": d["stage"], "description": d["description"],
+                "tags": d["tags"], "controls": d["controls"], "source_driven": eid in optics.SOURCE_DRIVEN,
+                "implementation_version": optics.IMPLEMENTATION_VERSION}
+    d = reg.legacy_effects()[eid]
+    return {**base, "group": d["group"], "kind": "effect", "wave": 0, "description": "", "tags": [], "source_driven": False,
+            "controls": {k: {"default": v, "minimum": creative.PARAM_RANGE[k][0], "maximum": creative.PARAM_RANGE[k][1]}
+                         for k, v in _FX[eid].items()}}
 
 
 def _films_meta() -> dict[str, dict]:
@@ -77,8 +95,10 @@ def build(bundle: core.Bundle) -> dict:
         "camera_looks": [{"id": i, "name": n, "evidence_tier": t, "supported": i in SUPPORTED_LOOKS, "params": _LOOKS[i]}
                          for i, n, t in CAMERA_LOOKS],
         "films": films(bundle),
-        "optical_effects": [{"id": i, "name": n, "supported": i in SUPPORTED_EFFECTS, "defaults": _FX[i]}
-                            for i, n in OPTICAL_EFFECTS],
+        "optical_effects": [effect_view(i, n) for i, n in [*OPTICAL_EFFECTS, *OPTICAL_EFFECTS_V06]],
+        "effect_groups": reg.GROUP_ORDER,
+        "vignette_policies": ["film", "optical", "stacked", "disabled"],
+        "optics_version": optics.IMPLEMENTATION_VERSION,
         "effect_order": creative.EFFECT_ORDER,
         "film_none": {"id": "none", "name": "None (no film emulation)"},
         "tone": {"brightness_ev": [-3, 3, 0], "contrast": [-1, 1, 0], "develop_strength": [0, 1, 1],
@@ -86,6 +106,8 @@ def build(bundle: core.Bundle) -> dict:
         "halation_policies": ["film", "optical", "stacked", "disabled"],
         "composites": COMPOSITES,
         "optical_presets": [{"id": "none", "name": "No optical effect", "supported": True},
-                            {"id": "golden_haze", "name": "Golden Haze (composite)", "supported": "golden_haze" in SUPPORTED_EFFECTS}],
+                            {"id": "golden_haze", "name": "Golden Haze (composite)", "supported": "golden_haze" in SUPPORTED_EFFECTS},
+                            {"id": "vintage_glass", "name": "Vintage Glass (compound: barrel + CA + edge softness + vignette)",
+                             "supported": True, "expands_to": [e for e, _ in creative.PRESETS["vintage_glass"]]}],
         "output": {"formats": ["jpeg"], "color_spaces": ["srgb"], "quality": [1, 100]},
     }
