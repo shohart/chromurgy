@@ -33,7 +33,11 @@ def out_name(filename: str, film: str, rid: str) -> str:
 
 def index_argv(cfg: Cfg, folder: str) -> list[str] | None:
     if cfg.index_template:
-        return [a.replace("{path}", folder) for a in cfg.index_template]
+        argv = [a.replace("{path}", folder) for a in cfg.index_template]
+        if "index" in argv and "--cleanup" not in argv and "-c" not in argv:
+            idx = argv.index("index")
+            argv = argv[:idx + 1] + ["--cleanup"] + argv[idx + 1:]
+        return argv
     if cfg.index_command and cfg.index_command[-1] == cfg.subdir:
         return [*cfg.index_command[:-1], folder]
     return None
@@ -103,6 +107,28 @@ def publish_pending(conn: sqlite3.Connection, store: Store, cfg: Cfg, client: pp
             # 1. file
             if it["state"] in ("STAGED", "PUBLISHING"):
                 _note(conn, it["id"], "PUBLISHING", None, pub_path=rel)
+                # When re-rendering, remove any previous rendition(s) of this frame from disk:
+                # a) in the destination folder
+                stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(it["filename"]).stem)[:60] or "frame"
+                prefix = f"{stem}_"
+                if dest.parent.is_dir():
+                    for old_f in dest.parent.glob(f"{prefix}*.jpg"):
+                        if old_f.name != dest.name and not old_f.name.startswith("."):
+                            try:
+                                old_f.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                # b) any previous published paths for this source frame in database history
+                old_paths = conn.execute(
+                    "SELECT DISTINCT i.pub_path FROM darkroom_items i "
+                    "WHERE i.source_id=? AND i.pub_path IS NOT NULL AND i.pub_path != ?",
+                    (it["source_id"], rel)).fetchall()
+                for op_row in old_paths:
+                    if op_row[0]:
+                        try:
+                            confine(cfg.export_dir, op_row[0]).unlink(missing_ok=True)
+                        except Exception:
+                            pass
                 copy_verified(store.root / it["rpath"], dest, it["rsha"])
                 _note(conn, it["id"], "INDEXING", None)
                 it = {**dict(it), "state": "INDEXING"}

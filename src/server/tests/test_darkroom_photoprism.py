@@ -178,6 +178,10 @@ def index_into_fake(pp):
     """The indexer: files appear as photos once 'indexed'."""
     def run(argv):
         folder = argv[-1]
+        existing_stems = {f.stem for f in (pp.originals / folder).glob("*.jpg")}
+        for uid, p in list(pp.fake.photos.items()):
+            if p.get("Path") == folder and p.get("Name") not in existing_stems:
+                pp.fake.photos.pop(uid, None)
         for f in (pp.originals / folder).glob("*.jpg"):
             pp.fake.photos[f"new-{f.stem}"] = {"UID": f"new-{f.stem}", "Type": "image", "Path": folder, "Name": f.stem, "Files": []}
     return run
@@ -246,6 +250,12 @@ def test_redevelop_session_updates_target_album(pp, store):
     # Target album was updated: new rendition uid2 is in al1, old rendition uid1 was removed from al1
     assert uid2 in pp.fake.albums["al1"]["members"]
     assert uid1 not in pp.fake.albums["al1"]["members"]
+
+    # Target folder was updated: old rendition file was replaced on disk
+    dest2 = pp.originals / v2["items"][0]["published_path"]
+    assert dest2.is_file()
+    dest1 = pp.originals / v1["items"][0]["published_path"]
+    assert not dest1.is_file()
 
 
 def test_redevelop_session_recreates_deleted_album(pp, store):
