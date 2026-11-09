@@ -1888,10 +1888,18 @@ function destPanel() {
       h("div", {}, h("label", { for: "dalbum" }, "Album"), h("select", { id: "dalbum" }, h("option", { value: "" }, "No album")),
         h("input", { type: "text", id: "dnew", placeholder: "…or a new album name", style: "margin-top:.4rem" }))));
 }
-async function loadDestAlbums() {
-  const sel = $("#dalbum"); if (sel.dataset.loaded) return;
-  try { const r = await api("/photoprism/default/albums?count=500"); sel.dataset.loaded = "1";
-    r.items.filter(a => a.manual).forEach(a => sel.append(h("option", { value: a.uid }, a.title))); }
+async function loadDestAlbums(force = false) {
+  const sel = $("#dalbum"); if (!sel) return;
+  if (!force && sel.dataset.loaded) return;
+  try {
+    const curVal = sel.value;
+    const r = await api("/photoprism/default/albums?count=500");
+    sel.dataset.loaded = "1";
+    const firstOpt = sel.firstElementChild || h("option", { value: "" }, "— create new manual album below —");
+    sel.replaceChildren(firstOpt);
+    r.items.filter(a => a.manual).forEach(a => sel.append(h("option", { value: a.uid }, a.title)));
+    if (curVal && sel.querySelector(`option[value="${curVal}"]`)) sel.value = curVal;
+  }
   catch (e) { toast("Albums unavailable: " + e.message); }
 }
 function outputSpec() {
@@ -2081,23 +2089,26 @@ async function loadSession(j) {
     // 5. Restore destination & PhotoPrism album
     const pub = job.publish;
     const albumUid = job.album_uid || (pub && pub.album_uid);
+    const albumTitle = (pub && pub.create_album_name) || job.album_title || "";
     if (pub || albumUid) {
       if ($("#dest")) $("#dest").value = "pp";
       if ($("#destbox")) $("#destbox").hidden = false;
       if ($("#dfolder") && pub && pub.folder) $("#dfolder").value = pub.folder;
-      await loadDestAlbums();
+      await loadDestAlbums(true);
       const dalbum = $("#dalbum");
       if (dalbum) {
-        if (albumUid) {
-          if (!dalbum.querySelector(`option[value="${albumUid}"]`)) {
-            const title = (pub && pub.create_album_name) || "Целевой альбом";
-            dalbum.append(h("option", { value: albumUid }, title));
-          }
+        const hasOption = albumUid && Boolean(dalbum.querySelector(`option[value="${albumUid}"]`));
+        if (hasOption) {
           dalbum.value = albumUid;
           if ($("#dnew")) $("#dnew").value = "";
-        } else if (pub && pub.create_album_name) {
+        } else {
           dalbum.value = "";
-          if ($("#dnew")) $("#dnew").value = pub.create_album_name;
+          if ($("#dnew")) $("#dnew").value = albumTitle;
+          if (albumUid) {
+            toast(albumTitle
+              ? `Альбом «${albumTitle}» не найден в PhotoPrism (удалён) и будет создан заново.`
+              : "Целевой альбом не найден в PhotoPrism и будет создан заново.");
+          }
         }
       }
     } else {

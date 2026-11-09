@@ -248,6 +248,39 @@ def test_redevelop_session_updates_target_album(pp, store):
     assert uid1 not in pp.fake.albums["al1"]["members"]
 
 
+def test_redevelop_session_recreates_deleted_album(pp, store):
+    # 1. Job 1 publishes into a new album "Summer Trip"
+    jid1 = publish_job(pp, store, create_album_name="Summer Trip")
+    drain(store)
+    run_publish(pp, store, index_into_fake(pp))
+    v1 = pp.get(f"{dapp.API}/jobs/{jid1}").json()
+    alb1 = v1["album_uid"]
+    assert alb1 and pp.fake.albums.get(alb1)
+    assert pp.fake.albums[alb1]["Title"] == "Summer Trip"
+    uid1 = v1["items"][0]["photoprism_photo_uid"]
+    assert uid1 in pp.fake.albums[alb1]["members"]
+
+    # 2. User deletes the album in PhotoPrism
+    pp.fake.albums.pop(alb1)
+    assert alb1 not in pp.fake.albums
+
+    # 3. Job 2 runs, targeting the deleted album_uid (e.g. loaded previous session)
+    rec2 = recipe("cinestill800t")
+    jid2 = pp.post(f"{dapp.API}/jobs", headers=H, json=job_body([v1["items"][0]["asset_id"]], rec2,
+                   source=v1["source"],
+                   output={"format": "jpeg", "publish": True, "photoprism_album_uid": alb1})).json()["job_id"]
+    drain(store)
+    run_publish(pp, store, index_into_fake(pp))
+    v2 = pp.get(f"{dapp.API}/jobs/{jid2}").json()
+    assert v2["state"] == "COMPLETE"
+    alb2 = v2["album_uid"]
+    assert alb2 and alb2 != alb1
+    # Album was recreated with the original title
+    assert pp.fake.albums[alb2]["Title"] == "Summer Trip"
+    uid2 = v2["items"][0]["photoprism_photo_uid"]
+    assert uid2 in pp.fake.albums[alb2]["members"]
+
+
 
 def test_unsafe_destination_is_refused_and_photoprism_outage_keeps_the_render(pp, store):
     library(pp)

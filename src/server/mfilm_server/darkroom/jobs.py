@@ -100,11 +100,12 @@ def create_job(conn: sqlite3.Connection, bundle: core.Bundle, request: dict,
             return have["id"], False
     jid = uuid.uuid4().hex
     publish = publish_settings(out, jid, web_folder) if out.get("publish") else None
+    alb_uid = publish.get("album_uid") if publish else None
     conn.execute("BEGIN IMMEDIATE")
     try:
-        conn.execute("INSERT INTO darkroom_jobs(id, idempotency_key, request, recipe, recipe_hash, publish) VALUES (?,?,?,?,?,?)",
+        conn.execute("INSERT INTO darkroom_jobs(id, idempotency_key, request, recipe, recipe_hash, publish, album_uid) VALUES (?,?,?,?,?,?,?)",
                      (jid, key, body, json.dumps(recipe, sort_keys=True), rhash,
-                      json.dumps(publish, sort_keys=True) if publish else None))
+                      json.dumps(publish, sort_keys=True) if publish else None, alb_uid))
         for i, r in enumerate(rows, 1):
             conn.execute("INSERT INTO darkroom_items(job_id, source_id, source_sha256, ordinal, state) "
                          "VALUES (?,?,?,?, 'QUEUED')", (jid, r["id"], r["sha256"], i))
@@ -162,11 +163,37 @@ def job_view(conn: sqlite3.Connection, job_id: str, *, items: bool = True) -> di
     counts = {r[0]: r[1] for r in conn.execute("SELECT state, count(*) FROM darkroom_items WHERE job_id=? GROUP BY 1",
                                               (job_id,))}
     recipe = json.loads(j["recipe"])
+    pub = json.loads(j["publish"]) if j["publish"] else None
+    alb_uid = j["album_uid"] or (pub.get("album_uid") if pub else None)
+    alb_title = None
+    if pub and pub.get("create_album_name"):
+        alb_title = pub["create_album_name"]
+    elif alb_uid:
+        prev = conn.execute(
+            "SELECT publish, request FROM darkroom_jobs WHERE (album_uid=? OR publish LIKE ?) "
+            "AND publish IS NOT NULL ORDER BY created_at DESC",
+            (alb_uid, f'%"{alb_uid}"%')).fetchall()
+        for p_row in prev:
+            try:
+                p_pub = json.loads(p_row[0] or "{}")
+                if p_pub.get("create_album_name"):
+                    alb_title = p_pub["create_album_name"]
+                    break
+            except Exception:
+                pass
+            try:
+                p_req = json.loads(p_row[1] or "{}")
+                p_out = p_req.get("output", {})
+                if p_out.get("create_album_name"):
+                    alb_title = p_out["create_album_name"]
+                    break
+            except Exception:
+                pass
     view = {"job_id": j["id"], "state": job_state(counts), "counts": counts, "total": sum(counts.values()),
             "cancel_requested": bool(j["cancel_requested"]), "created_at": j["created_at"],
             "recipe_hash": j["recipe_hash"], "film": recipe["film"]["id"], "camera_look": recipe["camera_look"]["id"],
-            "idempotency_key": j["idempotency_key"], "publish": json.loads(j["publish"]) if j["publish"] else None,
-            "album_uid": j["album_uid"]}
+            "idempotency_key": j["idempotency_key"], "publish": pub,
+            "album_uid": alb_uid, "album_title": alb_title}
     if items:
         view["recipe"] = recipe
         req = json.loads(j["request"])

@@ -81,7 +81,7 @@ class Client:
         if status == 400 and isinstance(data, dict) and data.get("error") == "Permission denied":
             raise PPError("PHOTOPRISM_PERMISSION", f"the token may not read {path.split('/')[0]}", 403)
         if status >= 400:
-            raise PPError("PHOTOPRISM_ERROR", f"GET {path}: HTTP {status} {data}", 502)
+            raise PPError("PHOTOPRISM_ERROR", f"GET {path}: HTTP {status} {data}", status)
         return data
 
     # ---- read ----------------------------------------------------------------------------------
@@ -109,6 +109,9 @@ class Client:
         return [{"uid": a["UID"], "title": a["Title"], "photo_count": a.get("PhotoCount", 0), "type": a.get("Type"),
                  "manual": not a.get("Filter"), "thumb": a.get("Thumb")} for a in rows]
 
+    def album(self, album_uid: str) -> dict:
+        return self._get(f"albums/{urllib.parse.quote(album_uid)}")
+
     def folders(self, parent: str = "") -> list[dict]:
         """Direct sub-folders of `parent` (a path below originals; '' = root)."""
         data = self._get("folders/originals" + (f"/{urllib.parse.quote(parent)}" if parent else ""), recursive="false")
@@ -130,23 +133,23 @@ class Client:
     def create_album(self, title: str) -> str:
         status, data = self.t("POST", "albums", None, {"Title": title, "Type": "album"})
         if status >= 400 or not isinstance(data, dict) or "UID" not in data:
-            raise PPError("ALBUM_CREATE_FAILED", f"HTTP {status} {data}", 502 if status != 403 else 403)
+            raise PPError("ALBUM_CREATE_FAILED", f"HTTP {status} {data}", status if status != 403 else 403)
         return data["UID"]
 
     def add_to_album(self, album_uid: str, photo_uids: list[str]) -> None:
         status, data = self.t("POST", f"albums/{urllib.parse.quote(album_uid)}/photos", None, {"photos": photo_uids})
         if status >= 400:
-            raise PPError("ALBUM_ADD_FAILED", f"HTTP {status} {data}", 502)
+            raise PPError("ALBUM_ADD_FAILED", f"HTTP {status} {data}", status)
 
     def remove_from_album(self, album_uid: str, photo_uids: list[str]) -> None:
         status, data = self.t("DELETE", f"albums/{urllib.parse.quote(album_uid)}/photos", None, {"photos": photo_uids})
         if status >= 400:
-            raise PPError("ALBUM_REMOVE_FAILED", f"HTTP {status} {data}", 502)
+            raise PPError("ALBUM_REMOVE_FAILED", f"HTTP {status} {data}", status)
 
     def delete_album(self, album_uid: str) -> None:
         status, data = self.t("POST", "batch/albums/delete", None, {"albums": [album_uid]})
         if status >= 400:
-            raise PPError("ALBUM_DELETE_FAILED", f"HTTP {status} {data}", 502)
+            raise PPError("ALBUM_DELETE_FAILED", f"HTTP {status} {data}", status)
 
 
 # ---- RAW & thumbnail resolution -------------------------------------------------------------------

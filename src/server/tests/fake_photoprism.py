@@ -107,19 +107,28 @@ class FakePhotoPrism:
             sz = parts[3] if len(parts) > 3 else "tile_500"
             rev = self.thumb_rev.get(th, 1)
             return 200, b"\xff\xd8\xff\xe0PPTHUMB:" + f"{th}:{sz}:v{rev}".encode() + b"\xff\xd9"
+        if method == "GET" and path.startswith("albums/"):
+            uid = path.split("/", 1)[1]
+            return (200, self.albums[uid]) if uid in self.albums else (404, {"code": 404, "error": "Album not found"})
         if method == "POST" and path == "albums":
-            uid = f"a{len(self.albums) + 1}"
+            self._album_seq = getattr(self, "_album_seq", len(self.albums)) + 1
+            uid = f"a{self._album_seq}"
             self.add_album(uid, body["Title"], [])
             return 200, {"UID": uid, "Title": body["Title"]}
         if method == "POST" and path.startswith("albums/") and path.endswith("/photos"):
-            a = self.albums[path.split("/")[1]]
+            alb_id = path.split("/")[1]
+            if alb_id not in self.albums:
+                return 404, {"code": 404, "error": "Album not found"}
+            a = self.albums[alb_id]
             a["members"] += [u for u in body["photos"] if u not in a["members"]]
             return 200, {"code": 200}
         if method == "DELETE" and path.startswith("albums/") and path.endswith("/photos"):
-            a = self.albums.get(path.split("/")[1])
-            if a:
-                to_remove = set(body["photos"])
-                a["members"] = [u for u in a["members"] if u not in to_remove]
+            alb_id = path.split("/")[1]
+            if alb_id not in self.albums:
+                return 404, {"code": 404, "error": "Album not found"}
+            a = self.albums[alb_id]
+            to_remove = set(body["photos"])
+            a["members"] = [u for u in a["members"] if u not in to_remove]
             return 200, {"code": 200}
         if method == "POST" and path == "batch/albums/delete":
             for u in body["albums"]:

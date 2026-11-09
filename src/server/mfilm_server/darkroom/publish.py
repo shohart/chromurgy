@@ -90,6 +90,8 @@ def publish_pending(conn: sqlite3.Connection, store: Store, cfg: Cfg, client: pp
     else:
         api_err = ""
     indexed: set[tuple[str, str]] = set()
+    job_albums: dict[str, str] = {}
+    album_photos_cache: dict[str, list[dict]] = {}
     for it in rows:
         pubset = json.loads(it["publish"])
         folder = pubset["folder"]
@@ -122,17 +124,57 @@ def publish_pending(conn: sqlite3.Connection, store: Store, cfg: Cfg, client: pp
                 it = {**dict(it), "state": "ALBUM_LINKING", "pp_photo_uid": uid}
             # 3. album
             if it["state"] == "ALBUM_LINKING":
-                album = pubset.get("album_uid") or it["job_album"]
-                if not album and pubset.get("create_album_name"):
+                album = job_albums.get(it["jid"]) or it["job_album"] or pubset.get("album_uid")
+                if album:
                     if client is None:
                         raise RuntimeError(api_err)
-                    album = client.create_album(pubset["create_album_name"])
-                    conn.execute("UPDATE darkroom_jobs SET album_uid=? WHERE id=? AND album_uid IS NULL", (album, it["jid"]))
-                    album = conn.execute("SELECT album_uid FROM darkroom_jobs WHERE id=?", (it["jid"],)).fetchone()[0]
+                    try:
+                        client.album(album)
+                    except pp.PPError as e:
+                        if e.status == 404:
+                            album = None
+                        else:
+                            raise
+                if not album:
+                    if client is None:
+                        raise RuntimeError(api_err)
+                    album_name = pubset.get("create_album_name")
+                    if not album_name and pubset.get("album_uid"):
+                        prev = conn.execute(
+                            "SELECT publish, request FROM darkroom_jobs WHERE (album_uid=? OR publish LIKE ?) "
+                            "AND publish IS NOT NULL ORDER BY created_at DESC",
+                            (pubset["album_uid"], f'%"{pubset["album_uid"]}"%')).fetchall()
+                        for p_row in prev:
+                            try:
+                                p_pub = json.loads(p_row[0] or "{}")
+                                if p_pub.get("create_album_name"):
+                                    album_name = p_pub["create_album_name"]
+                                    break
+                            except Exception:
+                                pass
+                            try:
+                                p_req = json.loads(p_row[1] or "{}")
+                                p_out = p_req.get("output", {})
+                                if p_out.get("create_album_name"):
+                                    album_name = p_out["create_album_name"]
+                                    break
+                            except Exception:
+                                pass
+                    if not album_name:
+                        album_name = f"M-Film {it['jid'][:8]}"
+                    album = client.create_album(album_name)
+                    conn.execute("UPDATE darkroom_jobs SET album_uid=? WHERE id=?", (album, it["jid"]))
+                    job_albums[it["jid"]] = album
+                else:
+                    if not it["job_album"]:
+                        conn.execute("UPDATE darkroom_jobs SET album_uid=? WHERE id=?", (album, it["jid"]))
+                    job_albums[it["jid"]] = album
+
                 if album:
                     if client is None:
                         raise RuntimeError(api_err)
                     client.add_to_album(album, [it["pp_photo_uid"]])
+
                     # When re-rendering a frame into the target album, remove previous rendition(s) of this frame from the album
                     old_rows = conn.execute(
                         "SELECT DISTINCT i.pp_photo_uid FROM darkroom_items i "
@@ -140,13 +182,31 @@ def publish_pending(conn: sqlite3.Connection, store: Store, cfg: Cfg, client: pp
                         "WHERE i.source_id=? AND (j.album_uid=? OR j.publish LIKE ?) "
                         "AND i.pp_photo_uid IS NOT NULL AND i.pp_photo_uid != ?",
                         (it["source_id"], album, f'%"{album}"%', it["pp_photo_uid"])).fetchall()
-                    old_uids = [r[0] for r in old_rows if r[0]]
-                    if old_uids:
+                    to_remove = set(r[0] for r in old_rows if r[0])
+
+                    stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(it["filename"]).stem)[:60] or "frame"
+                    prefix = f"{stem}_"
+                    if album not in album_photos_cache:
                         try:
-                            client.remove_from_album(album, old_uids)
+                            album_photos_cache[album] = client.photos(album_uid=album, count=500)
+                        except Exception:
+                            album_photos_cache[album] = []
+                    for ph in album_photos_cache[album]:
+                        ph_uid = ph.get("UID")
+                        ph_name = ph.get("Name") or ""
+                        if ph_uid and ph_uid != it["pp_photo_uid"] and ph_name.startswith(prefix):
+                            to_remove.add(ph_uid)
+
+                    if to_remove:
+                        try:
+                            client.remove_from_album(album, list(to_remove))
+                            album_photos_cache[album] = [p for p in album_photos_cache[album] if p.get("UID") not in to_remove]
                         except Exception:
                             pass
-                conn.execute(f"UPDATE darkroom_items SET state='COMPLETE', pub_note=NULL, finished_at={NOW} WHERE id=?", (it["id"],))
+                    if album in album_photos_cache:
+                        album_photos_cache[album].append({"UID": it["pp_photo_uid"], "Name": Path(name).stem})
+
+                conn.execute(f"UPDATE darkroom_items SET state='COMPLETE', pub_note=NULL, pub_attempts=0, finished_at={NOW} WHERE id=?", (it["id"],))
                 summary["completed"] += 1
         except (UnsafePath, ValueError) as e:
             conn.execute(f"UPDATE darkroom_items SET state='FAILED', error_code='UNSAFE_PATH', error_detail=?, finished_at={NOW} "
