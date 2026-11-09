@@ -84,7 +84,14 @@ def view(p: dict, bundle: core.Bundle, *, detail: bool = False) -> dict:
            "camera_look": p["camera_look"]["id"], "look_strength": p["camera_look"]["strength"],
            "film": p["film"]["id"], "film_resolved": film, "optical": ops,
            "operator_versions": {o: (IMPLEMENTATION_VERSION if o in reg.new_effects() else "legacy") for o in ops},
-           "suggested_tags": p.get("suggested_tags", [])}
+           "suggested_tags": p.get("suggested_tags", []),
+           "optical_stack": copy.deepcopy(p["optical"].get("stack", [])),
+           "optical_strength": float(p["optical"].get("strength", 1.0)),
+           "halation_policy": p["optical"].get("halation_policy", "film"),
+           "vignette_policy": p["optical"].get("vignette_policy") or p["optical"].get("vignetting_policy") or "film",
+           "grain_scale": float(p["film"].get("grain_scale", 1.0)),
+           "halation_scale": float(p["film"].get("halation_scale", 1.0)),
+           "softness_scale": float(p["film"].get("softness_scale", 1.0))}
     if detail:
         out["recipe_template"] = {k: copy.deepcopy(p[k]) for k in ("camera_look", "film", "optical", "render")}
         out["seed_policy"] = p.get("seed_policy")

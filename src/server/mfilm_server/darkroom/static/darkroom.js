@@ -908,79 +908,83 @@ function combosChipsSync() {
   }
 }
 
-async function selectCombo(c) {
+function selectCombo(c) {
   if (S.comboPreset === c.id) {
     S.comboPreset = null;
+    S.activePreset = null;
+    S.fx.clear();
+    S.fxParams = {};
+    S.fxPreset = "none";
+    S.policy = "film";
+    S.vpolicy = "film";
+    resetAllFrameOverrides();
+    loadFrameAdjustments(S.current);
     syncControls();
+    renderAssets();
     schedulePreview(true);
     toast("Preset cleared: " + c.name);
     return;
   }
+
+  // 1. Unconditionally clear old state and optical effects stack
   S.comboPreset = c.id;
   S.activePreset = null;
+  S.fx.clear();
+  S.fxParams = {};
+  S.fxPreset = "none";
+  S.policy = "film";
+  S.vpolicy = "film";
 
-  // Optimistic apply
+  // 2. Camera Look
   if (c.camera_look) S.look = c.camera_look;
-  if (c.look_strength !== undefined) S.strength = c.look_strength;
+  S.strength = c.look_strength !== undefined ? c.look_strength : 1.0;
+
+  // 3. Film Stock
   const filmTarget = c.film_resolved || c.film;
   if (filmTarget) {
     const f = findFilmId(filmTarget);
     if (f) S.film = f;
   }
-  S.fx.clear();
-  S.fxParams = {};
-  if (Array.isArray(c.optical)) {
-    c.optical.forEach(id => S.fx.add(id));
-    S.fxPreset = c.optical.length === 1 ? c.optical[0] : (c.optical.length > 1 ? "custom" : "none");
-  }
+  S.grain = c.grain_scale !== undefined ? c.grain_scale : 1.0;
+  S.halation = c.halation_scale !== undefined ? c.halation_scale : 1.0;
+  S.softness = c.softness_scale !== undefined ? c.softness_scale : 1.0;
 
-  // Resolve complete recipe parameters from server
-  try {
-    const payload = {};
-    if (S.current && S.current.id) payload.asset_id = S.current.id;
-    const res = await api(`/combos/${c.id}/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (res && res.recipe) {
-      const r = res.recipe;
-      if (r.camera_look) {
-        if (r.camera_look.id) S.look = r.camera_look.id;
-        if (r.camera_look.strength !== undefined) S.strength = r.camera_look.strength;
-      }
-      if (r.film) {
-        if (r.film.id) {
-          const f = findFilmId(r.film.id);
-          if (f) S.film = f;
-        }
-        if (r.film.grain_scale !== undefined) S.grain = r.film.grain_scale;
-        if (r.film.halation_scale !== undefined) S.halation = r.film.halation_scale;
-        if (r.film.softness_scale !== undefined) S.softness = r.film.softness_scale;
-      }
-      if (r.optical) {
-        S.fx.clear();
-        S.fxParams = {};
-        for (const op of (r.optical.stack || [])) {
-          if (op.enabled !== false) {
-            S.fx.add(op.id);
-            if (op.parameters) S.fxParams[op.id] = { ...op.parameters };
-          }
-        }
-        if (r.optical.strength !== undefined) S.fxStrength = r.optical.strength;
-        if (r.optical.halation_policy) S.policy = r.optical.halation_policy;
-        if (r.optical.vignetting_policy) S.vpolicy = r.optical.vignetting_policy;
-        S.fxPreset = (r.optical.stack && r.optical.stack.length === 1) ? r.optical.stack[0].id : "none";
+  // 4. Optical Effects
+  S.fxStrength = c.optical_strength !== undefined ? c.optical_strength : 1.0;
+  if (c.halation_policy) S.policy = c.halation_policy;
+  if (c.vignette_policy) S.vpolicy = c.vignette_policy;
+
+  if (Array.isArray(c.optical_stack) && c.optical_stack.length) {
+    for (const op of c.optical_stack) {
+      if (op && op.id && op.enabled !== false) {
+        S.fx.add(op.id);
+        if (op.parameters) S.fxParams[op.id] = { ...op.parameters };
       }
     }
-  } catch (e) {
-    console.warn("Could not resolve combo recipe details:", e);
+  } else if (Array.isArray(c.optical)) {
+    for (const opId of c.optical) {
+      if (opId) S.fx.add(opId);
+    }
   }
 
+  // Auto-set vignette policy to optical if optical_vignetting is present and policy is film
+  if (S.fx.has("optical_vignetting") && S.vpolicy === "film") {
+    S.vpolicy = "optical";
+  }
+  // Auto-set halation policy to optical if film_halation_extra is present and policy is film
+  if (S.fx.has("film_halation_extra") && S.policy === "film") {
+    S.policy = "optical";
+  }
+
+  S.fxPreset = S.fx.size === 1 ? [...S.fx][0] : "none";
+
+  // 5. Reset overrides and sync UI
   resetAllFrameOverrides();
   loadFrameAdjustments(S.current);
   syncControls();
   renderAssets();
+
+  // 6. Force immediate preview re-render
   schedulePreview(true);
   toast(`Applied preset: ${c.name}`);
 }
@@ -2031,7 +2035,7 @@ async function runPreview() {
   try {
     const reqs = [
       api("/previews", { method: "POST", json: { asset_id: S.current, recipe: baseRecipe(), max_edge: edge, stream: "main" } }),
-      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "main", white_balance: S.wb,
+      api("/previews", { method: "POST", json: { asset_id: S.current, kind: "before", max_edge: edge, stream: "before", white_balance: S.wb,
         ...(S.crops[S.current] ? { crop: S.crops[S.current] } : {}),
         ...(snapRotate ? { rotate: snapRotate } : {}) } })
     ];
@@ -2045,6 +2049,7 @@ async function runPreview() {
       pn ? pollPreview(pn.preview_id) : Promise.resolve(null)
     ]);
     if (seq !== pvSeq) return;                         // a newer edit superseded this one: never show it as current
+    if (st.status === "SUPERSEDED") return;
     if (st.status !== "DONE") { busy.textContent = ""; $("#pvinfo").textContent = `Preview failed: ${st.error_code || st.status} ${st.detail || ""}`; return; }
     const [u1, u2, u3] = await Promise.all([
       imgUrl(pt.preview_id),
