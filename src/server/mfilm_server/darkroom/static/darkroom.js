@@ -1186,7 +1186,7 @@ function renderLooks() {
       hideLookTooltip();
       lookHoverTimer = setTimeout(() => {
         if (b.matches(":hover")) showLookTooltip(b, l.id);
-      }, 5000);
+      }, 1000);
     });
     b.addEventListener("pointerleave", hideLookTooltip);
     b.addEventListener("mouseleave", hideLookTooltip);
