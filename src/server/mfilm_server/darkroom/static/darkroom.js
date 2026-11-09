@@ -285,10 +285,9 @@ async function boot() {
   $("#steps").replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1) }, h("b", {}, i + 1), t)));
   const left = h("div", { class: "pane-left", id: "leftPane" },
     step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
-    combosSection(),
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared M-Film engine`, filmPanel()),
-    step(4, "Optical effects", "optional · applied before the look and film", opticsPanel()),
+    step(4, "Optical effects", "presets, bundles and individual operators", opticsPanel()),
     step(5, "My presets", "the whole setting — look, film, optics, adjustments — saved under a name", presetsPanel()));
   const right = h("div", { class: "pane-right", id: "rightPane" },
     step(6, "Preview, develop", "",
@@ -316,13 +315,13 @@ function materialPanel() {
       h("button", { id: "ppsyncbtn", hidden: true, onclick: () => syncPpPreviews(true), title: "Synchronize thumbnails with PhotoPrism" }, "↻ Sync previews"),
       h("button", { id: "restorebtn", hidden: true, onclick: restoreAssets, title: "Restore previously loaded photos from archive" }, "Restore archived"),
       h("label", { style: "display:inline-flex;align-items:center;gap:.3rem;font-size:.78rem;margin-left:auto" },
-        "Сортировка ленты: ",
+        "Tray sort: ",
         h("select", { id: "traysort", style: "padding:.2rem .4rem;font-size:.78rem", onchange: e => { S.traySort = e.target.value; saveTraySort(); renderAssets(); } },
-          h("option", { value: "default", selected: S.traySort === "default" }, "Исходный порядок"),
-          h("option", { value: "date_asc", selected: S.traySort === "date_asc" }, "По дате (сначала старые)"),
-          h("option", { value: "date_desc", selected: S.traySort === "date_desc" }, "По дате (сначала новые)"),
-          h("option", { value: "name_asc", selected: S.traySort === "name_asc" }, "По имени (A → Z)"),
-          h("option", { value: "name_desc", selected: S.traySort === "name_desc" }, "По имени (Z → A)"))),
+          h("option", { value: "default", selected: S.traySort === "default" }, "Original order"),
+          h("option", { value: "date_asc", selected: S.traySort === "date_asc" }, "Date (oldest first)"),
+          h("option", { value: "date_desc", selected: S.traySort === "date_desc" }, "Date (newest first)"),
+          h("option", { value: "name_asc", selected: S.traySort === "name_asc" }, "Name (A → Z)"),
+          h("option", { value: "name_desc", selected: S.traySort === "name_desc" }, "Name (Z → A)"))),
       h("span", { class: "dim", id: "selcount", style: "width:100%" })),
     h("div", { class: "assets", id: "assets" }));
 }
@@ -348,11 +347,11 @@ function rollPaneEl() {
     h("div", { class: "bar", style: "margin-top:0;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem" },
       h("p", { class: "dim", id: "rollmsg", style: "margin:0" }, "Loading rolls…"),
       h("label", { style: "display:inline-flex;align-items:center;gap:.3rem;font-size:.78rem" },
-        "Сортировка: ",
+        "Sort by: ",
         h("select", { id: "roll_sort", style: "padding:.2rem .4rem;font-size:.78rem", onchange: () => renderRolls() },
-          h("option", { value: "date_desc" }, "По дате (сначала новые)"),
-          h("option", { value: "date_asc" }, "По дате (сначала старые)"),
-          h("option", { value: "name_asc" }, "По профилю пленки (A–Z)")))),
+          h("option", { value: "date_desc" }, "Date (newest first)"),
+          h("option", { value: "date_asc" }, "Date (oldest first)"),
+          h("option", { value: "name_asc" }, "Film profile (A–Z)")))),
     h("div", { class: "cards", id: "rolllist" }));
 }
 async function rollsInit() {
@@ -453,7 +452,7 @@ function ppPaneEl() { return h("div", { id: "pp", hidden: true }, h("div", { cla
   h("button", { id: "pp_resync", onclick: () => syncPpPreviews(true), title: "Synchronize and refresh previews from PhotoPrism" }, "↻ Sync previews"),
   h("input", { type: "text", id: "pp_q", placeholder: "Search albums…", style: "max-width:14rem", oninput: e => { PP.q = e.target.value; clearTimeout(PP.t); PP.t = setTimeout(ppList, 300); } }),
   h("label", { id: "pp_album_sort_wrap", style: "display:inline-flex;align-items:center;gap:.3rem;font-size:.78rem" },
-    "Сортировка: ",
+    "Sort by: ",
     h("select", {
       id: "pp_album_sort",
       style: "padding:.2rem .4rem;font-size:.78rem",
@@ -463,12 +462,12 @@ function ppPaneEl() { return h("div", { id: "pp", hidden: true }, h("div", { cla
         ppList();
       }
     },
-      h("option", { value: "name", selected: PP.albumOrder === "name" }, "По имени (A–Z)"),
-      h("option", { value: "newest", selected: PP.albumOrder === "newest" }, "По дате (сначала новые)"),
-      h("option", { value: "oldest", selected: PP.albumOrder === "oldest" }, "По дате (сначала старые)"),
-      h("option", { value: "count", selected: PP.albumOrder === "count" }, "По числу фото"))),
+      h("option", { value: "name", selected: PP.albumOrder === "name" }, "Name (A–Z)"),
+      h("option", { value: "newest", selected: PP.albumOrder === "newest" }, "Date (newest first)"),
+      h("option", { value: "oldest", selected: PP.albumOrder === "oldest" }, "Date (oldest first)"),
+      h("option", { value: "count", selected: PP.albumOrder === "count" }, "Photo count"))),
   h("label", { id: "pp_folder_sort_wrap", style: "display:inline-flex;align-items:center;gap:.3rem;font-size:.78rem", hidden: true },
-    "Сортировка: ",
+    "Sort by: ",
     h("select", {
       id: "pp_folder_sort",
       style: "padding:.2rem .4rem;font-size:.78rem",
@@ -478,11 +477,11 @@ function ppPaneEl() { return h("div", { id: "pp", hidden: true }, h("div", { cla
         ppList(true);
       }
     },
-      h("option", { value: "name_asc", selected: PP.folderOrder === "name_asc" }, "По имени (A → Z)"),
-      h("option", { value: "name_desc", selected: PP.folderOrder === "name_desc" }, "По имени (Z → A)"),
-      h("option", { value: "date_desc", selected: PP.folderOrder === "date_desc" }, "По дате (сначала новые)"),
-      h("option", { value: "date_asc", selected: PP.folderOrder === "date_asc" }, "По дате (сначала старые)"),
-      h("option", { value: "count_desc", selected: PP.folderOrder === "count_desc" }, "По числу файлов"))),
+      h("option", { value: "name_asc", selected: PP.folderOrder === "name_asc" }, "Name (A → Z)"),
+      h("option", { value: "name_desc", selected: PP.folderOrder === "name_desc" }, "Name (Z → A)"),
+      h("option", { value: "date_desc", selected: PP.folderOrder === "date_desc" }, "Date (newest first)"),
+      h("option", { value: "date_asc", selected: PP.folderOrder === "date_asc" }, "Date (oldest first)"),
+      h("option", { value: "count_desc", selected: PP.folderOrder === "count_desc" }, "File count"))),
   h("span", { class: "dim", id: "pp_state" })), h("div", { id: "pp_crumb", class: "dim", style: "font:.75rem var(--mono);margin:.5rem 0" }),
   h("div", { class: "cards", id: "pp_list" }), h("div", { id: "pp_photos" })); }
 async function ppInit() {
@@ -624,7 +623,7 @@ function ppRender() {
       h("div", { style: "display:inline-flex;align-items:center;gap:.6rem;flex-wrap:wrap" },
         h("h3", { style: "font-size:.9rem;margin:0" }, PP.title),
         h("label", { style: "display:inline-flex;align-items:center;gap:.3rem;font-size:.78rem;color:var(--dim)" },
-          "Сортировка: ",
+          "Sort by: ",
           h("select", {
             id: "pp_photo_sort",
             style: "padding:.2rem .4rem;font-size:.78rem",
@@ -633,10 +632,10 @@ function ppRender() {
               ppOpen(PP.sourceKind, PP.sourceUid, PP.title, 0, false, false);
             }
           },
-            h("option", { value: "newest", selected: PP.photoOrder === "newest" }, "По дате съёмки (сначала новые)"),
-            h("option", { value: "oldest", selected: PP.photoOrder === "oldest" }, "По дате съёмки (сначала старые)"),
-            h("option", { value: "name", selected: PP.photoOrder === "name" }, "По имени файла (A → Z)"),
-            h("option", { value: "added", selected: PP.photoOrder === "added" }, "По дате добавления")))),
+            h("option", { value: "newest", selected: PP.photoOrder === "newest" }, "Capture date (newest first)"),
+            h("option", { value: "oldest", selected: PP.photoOrder === "oldest" }, "Capture date (oldest first)"),
+            h("option", { value: "name", selected: PP.photoOrder === "name" }, "File name (A → Z)"),
+            h("option", { value: "added", selected: PP.photoOrder === "added" }, "Date added")))),
       pager()),
     h("div", { class: "pvinfo", style: "margin:0 0 .5rem" },
       h("span", {}, `${PP.page.length} on this page`), h("span", {}, `${elig.length} with a supported RAW`), h("span", {}, `${PP.page.length - elig.length} not usable (hover for the reason)`)),
@@ -864,50 +863,11 @@ async function pollPreview(pid, tries = 400) {
   return { status: "FAILED", error_code: "TIMEOUT" };
 }
 
-/* ---------------- curated combinations (spec v0.7) ---------------- */
-function combosSection() {
-  const scenes = [
-    { id: "", label: "Все сцены" },
-    { id: "street", label: "Street" },
-    { id: "portrait", label: "Portrait" },
-    { id: "golden_hour", label: "Golden Hour" },
-    { id: "night", label: "Night" },
-    { id: "neon", label: "Neon" },
-    { id: "cinematic", label: "Cinematic" },
-    { id: "landscape", label: "Landscape" },
-    { id: "fashion", label: "Fashion" }
-  ];
-  const chips = h("div", { class: "chips", id: "combochips", style: "margin-bottom:.6rem;flex-wrap:wrap;gap:.35rem" },
-    ...scenes.map(s => h("button", {
-      class: "combo-chip",
-      "aria-pressed": String(S.comboSceneFilter === s.id),
-      onclick: () => { S.comboSceneFilter = s.id; combosChipsSync(); renderCombos(); }
-    }, s.label))
-  );
-  const search = h("input", {
-    type: "search",
-    id: "combosearch",
-    placeholder: "Поиск по связкам (название, камера, плёнка, эффект)...",
-    style: "margin-bottom:.6rem;width:100%",
-    oninput: e => { S.comboQuery = e.target.value.toLowerCase().trim(); renderCombos(); }
-  });
-  return h("section", { class: "step combos-section", id: "s-combos" },
-    h("h2", {},
-      h("span", { class: "n" }, "✦"),
-      "Кураторские связки (Curated Combos)",
-      h("span", { class: "hint" }, "21 авторская адаптация · задаёт камеру, плёнку и оптику в один клик")),
-    h("p", { class: "dim", style: "margin-top:0;font-size:.82rem" },
-      "Адаптации классических сочетаний сообщества: камера + эмульсия + оптический фильтр. Все параметры остаются полностью доступными для редактирования в шагах ниже."),
-    search,
-    chips,
-    h("div", { class: "cards", id: "combocards" })
-  );
-}
-
+/* ---------------- curated combinations and presets ---------------- */
 function combosChipsSync() {
   const box = $("#combochips"); if (!box) return;
   for (const b of box.children) {
-    const isAll = b.textContent === "Все сцены" && !S.comboSceneFilter;
+    const isAll = b.textContent === "All scenes" && !S.comboSceneFilter;
     const match = b.textContent.toLowerCase() === S.comboSceneFilter.replace(/_/g, " ").toLowerCase();
     b.setAttribute("aria-pressed", String(isAll || match));
   }
@@ -918,7 +878,7 @@ function selectCombo(c) {
     S.comboPreset = null;
     syncControls();
     schedulePreview(true);
-    toast("Кураторский пресет отключён: " + c.name);
+    toast("Preset cleared: " + c.name);
     return;
   }
   S.comboPreset = c.id;
@@ -959,98 +919,55 @@ function selectCombo(c) {
   syncControls();
   renderAssets();
   schedulePreview(true);
-  toast(`Применена связка: ${c.name}`);
-}
-
-function renderCombos() {
-  const box = $("#combocards"); if (!box) return;
-  const list = S.combos || [];
-  const q = S.comboQuery || "";
-  const sf = S.comboSceneFilter || "";
-  const filtered = list.filter(c => {
-    if (sf && c.scene !== sf && !(sf === "neon" && c.scene === "neon_cyberpunk")) return false;
-    if (q) {
-      const hay = [c.id, c.name, c.camera_look, c.film_stock, c.description, c.scene, c.category, c.curator_intent].join(" ").toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-
-  box.replaceChildren(...filtered.map(c => {
-    const on = S.comboPreset === c.id;
-    const fxSummary = (c.optical_effects && c.optical_effects.length)
-      ? c.optical_effects.map(e => e.id.replace(/_/g, " ")).join(", ")
-      : (c.optical_preset && c.optical_preset !== "none" ? c.optical_preset.replace(/_/g, " ") : "no fx");
-    const summary = `${c.camera_look.replace(/_/g, " ")} + ${c.film_stock} + ${fxSummary}`;
-    const waveBadge = `Wave ${c.wave_gate || 1}`;
-    const sceneBadge = c.scene ? c.scene.replace(/_/g, " ") : "";
-    const evBadge = (c.evidence && c.evidence.status) ? c.evidence.status : "documented";
-
-    return h("button", {
-      class: "card combo-card",
-      "aria-pressed": String(on),
-      title: `${c.name}: ${c.description || summary}`,
-      onclick: () => selectCombo(c)
-    },
-      h("div", { class: "combo-badges" },
-        h("span", { class: "badge gold" }, "✦ Combo"),
-        h("span", { class: "badge wave" }, waveBadge),
-        sceneBadge ? h("span", { class: "badge" }, sceneBadge) : null,
-        h("span", { class: "badge evidence" }, evBadge)
-      ),
-      h("strong", {}, c.name),
-      h("small", { class: "combo-summary" }, summary),
-      c.curator_intent ? h("span", { class: "combo-intent" }, c.curator_intent) : null
-    );
-  }));
+  toast(`Applied preset: ${c.name}`);
 }
 
 /* ---------------- step 2: camera look ---------------- */
 const LOOK_SIGNATURES = {
   neutral: {
-    tag: "Базовый профиль",
-    summary: "Чистая линейная цветопередача без окраса сенсора",
-    detail: "Нейтральная точка отсчета: точный базовый цвет и линейный контраст для максимального контроля при дальнейшей проявке плёнки."
+    tag: "Base Profile",
+    summary: "Pure linear color rendition without sensor bias",
+    detail: "Neutral reference point: accurate base color and linear contrast for maximum control during film emulation."
   },
   leica_m8_ccd: {
-    tag: "Kodak CCD · 10 Мп",
-    summary: "Высокий микроконтраст и винтажный «лейковский» объем",
-    detail: "Легендарный сенсор Kodak KAF-8300 с тонким ИК-фильтром. Плотные холодноватые тени, сочные теплые света, выразительная пластика и живые оттенки кожи."
+    tag: "Kodak CCD · 10 MP",
+    summary: "High micro-contrast and vintage Leica rendering",
+    detail: "Legendary Kodak KAF-8300 CCD sensor with thin IR cut filter. Dense cool shadows, rich warm highlights, expressive plastic rendition, and lively skin tones."
   },
   leica_m9_ccd: {
-    tag: "Full-frame Kodak CCD · 18 Мп",
-    summary: "Густой аналоговый цвет и фирменная пластика M-серии",
-    detail: "Знаменитый CCD-сенсор Kodak KAF-18500. Плёночная глубина, теплые света, оливково-изумрудные полутона зелени и высокая микрорезкость без цифровой жесткости."
+    tag: "Full-Frame Kodak CCD · 18 MP",
+    summary: "Dense analog color and signature M-series character",
+    detail: "Iconic Kodak KAF-18500 CCD sensor. Filmic depth, warm highlights, olive-emerald foliage transitions, and crisp micro-contrast without digital harshness."
   },
   fujifilm_s5_pro: {
-    tag: "Super CCD SR Pro · Двойные пиксели",
-    summary: "Широчайший ДД в светах и мягкие портретные тона",
-    detail: "Легендарная матрица Fujifilm с раздельными датчиками для светов. Мягкий гармоничный контраст, невыбивающиеся света и нежные естественные скинтоны."
+    tag: "Super CCD SR Pro · Dual Pixels",
+    summary: "Exceptional highlight dynamic range and soft portrait tonality",
+    detail: "Legendary Fujifilm Super CCD sensor with dedicated highlight receptors. Gentle organic roll-off, unclipped bright areas, and smooth natural skin tones."
   },
   nikon_d200_ccd: {
-    tag: "Sony CCD · Эпоха ранних зеркалок",
-    summary: "Плотный контраст и глубокий насыщенный цвет",
-    detail: "Узнаваемый характер классических CCD-камер Nikon: плотные тени, глубокий синий цвет неба, кирпично-теплые оттенки и живая цветопередача без перенасыщения."
+    tag: "Sony CCD · Early DSLR Era",
+    summary: "Punchy contrast and deep saturated color",
+    detail: "Classic Nikon CCD character: rich dense shadows, deep sky blues, warm earthy tones, and vibrant natural color reproduction."
   },
   pentax_645d_ccd: {
-    tag: "Medium Format CCD · 40 Мп",
-    summary: "Плавные тональные градиенты и среднеформатный объем",
-    detail: "Крупноформатная CCD-матрица Kodak. Высочайшая градация полутонов, мягкий благородный спад в светах и сдержанный естественный колорит с глубоким разделением планов."
+    tag: "Medium Format CCD · 40 MP",
+    summary: "Silky tonal gradations and medium-format depth",
+    detail: "Large-format Kodak CCD sensor. Superior tonal gradations, graceful highlight roll-off, restrained natural palette, and pronounced subject separation."
   },
   ricoh_gr_iii_positive: {
-    tag: "Стрит-культура · Ricoh GR",
-    summary: "Контрастный характер слайдовой фотопленки",
-    detail: "Фирменный режим Positive Film: выразительный микроконтраст, глубокие тени, акцент на красный и синий спектры и сочная драматичная подача кадра."
+    tag: "Street Culture · Ricoh GR",
+    summary: "High-contrast color reversal slide film aesthetic",
+    detail: "Signature Positive Film profile: punchy micro-contrast, deep blacks, accentuated reds and blues, and vibrant dramatic street look."
   },
   sigma_dp2_merrill_foveon: {
-    tag: "Foveon X3 · Прямой захват RGB",
-    summary: "Экстремальный микроконтраст и текстурная резкость",
-    detail: "Трехслойная кремниевая структура без дебайеризации (Bayer). Невероятная попиксельная четкость мелких фактур, нейтральные света и осязаемый трехмерный объем."
+    tag: "Foveon X3 · Direct Full-RGB Capture",
+    summary: "Extreme textural micro-contrast and pixel sharpness",
+    detail: "Three-layer silicon sensor without Bayer debayering: extraordinary per-pixel fine detail, clean neutral highlights, and tactile 3D pop."
   },
   fujifilm_xpro3_classic_negative: {
     tag: "Fujicolor Superia Look",
-    summary: "Плотные тени, умеренная насыщенность и бирюзовая зелень",
-    detail: "Стилизация под классическую негативную плёнку: характерный S-образный контраст в средних тонах, приглушенные цвета и смещение зелени в благородный циановый оттенок."
+    summary: "Dense shadows, muted saturation, and cyan greens",
+    detail: "Stylized after nostalgic consumer color negative film: distinctive hard S-curve in midtones, subdued colors, and green shifted toward noble cyan."
   }
 };
 
@@ -1165,17 +1082,47 @@ function isCompositeActive(c) {
   return Boolean(lookOk && filmOk && fxOk && (!S.activePreset || S.activePreset === c.id));
 }
 function opticsPanel() {
+  const scenes = [
+    { id: "", label: "All scenes" },
+    { id: "street", label: "Street" },
+    { id: "portrait", label: "Portrait" },
+    { id: "golden_hour", label: "Golden hour" },
+    { id: "night", label: "Night" },
+    { id: "neon", label: "Neon" },
+    { id: "cinematic", label: "Cinematic" },
+    { id: "landscape", label: "Landscape" },
+    { id: "fashion", label: "Fashion" }
+  ];
+  const chips = h("div", { class: "chips", id: "combochips", style: "margin-bottom:.6rem;flex-wrap:wrap;gap:.35rem" },
+    ...scenes.map(s => h("button", {
+      class: "combo-chip",
+      "aria-pressed": String(S.comboSceneFilter === s.id),
+      onclick: () => { S.comboSceneFilter = s.id; combosChipsSync(); renderFx(); }
+    }, s.label))
+  );
+  const search = h("input", {
+    type: "search",
+    id: "combosearch",
+    placeholder: "Search presets and bundles (name, camera, film, effect)...",
+    style: "margin-bottom:.6rem;width:100%",
+    oninput: e => { S.comboQuery = e.target.value.toLowerCase().trim(); renderFx(); }
+  });
+
   const presetGroup = h("div", { class: "preset-group" },
     h("div", { class: "group-head" },
-      h("span", {}, "✦ Effect bundles & presets"),
-      h("small", {}, "sets a curated combination · active bundle is framed in gold")),
+      h("span", {}, "✦ Presets & bundles"),
+      h("small", {}, "sets look, film and optics together · active selection is framed in gold")),
+    search,
+    chips,
     h("div", { class: "cards", id: "presetcards" }));
+
   const divider = h("div", { class: "fx-divider", role: "separator" });
   const fxGroup = h("div", { class: "effects-group" },
     h("div", { class: "group-head" },
       h("span", {}, "Individual optical effects"),
       h("small", {}, "combinable · grouped by stage · active effects highlighted")),
     h("div", { class: "fx-group-container", id: "fxgroups" }));
+
   const strength = h("input", { type: "range", id: "fxstrength", min: 0, max: 400, value: 50, "aria-label": "Optical effects strength", title: "Double-click resets to 0.50",
     ondblclick: e => { e.target.value = 50; S.fxStrength = 0.5; $("#fxv").textContent = "0.50"; scheduleLiveTone(); schedulePreview(); },
     oninput: e => { S.fxStrength = e.target.value / 100; $("#fxv").textContent = S.fxStrength.toFixed(2); scheduleLiveTone(); schedulePreview(); } });
@@ -1188,7 +1135,9 @@ function opticsPanel() {
     h("option", { value: "stacked" }, "stacked: combine film and optical falloff"),
     h("option", { value: "disabled" }, "disabled: no vignetting"));
   const warnings = h("div", { id: "fx_warnings", style: "margin-top:.7rem" });
-  return h("div", {}, h("p", { class: "dim", style: "margin-top:0" }, "Effects run on scene-linear light before the look and film, in the engine's fixed order. Starter parameters are provisional artistic approximations, not measured recreations of any filter."),
+
+  return h("div", {},
+    h("p", { class: "dim", style: "margin-top:0" }, "Effects run on scene-linear light before the look and film, in the engine's fixed order. Presets and bundles configure look, film and optics together; individual controls remain fully editable."),
     presetGroup, divider, fxGroup, h("div", { class: "grid2", style: "margin-top:1rem" },
       h("div", {}, h("label", { for: "fxstrength" }, "Effects strength ", h("span", { id: "fxv", class: "val" }, "0.50")), strength),
       h("div", {}, h("label", { for: "policy" }, "Halation policy"), policy),
@@ -1232,8 +1181,89 @@ function renderFxWarnings() {
 function renderFx() {
   const pbox = $("#presetcards"), gbox = $("#fxgroups");
   if (!S.catalog) return;
+  combosChipsSync();
   if (pbox) {
-    const compCards = S.catalog.composites.map(c => {
+    const q = S.comboQuery || "";
+    const sf = S.comboSceneFilter || "";
+
+    // 1. Curated combinations (all 21 presets)
+    const comboCards = (S.combos || []).filter(c => {
+      if (sf && c.scene !== sf && !(sf === "neon" && c.scene === "neon_cyberpunk")) return false;
+      if (q) {
+        const hay = [c.id, c.name, c.camera_look, c.film_stock, c.description, c.scene, c.category, c.curator_intent].join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).map(c => {
+      const on = S.comboPreset === c.id;
+      const fxSummary = (c.optical_effects && c.optical_effects.length)
+        ? c.optical_effects.map(e => e.id.replace(/_/g, " ")).join(", ")
+        : (c.optical_preset && c.optical_preset !== "none" ? c.optical_preset.replace(/_/g, " ") : "no fx");
+      const summary = `${c.camera_look.replace(/_/g, " ")} + ${c.film_stock} + ${fxSummary}`;
+      const sceneBadge = c.scene ? c.scene.replace(/_/g, " ") : "";
+
+      return h("button", {
+        class: "card combo-card",
+        "aria-pressed": String(on),
+        title: `${c.name}: ${c.description || summary}`,
+        onclick: () => selectCombo(c)
+      },
+        h("div", { class: "combo-badges" },
+          h("span", { class: "badge gold" }, "✦ Preset"),
+          sceneBadge ? h("span", { class: "badge" }, sceneBadge) : null
+        ),
+        h("strong", {}, c.name),
+        h("small", { class: "combo-summary" }, summary),
+        c.curator_intent ? h("span", { class: "combo-intent" }, c.curator_intent) : null
+      );
+    });
+
+    // 2. Optical bundles (golden_haze, vintage_glass)
+    const optPresets = S.catalog.optical_presets.filter(p => p.id !== "none").filter(p => {
+      if (sf) return false;
+      if (q) {
+        const hay = [p.id, p.name].join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).map(p => {
+      const on = S.fxPreset === p.id && S.activePreset === "opt:" + p.id;
+      const isVG = p.id === "vintage_glass";
+      const desc = isVG
+        ? "Barrel Distortion + Chromatic Aberration + Edge Softness"
+        : "Soft Sun Glow + Black Pro-Mist (keeps Look & Film)";
+      return h("button", { class: "card preset-card", "aria-pressed": String(on), "aria-disabled": String(!p.supported),
+        title: "Applies the optical bundle without changing Camera Look or Film",
+        onclick: () => {
+          if (!p.supported) return toast(`${p.name}: not available`);
+          if (on) {
+            S.activePreset = null; S.fxPreset = "none"; S.fx.clear();
+          } else {
+            S.activePreset = "opt:" + p.id; S.fxPreset = p.id;
+            if (p.id === "golden_haze") {
+              S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
+            } else if (p.id === "vintage_glass") {
+              S.fx = new Set(["vintage_glass_barrel_distortion", "vintage_glass_chromatic_aberration", "vintage_glass_edge_softness"]);
+            } else {
+              S.fx = new Set();
+            }
+          }
+          syncControls(); schedulePreview();
+        } },
+        h("span", { class: "badge" }, "✦ Optics bundle"),
+        h("strong", {}, p.name),
+        h("small", {}, desc));
+    });
+
+    // 3. Legacy composites (if any)
+    const legacyComposites = (S.catalog.composites || []).filter(c => {
+      if (sf) return false;
+      if (q) {
+        const hay = [c.id, c.name, c.camera_look, c.film, c.optical_preset].join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).map(c => {
       const on = isCompositeActive(c);
       const summary = [c.camera_look !== "neutral" ? c.camera_look.replace(/_/g, " ") : "neutral look", c.film, c.optical_preset.replace(/_/g, " ")].filter(Boolean).join(" + ");
       return h("button", { class: "card preset-card", "aria-pressed": String(on), title: "Sets camera look, film and optical effect together",
@@ -1265,37 +1295,10 @@ function renderFx() {
         h("strong", {}, c.name),
         h("small", {}, summary));
     });
-    const anyCompOn = S.catalog.composites.some(isCompositeActive);
-    const optPresets = S.catalog.optical_presets.filter(p => p.id !== "none").map(p => {
-      const on = S.fxPreset === p.id && (!anyCompOn || S.activePreset === "opt:" + p.id);
-      const isVG = p.id === "vintage_glass";
-      const desc = isVG
-        ? "Barrel Distortion + Chromatic Aberration + Edge Softness"
-        : "Soft Sun Glow + Black Pro-Mist (keeps Look & Film)";
-      return h("button", { class: "card preset-card", "aria-pressed": String(on), "aria-disabled": String(!p.supported),
-        title: "Applies the optical bundle without changing Camera Look or Film",
-        onclick: () => {
-          if (!p.supported) return toast(`${p.name}: not available`);
-          if (on) {
-            S.activePreset = null; S.fxPreset = "none"; S.fx.clear();
-          } else {
-            S.activePreset = "opt:" + p.id; S.fxPreset = p.id;
-            if (p.id === "golden_haze") {
-              S.fx = new Set(["soft_sun_glow", "black_pro_mist_like"]);
-            } else if (p.id === "vintage_glass") {
-              S.fx = new Set(["vintage_glass_barrel_distortion", "vintage_glass_chromatic_aberration", "vintage_glass_edge_softness"]);
-            } else {
-              S.fx = new Set();
-            }
-          }
-          syncControls(); schedulePreview();
-        } },
-        h("span", { class: "badge" }, "✦ Optics bundle"),
-        h("strong", {}, p.name),
-        h("small", {}, desc));
-    });
-    pbox.replaceChildren(...compCards, ...optPresets);
+
+    pbox.replaceChildren(...comboCards, ...optPresets, ...legacyComposites);
   }
+
   if (gbox) {
     const allFx = new Map(S.catalog.optical_effects.map(o => [o.id, o]));
     const groupElements = FX_STAGE_GROUPS.map(grp => {
@@ -1325,7 +1328,7 @@ function renderFx() {
           if (o.id === "film_halation_extra") S.policy = S.fx.has(o.id) ? "optical" : "film";
           if (o.id === "optical_vignetting") S.vpolicy = S.fx.has(o.id) ? "optical" : "film";
           syncControls(); schedulePreview(); } },
-          h("span", { class: "badge" }, inPreset ? "In bundle" : (o.wave ? `Wave ${o.wave}` : "Effect")),
+          h("span", { class: "badge" }, inPreset ? "In bundle" : "Effect"),
           h("strong", {}, o.name),
           h("small", {}, o.category ? o.category.replace(/_/g, " ") : "optical effect"));
       });
@@ -1340,7 +1343,6 @@ function renderFx() {
   renderFxWarnings();
 }
 function syncControls() {
-  renderCombos();
   renderLooks(); renderFilms(); renderFx();
   if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; }
   if ($("#fxstrength")) { $("#fxstrength").value = Math.round(S.fxStrength * 100); $("#fxv").textContent = S.fxStrength.toFixed(2); }
@@ -2113,7 +2115,7 @@ function wireCrop(box) {
       x1 = x0 + w;
       y1 = y0 + h;
     } else if (e.shiftKey) {
-      // Симметричное масштабирование относительно центра рамки
+      // Symmetric scaling relative to crop center
       const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
       let hw = o.w / 2, hh = o.h / 2;
       const hasE = hd.includes("e"), hasW = hd.includes("w");
@@ -2271,8 +2273,8 @@ function checkAndFitOutputSize(requestedVal, showWarning = true) {
     if (showWarning) {
       const origOpt = OUTPUT_SIZES.find(s => s.val === requestedVal);
       const origLabel = origOpt ? origOpt.label : `${reqW}×${reqH}`;
-      const assetDesc = targetAssets.length > 1 ? "одного из выбранных кадров" : "кадра";
-      toast(`⚠️ Размер ${origLabel} превышает разрешение ${assetDesc} (${minMaxEdge}×${minMinEdge}). Автоматически выбран: ${fit.label}.`);
+      const assetDesc = targetAssets.length > 1 ? "one of the selected frames" : "the frame";
+      toast(`⚠️ Size ${origLabel} exceeds resolution of ${assetDesc} (${minMaxEdge}×${minMinEdge}). Automatically adjusted to: ${fit.label}.`);
     }
     return fit.val;
   }
@@ -2383,7 +2385,7 @@ async function refreshHistory() {
   box.replaceChildren(...(r.items.length ? r.items.map(x => h("div", { class: "job" }, h("header", {}, h("b", {}, x.filename), h("span", { class: "dim" },
       `${x.film} · ${x.camera_look} · ${x.optical} · ${x.width}×${x.height} · ${(x.bytes / 1048576).toFixed(1)} MB · ${x.created_at.slice(0, 16).replace("T", " ")}`)),
     h("div", { class: "acts" },
-      h("button", { class: "session-load-btn", title: "Загрузить этот кадр и его рецепт в редактор", onclick: () => loadHistoryRender(x) }, "↺ Загрузить"),
+      h("button", { class: "session-load-btn", title: "Load this frame and recipe into editor", onclick: () => loadHistoryRender(x) }, "↺ Load"),
       h("a", { class: "btn", href: `${API}/renders/${x.render_id}/file` }, "Download"),
       h("button", { onclick: async () => {
         const o = outputSpec(); if (!o.publish) return toast("Choose “Publish to PhotoPrism” in the destination above first");
@@ -2394,7 +2396,7 @@ const COLOR = { PUBLISHING: "var(--safe2)", COMPLETE: "var(--ok)", FAILED: "var(
 function jobCard(j) {
   const st = h("span", { class: "st", style: `color:${COLOR[j.state] || "inherit"}` }, j.state);
   const acts = h("div", { class: "acts" });
-  acts.append(h("button", { class: "session-load-btn", title: "Загрузить сессию: восстановить кадры, рецепт, кадрирование и целевой альбом в редактор", onclick: () => loadSession(j) }, "↺ Загрузить сессию"));
+  acts.append(h("button", { class: "session-load-btn", title: "Load session: restore frames, recipe, crop and target album into editor", onclick: () => loadSession(j) }, "↺ Load session"));
   if (["QUEUED", "RUNNING"].includes(j.state)) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/cancel`, { method: "POST" }); refreshJobs(); } }, "Cancel"));
   if (j.counts.FAILED || j.counts.CANCELLED) acts.append(h("button", { onclick: async () => { await api(`/jobs/${j.job_id}/retry`, { method: "POST" }); refreshJobs(); } }, "Retry failed / cancelled"));
   if (j.counts.COMPLETE) acts.append(h("a", { class: "btn", href: `${API}/jobs/${j.job_id}/zip`, download: "" }, `Download ZIP (${j.counts.COMPLETE})`));
@@ -2426,7 +2428,7 @@ async function loadSession(j) {
     }
     const items = job.items || [];
     if (!items.length) {
-      return toast("В этой сессии нет кадров");
+      return toast("No frames in this session");
     }
 
     // 1. Un-dismiss any asset in this session and reload assets
@@ -2533,8 +2535,8 @@ async function loadSession(j) {
           if ($("#dnew")) $("#dnew").value = albumTitle;
           if (albumUid) {
             toast(albumTitle
-              ? `Альбом «${albumTitle}» не найден в PhotoPrism (удалён) и будет создан заново.`
-              : "Целевой альбом не найден в PhotoPrism и будет создан заново.");
+              ? `Album "${albumTitle}" not found in PhotoPrism (deleted) and will be recreated.`
+              : "Target album not found in PhotoPrism and will be recreated.");
           }
         }
       }
@@ -2555,9 +2557,9 @@ async function loadSession(j) {
     updateDevelop();
     schedulePreview(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
-    toast(`Сессия загружена: ${items.length} кадров, пленка ${S.film}`);
+    toast(`Session loaded: ${items.length} frames, film ${S.film}`);
   } catch (e) {
-    toast("Ошибка загрузки сессии: " + e.message);
+    toast("Failed to load session: " + e.message);
   }
 }
 
@@ -2577,9 +2579,9 @@ async function loadHistoryRender(x) {
     updateDevelop();
     schedulePreview(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
-    toast(`Кадр ${x.filename} загружен в редактор`);
+    toast(`Frame ${x.filename} loaded into editor`);
   } catch (e) {
-    toast("Ошибка загрузки: " + e.message);
+    toast("Failed to load frame: " + e.message);
   }
 }
 const albumNames = {};

@@ -224,7 +224,6 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .card.combo-card[aria-pressed=true]{border-color:var(--preset);box-shadow:inset 0 0 0 1.5px var(--preset),0 0 16px rgba(242,184,75,.28);background:rgba(242,184,75,.09)}
 .card.combo-card .combo-badges{display:flex;gap:.3rem;flex-wrap:wrap;align-items:center;margin-bottom:.2rem}
 .card.combo-card .badge.gold{background:var(--preset);color:#1a1105;font-weight:700}
-.card.combo-card .badge.wave{background:rgba(255,138,61,.14);color:var(--safe2);border:1px solid rgba(255,138,61,.3)}
 .card.combo-card .badge.evidence{background:rgba(155,209,122,.12);color:var(--ok);border:1px solid rgba(155,209,122,.25);font-size:.58rem}
 .card.combo-card .combo-summary{font:.7rem var(--mono);color:var(--preset);margin-top:.15rem}
 .card.combo-card .combo-intent{font-size:.78rem;color:#d8c6b3;line-height:1.35}
