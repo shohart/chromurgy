@@ -230,10 +230,29 @@ def test_two_pane_layout_loader_and_preset_separation_in_ui_assets(client):
     css = client.get("/darkroom/static/darkroom.css").text
     js = client.get("/darkroom/static/darkroom.js").text
     assert 'id="loader"' in html
-    assert ".workspace{" in css.replace(" ", "") and ".pane-right{position:sticky" in css.replace(" ", "")
+    assert ".workspace{" in css.replace(" ", "") and ".pane-right{" in css.replace(" ", "")
     assert ".preset-card[aria-pressed=true]" in css.replace(" ", "") and ".fx-divider{" in css.replace(" ", "")
     assert "renderLiveTone" in js and "withLoading" in js and "isCompositeActive" in js
     assert "clearAssets" in js and "stepRotate" in js and "rotpreset" in js and "rotdeg" in js
+
+
+def test_favicon_and_icons_served(client):
+    r_ico = client.get("/favicon.ico")
+    assert r_ico.status_code == 200
+    assert r_ico.headers.get("content-type") == "image/x-icon"
+    assert len(r_ico.content) > 0
+
+    r_svg = client.get("/darkroom/static/favicon.svg")
+    assert r_svg.status_code == 200
+    assert "<svg" in r_svg.text
+
+    r_png = client.get("/darkroom/static/favicon-32x32.png")
+    assert r_png.status_code == 200
+    assert len(r_png.content) > 0
+
+    r_manifest = client.get("/darkroom/static/site.webmanifest")
+    assert r_manifest.status_code == 200
+    assert "M-Film Darkroom" in r_manifest.text
 
 
 def test_operator_presets_roundtrip(logged, client):

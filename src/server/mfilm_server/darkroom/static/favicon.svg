@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <radialGradient id="lampGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff5ea" />
+      <stop offset="20%" stop-color="#ffb050" />
+      <stop offset="45%" stop-color="#ff4a2b" />
+      <stop offset="75%" stop-color="#ff4a2b" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#ff4a2b" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d1511" />
+      <stop offset="100%" stop-color="#0c0807" />
+    </linearGradient>
+    <linearGradient id="filmGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#241913" />
+      <stop offset="100%" stop-color="#130d0a" />
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle Base -->
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="url(#bgGrad)" stroke="#ff4a2b" stroke-width="10" stroke-opacity="0.9" />
+
+  <!-- Film Strip Frame -->
+  <rect x="64" y="56" width="384" height="400" rx="28" fill="url(#filmGrad)" stroke="#ff8a3d" stroke-width="3" stroke-opacity="0.45" />
+
+  <!-- Sprocket Holes (Left) -->
+  <rect x="84" y="78" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+  <rect x="84" y="152" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+  <rect x="84" y="226" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+  <rect x="84" y="300" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+  <rect x="84" y="374" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+
+  <!-- Sprocket Holes (Right) -->
+  <rect x="396" y="78" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+  <rect x="396" y="152" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+  <rect x="396" y="226" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+  <rect x="396" y="300" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+  <rect x="396" y="374" width="32" height="48" rx="8" fill="#080605" stroke="#ff4a2b" stroke-width="2.5" stroke-opacity="0.4" />
+
+  <!-- Inner Negative Window -->
+  <rect x="136" y="76" width="240" height="348" rx="16" fill="#090605" stroke="#ff4a2b" stroke-width="3" stroke-opacity="0.75" />
+
+  <!-- Ambient Safelight Glow Behind -->
+  <circle cx="256" cy="164" r="86" fill="url(#lampGlow)" />
+
+  <!-- Safelight Lamp Orb -->
+  <circle cx="256" cy="164" r="26" fill="#ff4a2b" />
+  <circle cx="256" cy="164" r="13" fill="#ff9d42" />
+  <circle cx="256" cy="164" r="5.5" fill="#ffffff" />
+
+  <!-- Bold Styled 'M' -->
+  <polygon points="170,392 170,238 214,238 256,316 298,238 342,238 342,392 306,392 306,296 256,380 206,296 206,392" fill="#f5e6d6" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" />
+</svg>

@@ -1,0 +1,29 @@
+{
+  "name": "M-Film Darkroom",
+  "short_name": "Darkroom",
+  "icons": [
+    {
+      "src": "/darkroom/static/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/darkroom/static/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/darkroom/static/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/darkroom/static/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#120d0b",
+  "background_color": "#120d0b",
+  "display": "standalone"
+}
