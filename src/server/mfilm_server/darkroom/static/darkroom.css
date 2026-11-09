@@ -216,18 +216,10 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .look-tooltip .tt-summary{font-size:.84rem;font-weight:500;color:var(--safe2);margin-bottom:.35rem;line-height:1.35}
 .look-tooltip .tt-detail{font-size:.78rem;color:#d8c6b3;line-height:1.45;margin:0}
 
-/* Suggested Combos (spec v0.7) */
-.combos-section{border-color:var(--preset-dim);background:radial-gradient(800px 300px at 50% 0%,rgba(242,184,75,.06),transparent 70%),var(--panel)}
-.combos-section h2 .n{background:rgba(242,184,75,.12);border-color:var(--preset);color:var(--preset)}
-.card.combo-card{position:relative;text-align:left;border-color:var(--line);background:var(--panel2);transition:all .15s ease;display:flex;flex-direction:column;gap:.25rem;cursor:pointer}
-.card.combo-card:hover{border-color:var(--preset);background:rgba(242,184,75,.04)}
-.card.combo-card[aria-pressed=true]{border-color:var(--preset);box-shadow:inset 0 0 0 1.5px var(--preset),0 0 16px rgba(242,184,75,.28);background:rgba(242,184,75,.09)}
-.card.combo-card .combo-badges{display:flex;gap:.3rem;flex-wrap:wrap;align-items:center;margin-bottom:.2rem}
-.card.combo-card .badge.gold{background:var(--preset);color:#1a1105;font-weight:700}
-.card.combo-card .badge.evidence{background:rgba(155,209,122,.12);color:var(--ok);border:1px solid rgba(155,209,122,.25);font-size:.58rem}
-.card.combo-card .combo-summary{font:.7rem var(--mono);color:var(--preset);margin-top:.15rem}
-.card.combo-card .combo-intent{font-size:.78rem;color:#d8c6b3;line-height:1.35}
-.combo-chip{padding:.25rem .6rem;font-size:.72rem;border-radius:12px}
+/* Preset scene chips (Step 4) */
+.combo-chip{padding:.25rem .65rem;font-size:.72rem;border-radius:12px;background:var(--panel2);border:1px solid var(--line);color:var(--dim);cursor:pointer;transition:all .15s}
+.combo-chip:hover{border-color:var(--safe2);color:var(--ink)}
+.combo-chip[aria-pressed=true]{background:rgba(242,184,75,.15);border-color:var(--preset);color:var(--preset);font-weight:600}
 
 /* Grouped optics (Step 4) */
 .fx-group-container{display:flex;flex-direction:column;gap:.6rem;margin-top:.7rem}
