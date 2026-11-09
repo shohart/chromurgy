@@ -374,7 +374,44 @@ function uploadPane() {
 }
 
 /* ---- PhotoPrism source browser: albums and folders are different things; selection survives paging ---- */
-const PP = { inst: null, mode: "albums", albumOrder: "name", photoOrder: "newest", src: null, page: [], offset: 0, next: null, prevOffsets: [], stack: [], q: "", chosen: new Map(), sourceKind: null, sourceUid: null };
+const PP = {
+  inst: null,
+  mode: "albums",
+  albumOrder: (function() { try { return localStorage.getItem("mfilm.pp_album_sort") || "name"; } catch (_) { return "name"; } })(),
+  folderOrder: (function() { try { return localStorage.getItem("mfilm.pp_folder_sort") || "name_asc"; } catch (_) { return "name_asc"; } })(),
+  photoOrder: (function() { try { return localStorage.getItem("mfilm.pp_photo_sort") || "newest"; } catch (_) { return "newest"; } })(),
+  src: null,
+  page: [],
+  offset: 0,
+  next: null,
+  prevOffsets: [],
+  stack: [],
+  q: "",
+  chosen: new Map(),
+  sourceKind: null,
+  sourceUid: null
+};
+
+function getFolderDate(f) {
+  if (f.year && f.year > 1970) {
+    const m = (f.month || 1) - 1;
+    const d = f.day || 1;
+    return new Date(f.year, m, d).getTime();
+  }
+  if (f.mtime) return f.mtime * 1000;
+  if (f.modified_at) {
+    const t = Date.parse(f.modified_at);
+    if (!isNaN(t)) return t;
+  }
+  const mIso = (f.title || "").match(/^(\d{4})[-._](\d{2})[-._](\d{2})/);
+  if (mIso) return new Date(+mIso[1], +mIso[2] - 1, +mIso[3]).getTime();
+  const mRu = (f.title || "").match(/^(\d{2})[-._](\d{2})[-._](\d{4})/);
+  if (mRu) return new Date(+mRu[3], +mRu[2] - 1, +mRu[1]).getTime();
+  const mYear = (f.title || "").match(/^(\d{4})/);
+  if (mYear) return new Date(+mYear[1], 0, 1).getTime();
+  return 0;
+}
+
 const ppThumbs = {};
 const ppWaiters = {};
 function loadPpThumb(url, onReady) {
@@ -398,11 +435,35 @@ function ppPaneEl() { return h("div", { id: "pp", hidden: true }, h("div", { cla
   h("input", { type: "text", id: "pp_q", placeholder: "Search albums…", style: "max-width:14rem", oninput: e => { PP.q = e.target.value; clearTimeout(PP.t); PP.t = setTimeout(ppList, 300); } }),
   h("label", { id: "pp_album_sort_wrap", style: "display:inline-flex;align-items:center;gap:.3rem;font-size:.78rem" },
     "Сортировка: ",
-    h("select", { id: "pp_album_sort", style: "padding:.2rem .4rem;font-size:.78rem", onchange: e => { PP.albumOrder = e.target.value; ppList(); } },
+    h("select", {
+      id: "pp_album_sort",
+      style: "padding:.2rem .4rem;font-size:.78rem",
+      onchange: e => {
+        PP.albumOrder = e.target.value;
+        try { localStorage.setItem("mfilm.pp_album_sort", PP.albumOrder); } catch (_) {}
+        ppList();
+      }
+    },
       h("option", { value: "name", selected: PP.albumOrder === "name" }, "По имени (A–Z)"),
       h("option", { value: "newest", selected: PP.albumOrder === "newest" }, "По дате (сначала новые)"),
       h("option", { value: "oldest", selected: PP.albumOrder === "oldest" }, "По дате (сначала старые)"),
       h("option", { value: "count", selected: PP.albumOrder === "count" }, "По числу фото"))),
+  h("label", { id: "pp_folder_sort_wrap", style: "display:inline-flex;align-items:center;gap:.3rem;font-size:.78rem", hidden: true },
+    "Сортировка: ",
+    h("select", {
+      id: "pp_folder_sort",
+      style: "padding:.2rem .4rem;font-size:.78rem",
+      onchange: e => {
+        PP.folderOrder = e.target.value;
+        try { localStorage.setItem("mfilm.pp_folder_sort", PP.folderOrder); } catch (_) {}
+        ppList(true);
+      }
+    },
+      h("option", { value: "name_asc", selected: PP.folderOrder === "name_asc" }, "По имени (A → Z)"),
+      h("option", { value: "name_desc", selected: PP.folderOrder === "name_desc" }, "По имени (Z → A)"),
+      h("option", { value: "date_desc", selected: PP.folderOrder === "date_desc" }, "По дате (сначала новые)"),
+      h("option", { value: "date_asc", selected: PP.folderOrder === "date_asc" }, "По дате (сначала старые)"),
+      h("option", { value: "count_desc", selected: PP.folderOrder === "count_desc" }, "По числу файлов"))),
   h("span", { class: "dim", id: "pp_state" })), h("div", { id: "pp_crumb", class: "dim", style: "font:.75rem var(--mono);margin:.5rem 0" }),
   h("div", { class: "cards", id: "pp_list" }), h("div", { id: "pp_photos" })); }
 async function ppInit() {
@@ -417,10 +478,14 @@ async function ppInit() {
   });
 }
 async function ppMode(m) {
-  PP.mode = m; PP.stack = []; PP.src = null;
+  PP.mode = m; PP.stack = []; PP.src = null; PP.q = "";
   $("#pp_photos").replaceChildren();
-  $("#pp_q").hidden = m !== "albums";
+  if ($("#pp_q")) {
+    $("#pp_q").value = "";
+    $("#pp_q").placeholder = m === "albums" ? "Search albums…" : "Search folders…";
+  }
   if ($("#pp_album_sort_wrap")) $("#pp_album_sort_wrap").hidden = m !== "albums";
+  if ($("#pp_folder_sort_wrap")) $("#pp_folder_sort_wrap").hidden = m !== "folders";
   await ppList();
 }
 async function ppList(keepPhotos = false) {
@@ -439,15 +504,43 @@ async function ppList(keepPhotos = false) {
           return h("button", { type: "button", class: "card" + (thEl ? " alb-card" : ""), onclick: () => ppOpen("album", a.uid, a.title, 0) },
             thEl, h("span", {}, h("strong", {}, a.title), h("small", {}, `${a.photo_count} photos${a.manual ? "" : " · smart album"}`)));
         }));
-        if (!r.items.length) box.append(h("p", { class: "dim" }, "No albums"));
+        if (!r.items.length) box.append(h("p", { class: "dim" }, PP.q ? "No albums match search" : "No albums"));
       } else {
         const parent = PP.stack.join("/");
         $("#pp_crumb").textContent = "Folder under originals: /" + parent;
         const r = await api(`/photoprism/${PP.inst.id}/folders?parent_id=${encodeURIComponent(parent)}`);
         let folders = r.items || [];
-        folders.sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: "base" }));
+        if (PP.q && PP.q.trim()) {
+          const q = PP.q.trim().toLowerCase();
+          folders = folders.filter(f => (f.title || "").toLowerCase().includes(q) || (f.path || "").toLowerCase().includes(q));
+        }
+        const ord = PP.folderOrder || "name_asc";
+        folders.sort((a, b) => {
+          if (ord === "name_desc") {
+            return (b.title || "").localeCompare(a.title || "", undefined, { numeric: true, sensitivity: "base" });
+          }
+          if (ord === "date_desc" || ord === "date_asc") {
+            const ta = getFolderDate(a);
+            const tb = getFolderDate(b);
+            if (ta !== tb) return ord === "date_desc" ? (tb - ta) : (ta - tb);
+            return (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: "base" });
+          }
+          if (ord === "count_desc") {
+            const ca = a.file_count || 0;
+            const cb = b.file_count || 0;
+            if (ca !== cb) return cb - ca;
+            return (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: "base" });
+          }
+          return (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: "base" });
+        });
         if (PP.stack.length) box.append(h("button", { type: "button", class: "card", onclick: () => { PP.stack.pop(); ppList(); } }, h("strong", {}, "↑ up")));
-        box.append(...folders.map(f => h("button", { type: "button", class: "card", onclick: async () => { PP.stack = f.path.split("/"); await ppList(true); await ppOpen("folder", f.path, f.path, 0); } }, h("strong", {}, f.title), h("small", {}, f.path))));
+        box.append(...folders.map(f => {
+          const sub = f.file_count ? `${f.path} · ${f.file_count} files` : f.path;
+          return h("button", { type: "button", class: "card", onclick: async () => { PP.stack = f.path.split("/"); await ppList(true); await ppOpen("folder", f.path, f.path, 0); } },
+            h("strong", {}, f.title),
+            h("small", {}, sub));
+        }));
+        if (!folders.length) box.append(h("p", { class: "dim" }, PP.q ? "No folders match search" : "No subfolders"));
       }
     } catch (e) { box.append(h("p", { class: "err" }, e.message)); }
   });

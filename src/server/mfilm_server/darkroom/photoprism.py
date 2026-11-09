@@ -115,7 +115,8 @@ class Client:
     def folders(self, parent: str = "") -> list[dict]:
         """Direct sub-folders of `parent` (a path below originals; '' = root)."""
         data = self._get("folders/originals" + (f"/{urllib.parse.quote(parent)}" if parent else ""), recursive="false")
-        return [{"path": f["Path"], "title": f["Title"], "uid": f["UID"], "file_count": f.get("FileCount", 0)}
+        return [{"path": f["Path"], "title": f["Title"], "uid": f["UID"], "file_count": f.get("FileCount", 0),
+                 "modified_at": f.get("ModifiedAt"), "year": f.get("Year", 0), "month": f.get("Month", 0), "day": f.get("Day", 0)}
                 for f in data.get("folders", []) if not f.get("Ignore")]
 
     def photos(self, *, album_uid: str | None = None, folder: str | None = None, count: int = 100,

@@ -487,7 +487,17 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
         instance_ok(inst)
         if parent_id.startswith("/") or ".." in parent_id.split("/") or "\0" in parent_id:
             raise ApiError(400, "UNSAFE_PATH", parent_id)
-        return {"parent": parent_id, "items": pp_call(pp_client().folders, parent_id)}
+        items = pp_call(pp_client().folders, parent_id)
+        if cfg and cfg.photoprism and cfg.photoprism.originals_dir:
+            orig_base = Path(cfg.photoprism.originals_dir)
+            for f in items:
+                p = orig_base / f["path"]
+                try:
+                    if p.is_dir():
+                        f["mtime"] = int(p.stat().st_mtime)
+                except OSError:
+                    pass
+        return {"parent": parent_id, "items": items}
 
     def pp_page(client, source_kind: str, source_uid: str, count: int, offset: int, order: str = "newest") -> list[dict]:
         if source_kind == "album":
