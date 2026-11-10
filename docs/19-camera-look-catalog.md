@@ -12,6 +12,15 @@ Every entry in the table is a **required functional Linux preset**, not an aspir
 | `ricoh_gr_iii_positive` | Ricoh GR III Positive Film | Assertive contrast, saturated but selective color, crisp urban rendering | blue sky vs reds, concrete, skin neutrality |
 | `sigma_dp2_merrill_foveon` | Sigma DP2 Merrill | Fine-texture emphasis, high perceived microcontrast, idiosyncratic color separation under good light | textures, fine detail, metamerism limitations |
 | `fujifilm_xpro3_classic_negative` | Fujifilm X-Pro3 Classic Negative | Stronger tonal contrast and distinctive consumer-negative-inspired color separation | sunlit urban scenes, shadow hue, skin and green |
+| `hasselblad_500cm` | Hasselblad 500 C/M (Zeiss Planar 80mm) | Medium-format tonal gradation, silky highlight roll-off, refined microcontrast, warm organic skin rendering | studio portraiture, fabric texture, highlight roll-off |
+| `leica_m6_rangefinder` | Leica M6 (Leitz Summicron 35mm) | High optical microcontrast, deep authoritative blacks, documentary street snap, warm highlight glow | street scenes, high-contrast monochrome/color, edge bite |
+| `contax_t2_sonnar` | Contax T2 (Carl Zeiss Sonnar 38mm) | Punchy 90s flash/snapshot contrast, deep saturation, cool deep shadows, crisp highlight bite | fashion flash, vibrant street, cool blue shadows |
+| `mamiya_7_ii` | Mamiya 7 II (Sekor 80mm L) | Ultra-sharp flat-field neutrality, high dynamic headroom, velvety midtones, pristine architectural clarity | landscape horizon, architecture, fine texture fidelity |
+| `olympus_om1_zuiko` | Olympus OM-1 (OM Zuiko 50mm) | Vintage Japanese glass warmth, lifted gentle shadow toe, warm golden highlights, organic soft microcontrast | golden hour portraits, foliage, warm amber highlights |
+| `rolleiflex_28f_tlr` | Rolleiflex 2.8F TLR (Zeiss Planar) | Classic 6×6 TLR portraiture, smooth highlight compression, gentle toe, warm amber/sepia leaning midtones | classic portraiture, creamy bokeh transition, soft contrast |
+| `polaroid_sx70_instant` | Polaroid SX-70 Instant Folding SLR | Compressed dynamic range, chemical cyan-green tinted shadows, warm creamy highlights, organic emulsion dye feel | snapshot portraits, diffuse daylight, cyan-green shadows |
+| `lomo_lca` | Lomo LC-A (Minitar-1 32mm) | High punchy contrast, saturated lomography color pop, deep crushed gritty blacks, warm-shifted snapshot grit | street snapshots, vivid saturated colors, deep blacks |
+| `pentax_67` | Pentax 67 (SMC Takumar 105mm) | Dreamy medium format portraiture, velvety shallow-depth roll-off, rich dimensional microcontrast, flattering warm skin | shallow DOF portraits, skin tone fidelity, highlight roll-off |
 | `neutral` | Internal baseline | Identity camera look (not identity input normalization) | reference control |
 
 `ricoh_gr_iii_hdf` is a **composite camera preset**, not a separate CCD-look transform: `ricoh_gr_iii_positive` or `neutral` + `ricoh_hdf_diffusion`. See [21](21-optical-effects.md). The artistic `golden_haze` combination is an original creative preset, not a historical camera profile.

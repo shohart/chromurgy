@@ -171,6 +171,195 @@ entries:
     highlight_warm_cool: small signed perceptual warmth offset
     green_hue_bias: small hue offset, normalized
     microcontrast_amount: 0..1 control
+- id: hasselblad_500cm
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.06
+    toe_strength: 0.08
+    highlight_shoulder: 0.22
+    global_chroma_gain: 1.04
+    shadow_warm_cool: 0.01
+    highlight_warm_cool: 0.02
+    green_hue_bias: 0.02
+    microcontrast_amount: 0.09
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: leica_m6_rangefinder
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.15
+    toe_strength: 0.12
+    highlight_shoulder: 0.16
+    global_chroma_gain: 1.06
+    shadow_warm_cool: -0.01
+    highlight_warm_cool: 0.02
+    green_hue_bias: 0.04
+    microcontrast_amount: 0.14
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: contax_t2_sonnar
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.20
+    toe_strength: 0.14
+    highlight_shoulder: 0.12
+    global_chroma_gain: 1.14
+    shadow_warm_cool: -0.03
+    highlight_warm_cool: 0.01
+    green_hue_bias: -0.02
+    microcontrast_amount: 0.13
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: mamiya_7_ii
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.03
+    toe_strength: 0.06
+    highlight_shoulder: 0.25
+    global_chroma_gain: 1.01
+    shadow_warm_cool: 0.00
+    highlight_warm_cool: 0.00
+    green_hue_bias: 0.01
+    microcontrast_amount: 0.11
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: olympus_om1_zuiko
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.05
+    toe_strength: 0.05
+    highlight_shoulder: 0.20
+    global_chroma_gain: 1.05
+    shadow_warm_cool: 0.01
+    highlight_warm_cool: 0.03
+    green_hue_bias: 0.05
+    microcontrast_amount: 0.07
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: rolleiflex_28f_tlr
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.02
+    toe_strength: 0.06
+    highlight_shoulder: 0.28
+    global_chroma_gain: 0.98
+    shadow_warm_cool: 0.02
+    highlight_warm_cool: 0.03
+    green_hue_bias: 0.03
+    microcontrast_amount: 0.06
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: polaroid_sx70_instant
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.18
+    toe_strength: 0.15
+    highlight_shoulder: 0.30
+    global_chroma_gain: 1.08
+    shadow_warm_cool: -0.02
+    highlight_warm_cool: 0.04
+    green_hue_bias: -0.06
+    microcontrast_amount: 0.04
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: lomo_lca
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.25
+    toe_strength: 0.16
+    highlight_shoulder: 0.10
+    global_chroma_gain: 1.18
+    shadow_warm_cool: -0.02
+    highlight_warm_cool: 0.03
+    green_hue_bias: 0.06
+    microcontrast_amount: 0.12
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: pentax_67
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.08
+    toe_strength: 0.09
+    highlight_shoulder: 0.24
+    global_chroma_gain: 1.03
+    shadow_warm_cool: 0.00
+    highlight_warm_cool: 0.02
+    green_hue_bias: 0.01
+    microcontrast_amount: 0.10
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
 - id: neutral
   status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
   evidence_tier: baseline

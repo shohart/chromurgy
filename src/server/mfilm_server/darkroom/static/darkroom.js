@@ -1346,6 +1346,51 @@ const LOOK_SIGNATURES = {
     tag: "Fujicolor Superia Look",
     summary: "Dense shadows, muted saturation, and cyan greens",
     detail: "Stylized after nostalgic consumer color negative film: distinctive hard S-curve in midtones, subdued colors, and green shifted toward noble cyan."
+  },
+  hasselblad_500cm: {
+    tag: "Medium Format 6×6 · Carl Zeiss",
+    summary: "Planar 80mm depth, silky highlight roll-off and studio tonality",
+    detail: "Legendary medium-format system used in studio, fashion, and lunar missions. Carl Zeiss Planar T* rendition with smooth tonal gradation, gentle highlight compression, refined microcontrast, and natural warm skin rendering."
+  },
+  leica_m6_rangefinder: {
+    tag: "35mm Rangefinder · Leitz Glass",
+    summary: "Summicron microcontrast, authoritative blacks, and street snap",
+    detail: "The definitive photojournalism and street photography icon. High optical microcontrast from Leitz Summicron optics, crisp edge separation, deep shadows, and subtle amber warmth in highlight transitions."
+  },
+  contax_t2_sonnar: {
+    tag: "90s Luxury Compact · Carl Zeiss",
+    summary: "Punchy contrast, vivid saturation, and cool shadow bite",
+    detail: "Cult 1990s titanium point-and-shoot equipped with Carl Zeiss Sonnar 38mm f/2.8 T*. High punchy contrast, vibrant saturated hues, deep cool shadows, and signature snapshot flash aesthetic."
+  },
+  mamiya_7_ii: {
+    tag: "Medium Format 6×7 · Sekor Lenses",
+    summary: "Ultra-sharp flat-field neutrality and high dynamic headroom",
+    detail: "Celebrated for the sharpest, most distortion-free lenses in medium format photography. Balanced, neutral color rendering, velvety midtone graduation, and immaculate architectural clarity."
+  },
+  olympus_om1_zuiko: {
+    tag: "Compact SLR · OM Zuiko Glass",
+    summary: "Vintage Japanese glass warmth, lifted shadows, and golden glow",
+    detail: "Pioneering mechanical compact SLR with OM Zuiko optics. Gentle lifted shadow toe, organic warm golden highlights, soft tactile microcontrast, and glowing skin tones."
+  },
+  rolleiflex_28f_tlr: {
+    tag: "Twin Lens Reflex 6×6 · Zeiss / Xenotar",
+    summary: "Classic TLR portraiture, soft highlight compression, and creamy depth",
+    detail: "Iconic square-format twin-lens reflex camera favored by mid-century portrait masters. Smooth highlight shoulder roll-off, restrained classic color palette, and gentle amber-toned midtones."
+  },
+  polaroid_sx70_instant: {
+    tag: "Folding Glass SLR · Integral Film",
+    summary: "Compressed dynamic range, cyan-green shadows, and creamy highlights",
+    detail: "The pinnacle of instant chemical photography. Signature compressed tonal latitude, tinted cyan-green shadow response, warm ivory highlights, and soft organic emulsion rendering."
+  },
+  lomo_lca: {
+    tag: "Street Cult · Minitar-1 Glass",
+    summary: "Saturated color pop, crushed gritty blacks, and raw vignette energy",
+    detail: "The Soviet 35mm compact that sparked the Lomography movement. High-contrast punch, deep gritty blacks, vibrant saturated colors, and characteristic warm-shifted snapshot grit."
+  },
+  pentax_67: {
+    tag: "Medium Format 6×7 · SMC Takumar",
+    summary: "Dreamy medium format portraiture with rich tonal transitions",
+    detail: "Iconic field medium format SLR known for the legendary 105mm f/2.4 lens. Velvety shallow focus roll-off, rich dimensional microcontrast, and flattering warm skin tonality."
   }
 };
 

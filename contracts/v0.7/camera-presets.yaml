@@ -32,11 +32,47 @@ camera_looks:
 - id: fujifilm_xpro3_classic_negative
   name: Fujifilm X-Pro3 Classic Negative
   evidence_tier: inspired
-  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+  implementation_state: IMPLEMENTED
+- id: hasselblad_500cm
+  name: Hasselblad 500 C/M (Zeiss Planar)
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
+- id: leica_m6_rangefinder
+  name: Leica M6 Rangefinder (Summicron)
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
+- id: contax_t2_sonnar
+  name: Contax T2 (Carl Zeiss Sonnar)
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
+- id: mamiya_7_ii
+  name: Mamiya 7 II (Sekor 80mm)
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
+- id: olympus_om1_zuiko
+  name: Olympus OM-1 (OM Zuiko)
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
+- id: rolleiflex_28f_tlr
+  name: Rolleiflex 2.8F TLR (Planar)
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
+- id: polaroid_sx70_instant
+  name: Polaroid SX-70 Instant
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
+- id: lomo_lca
+  name: Lomo LC-A (Minitar-1)
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
+- id: pentax_67
+  name: Pentax 67 (SMC 105mm f/2.4)
+  evidence_tier: inspired
+  implementation_state: IMPLEMENTED
 - id: neutral
   name: Neutral rendering
   evidence_tier: baseline
-  implementation_state: REQUIRED_NOT_YET_IMPLEMENTED
+  implementation_state: IMPLEMENTED
 optical_effects:
 - id: soft_sun_glow
   name: Warm sun and highlight glow

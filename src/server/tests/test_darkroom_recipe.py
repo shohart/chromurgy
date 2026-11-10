@@ -30,7 +30,7 @@ def neutral(film="portra400"):
 def test_catalog_lists_every_look_and_effect_as_available(bundle):
     c = catalog.build(bundle)
     looks = {x["id"]: x["supported"] for x in c["camera_looks"]}
-    assert len(looks) == 9 and all(looks.values()) and "leica_m9_ccd" in looks
+    assert len(looks) == 18 and all(looks.values()) and "leica_m9_ccd" in looks and "hasselblad_500cm" in looks
     legacy = ["vintage_veiling_flare", "soft_sun_glow", "ricoh_hdf_diffusion", "black_pro_mist_like", "orton_glow", "film_halation_extra"]
     ids = {x["id"] for x in c["optical_effects"]}
     assert set(legacy) <= ids and len(ids) == 16                    # the six originals + the ten v0.6 operators (7 standalone + 3 Vintage Glass parts)

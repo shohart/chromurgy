@@ -84,6 +84,96 @@ LOOKS = {
   "green_hue_bias": -0.07,
   "microcontrast_amount": 0.1
  },
+ "hasselblad_500cm": {
+  "contrast_gain": 1.06,
+  "toe_strength": 0.08,
+  "highlight_shoulder": 0.22,
+  "global_chroma_gain": 1.04,
+  "shadow_warm_cool": 0.01,
+  "highlight_warm_cool": 0.02,
+  "green_hue_bias": 0.02,
+  "microcontrast_amount": 0.09
+ },
+ "leica_m6_rangefinder": {
+  "contrast_gain": 1.15,
+  "toe_strength": 0.12,
+  "highlight_shoulder": 0.16,
+  "global_chroma_gain": 1.06,
+  "shadow_warm_cool": -0.01,
+  "highlight_warm_cool": 0.02,
+  "green_hue_bias": 0.04,
+  "microcontrast_amount": 0.14
+ },
+ "contax_t2_sonnar": {
+  "contrast_gain": 1.20,
+  "toe_strength": 0.14,
+  "highlight_shoulder": 0.12,
+  "global_chroma_gain": 1.14,
+  "shadow_warm_cool": -0.03,
+  "highlight_warm_cool": 0.01,
+  "green_hue_bias": -0.02,
+  "microcontrast_amount": 0.13
+ },
+ "mamiya_7_ii": {
+  "contrast_gain": 1.03,
+  "toe_strength": 0.06,
+  "highlight_shoulder": 0.25,
+  "global_chroma_gain": 1.01,
+  "shadow_warm_cool": 0.0,
+  "highlight_warm_cool": 0.0,
+  "green_hue_bias": 0.01,
+  "microcontrast_amount": 0.11
+ },
+ "olympus_om1_zuiko": {
+  "contrast_gain": 1.05,
+  "toe_strength": 0.05,
+  "highlight_shoulder": 0.20,
+  "global_chroma_gain": 1.05,
+  "shadow_warm_cool": 0.01,
+  "highlight_warm_cool": 0.03,
+  "green_hue_bias": 0.05,
+  "microcontrast_amount": 0.07
+ },
+ "rolleiflex_28f_tlr": {
+  "contrast_gain": 1.02,
+  "toe_strength": 0.06,
+  "highlight_shoulder": 0.28,
+  "global_chroma_gain": 0.98,
+  "shadow_warm_cool": 0.02,
+  "highlight_warm_cool": 0.03,
+  "green_hue_bias": 0.03,
+  "microcontrast_amount": 0.06
+ },
+ "polaroid_sx70_instant": {
+  "contrast_gain": 1.18,
+  "toe_strength": 0.15,
+  "highlight_shoulder": 0.30,
+  "global_chroma_gain": 1.08,
+  "shadow_warm_cool": -0.02,
+  "highlight_warm_cool": 0.04,
+  "green_hue_bias": -0.06,
+  "microcontrast_amount": 0.04
+ },
+ "lomo_lca": {
+  "contrast_gain": 1.25,
+  "toe_strength": 0.16,
+  "highlight_shoulder": 0.10,
+  "global_chroma_gain": 1.18,
+  "shadow_warm_cool": -0.02,
+  "highlight_warm_cool": 0.03,
+  "green_hue_bias": 0.06,
+  "microcontrast_amount": 0.12
+ },
+ "pentax_67": {
+  "contrast_gain": 1.08,
+  "toe_strength": 0.09,
+  "highlight_shoulder": 0.24,
+  "global_chroma_gain": 1.03,
+  "shadow_warm_cool": 0.0,
+  "highlight_warm_cool": 0.02,
+  "green_hue_bias": 0.01,
+  "microcontrast_amount": 0.10
+ },
  "neutral": {
   "contrast_gain": 1.0,
   "toe_strength": 0.0,

@@ -27,6 +27,16 @@ CAMERA_LOOKS = [
     ("ricoh_gr_iii_positive", "Ricoh GR III Positive Film", "inspired"),
     ("sigma_dp2_merrill_foveon", "Sigma DP2 Merrill Foveon Look", "inspired"),
     ("fujifilm_xpro3_classic_negative", "Fujifilm X-Pro3 Classic Negative", "inspired"),
+    # Iconic film cameras
+    ("hasselblad_500cm", "Hasselblad 500 C/M (Zeiss Planar)", "inspired"),
+    ("leica_m6_rangefinder", "Leica M6 Rangefinder (Summicron)", "inspired"),
+    ("contax_t2_sonnar", "Contax T2 (Carl Zeiss Sonnar)", "inspired"),
+    ("mamiya_7_ii", "Mamiya 7 II (Sekor 80mm)", "inspired"),
+    ("olympus_om1_zuiko", "Olympus OM-1 (OM Zuiko)", "inspired"),
+    ("rolleiflex_28f_tlr", "Rolleiflex 2.8F TLR (Planar)", "inspired"),
+    ("polaroid_sx70_instant", "Polaroid SX-70 Instant", "inspired"),
+    ("lomo_lca", "Lomo LC-A (Minitar-1)", "inspired"),
+    ("pentax_67", "Pentax 67 (SMC 105mm f/2.4)", "inspired"),
 ]
 OPTICAL_EFFECTS = [
     ("soft_sun_glow", "Soft Sun Glow"),
