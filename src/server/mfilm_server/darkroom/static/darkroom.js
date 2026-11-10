@@ -320,6 +320,7 @@ function loadFrameAdjustments(id) {
     if (meta.iso) parts.push(`ISO ${meta.iso}`);
     rawBadge.textContent = parts.length ? `(${parts.join(" · ")})` : "";
   }
+  updateFrameNavUi();
 }
 
 function markFrameAdjusted() {
@@ -1270,6 +1271,78 @@ async function refreshAssets() {
   else loadFrameAdjustments(S.current);
   renderAssets(); syncControls(); if (S.current) schedulePreview();
 }
+function getFrameNavInfo() {
+  if (!S.assets || !S.assets.length || !S.current) {
+    return { idx: -1, total: S.assets ? S.assets.length : 0, hasPrev: false, hasNext: false, currentName: "" };
+  }
+  const idx = S.assets.findIndex(a => a.asset_id === S.current);
+  const curAsset = idx >= 0 ? S.assets[idx] : null;
+  return {
+    idx,
+    total: S.assets.length,
+    hasPrev: idx > 0,
+    hasNext: idx >= 0 && idx < S.assets.length - 1,
+    currentName: curAsset ? curAsset.filename : ""
+  };
+}
+
+function prevFrame() {
+  if (S.cropMode) return;
+  if (!S.assets || !S.assets.length) return;
+  const idx = S.assets.findIndex(a => a.asset_id === S.current);
+  if (idx > 0) {
+    setCurrent(S.assets[idx - 1].asset_id);
+  } else if (idx === -1 && S.assets.length > 0) {
+    setCurrent(S.assets[0].asset_id);
+  }
+}
+
+function nextFrame() {
+  if (S.cropMode) return;
+  if (!S.assets || !S.assets.length) return;
+  const idx = S.assets.findIndex(a => a.asset_id === S.current);
+  if (idx >= 0 && idx < S.assets.length - 1) {
+    setCurrent(S.assets[idx + 1].asset_id);
+  } else if (idx === -1 && S.assets.length > 0) {
+    setCurrent(S.assets[0].asset_id);
+  }
+}
+
+function updateFrameNavUi() {
+  const info = getFrameNavInfo();
+  const prevBtns = [$("#pv_prev"), $("#stage_prev")];
+  const nextBtns = [$("#pv_next"), $("#stage_next")];
+  const counter = $("#pv_frame_counter");
+
+  const isCropping = Boolean(S.cropMode);
+  prevBtns.forEach(btn => {
+    if (btn) {
+      btn.disabled = isCropping || !info.hasPrev;
+      btn.title = info.hasPrev ? `Previous frame (${info.idx} of ${info.total}) · Left Arrow` : "No previous frame";
+    }
+  });
+
+  nextBtns.forEach(btn => {
+    if (btn) {
+      btn.disabled = isCropping || !info.hasNext;
+      btn.title = info.hasNext ? `Next frame (${info.idx + 2} of ${info.total}) · Right Arrow` : "No next frame";
+    }
+  });
+
+  if (counter) {
+    if (info.total > 0 && info.idx >= 0) {
+      counter.textContent = `${info.idx + 1} / ${info.total}`;
+      counter.hidden = false;
+    } else if (info.total > 0) {
+      counter.textContent = `- / ${info.total}`;
+      counter.hidden = false;
+    } else {
+      counter.textContent = "";
+      counter.hidden = true;
+    }
+  }
+}
+
 /* The preview always follows the frame the user last touched; the previous frame's picture is cleared, never left standing. */
 function setCurrent(id) {
   if (!id) return;
@@ -1283,7 +1356,13 @@ function setCurrent(id) {
     const c = $("#pv_c"); if (c) c.hidden = true;
     const info = $("#pvinfo"); if (info) info.textContent = "Rendering the preview of the selected frame…";
   }
-  renderAssets(); schedulePreview(true);
+  updateFrameNavUi();
+  renderAssets();
+  const curCard = document.querySelector(`.asset[data-id="${id}"]`) || document.querySelector(`.asset.cur`);
+  if (curCard && curCard.scrollIntoView) {
+    curCard.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }
+  schedulePreview(true);
 }
 function selectAll(on) {
   S.selected = new Set(on ? S.assets.filter(a => a.eligible).map(a => a.asset_id) : []);
@@ -1336,7 +1415,7 @@ function renderAssets() {
     else if (!entry || entry.v !== tv) loadThumb(a.asset_id, tv);
     const rmBtn = h("button", { type: "button", class: "rm", title: "Remove from workspace",
       onclick: ev => { ev.stopPropagation(); removeAsset(a.asset_id); } }, "×");
-    const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), role: "button", tabindex: "0", "aria-pressed": String(sel),
+    const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), "data-id": a.asset_id, role: "button", tabindex: "0", "aria-pressed": String(sel),
       title: "Click: show in the preview · tick: include in Develop · ×: remove from workspace" },
       th, h("span", { class: "tick", title: "Include in Develop" }, sel ? "✓" : ""), rmBtn,
       h("div", { class: "meta" }, h("b", {}, a.filename, S.crops[a.asset_id] ? " ✂" : "", rot ? ` ⟳${rot}°` : "", S.adjustments[a.asset_id] ? " 🎛" : "", (S.frameGradeOverrides && S.frameGradeOverrides[a.asset_id]) ? " ✦" : ""), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
@@ -1355,6 +1434,7 @@ function renderAssets() {
     ? `${S.selected.size} of ${S.assets.length} selected for Develop · click a frame to preview it, tick to include it`
     : "Workspace empty · choose RAWs from Upload, PhotoPrism or Camera rolls";
   updateDevelop();
+  updateFrameNavUi();
 }
 async function loadThumb(id, v = "0") {
   thumbs[id] = { v, url: "" };   // mark in flight for this version
@@ -2130,6 +2210,7 @@ function syncControls() {
     if (meta.iso) parts.push(`ISO ${meta.iso}`);
     rawBadge.textContent = parts.length ? `(${parts.join(" · ")})` : "";
   }
+  updateFrameNavUi();
 }
 
 /* ---------------- step 5: operator presets (the whole Darkroom setting under a name, stored on the server) ---------------- */
@@ -3042,8 +3123,35 @@ function previewPanel() {
   const treated = h("img", { alt: "Treated preview", id: "pv_t", hidden: true });
   const before = h("img", { alt: "Original, neutral development", id: "pv_b", hidden: true });
   const cut = h("div", { class: "cut", id: "cut", tabindex: "0", role: "slider", "aria-label": "Before / after", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": 50 });
-  const stage = h("div", { class: "stage", id: "stage" }, h("div", { class: "layer" }, treatedCanvas, treated), h("div", { class: "layer", id: "beforeLayer" }, before), cut,
-    h("div", { class: "layer", id: "cropLayer", hidden: true }), h("span", { class: "busy", id: "busy" }), h("span", { class: "dim", id: "empty" }, "Upload a RAW to see a preview"));
+
+  const btnStagePrev = h("button", {
+    type: "button",
+    id: "stage_prev",
+    class: "stage-nav stage-prev",
+    title: "Previous frame (Left Arrow)",
+    "aria-label": "Previous frame",
+    onclick: (e) => { e.stopPropagation(); prevFrame(); }
+  }, "◀");
+
+  const btnStageNext = h("button", {
+    type: "button",
+    id: "stage_next",
+    class: "stage-nav stage-next",
+    title: "Next frame (Right Arrow)",
+    "aria-label": "Next frame",
+    onclick: (e) => { e.stopPropagation(); nextFrame(); }
+  }, "▶");
+
+  const stage = h("div", { class: "stage", id: "stage" },
+    h("div", { class: "layer" }, treatedCanvas, treated),
+    h("div", { class: "layer", id: "beforeLayer" }, before),
+    cut,
+    btnStagePrev,
+    btnStageNext,
+    h("div", { class: "layer", id: "cropLayer", hidden: true }),
+    h("span", { class: "busy", id: "busy" }),
+    h("span", { class: "dim", id: "empty" }, "Upload a RAW to see a preview")
+  );
   let pos = 50;
   const setCut = p => { pos = Math.max(0, Math.min(100, p)); cut.style.left = pos + "%"; $("#beforeLayer").style.clipPath = `inset(0 ${100 - pos}% 0 0)`; cut.setAttribute("aria-valuenow", Math.round(pos)); };
   setTimeout(() => setCut(50));
@@ -3051,6 +3159,13 @@ function previewPanel() {
   cut.addEventListener("pointerdown", e => { cut.setPointerCapture(e.pointerId); cut.addEventListener("pointermove", move); });
   cut.addEventListener("pointerup", () => cut.removeEventListener("pointermove", move));
   cut.addEventListener("keydown", e => { if (e.key === "ArrowLeft") setCut(pos - 3); if (e.key === "ArrowRight") setCut(pos + 3); });
+
+  const navGroup = h("span", { class: "pv-nav-group", role: "group", "aria-label": "Frame navigation", style: "display:inline-flex;align-items:center;gap:.3rem" },
+    h("button", { type: "button", id: "pv_prev", class: "compact", onclick: prevFrame, title: "Previous frame (Left Arrow)" }, "◀ Previous"),
+    h("span", { id: "pv_frame_counter", class: "dim", style: "font:.76rem var(--mono);padding:0 .2rem;white-space:nowrap" }, ""),
+    h("button", { type: "button", id: "pv_next", class: "compact", onclick: nextFrame, title: "Next frame (Right Arrow)" }, "Next ▶")
+  );
+
   const rotGroup = h("span", { class: "rot-group", role: "group", "aria-label": "Rotate photograph" },
     h("button", { type: "button", id: "rot_ccw", onclick: () => stepRotate(-90), title: "Rotate 90° counter-clockwise (left)" }, "↶ −90°"),
     h("button", { type: "button", id: "rot_cw", onclick: () => stepRotate(90), title: "Rotate 90° clockwise (right)" }, "↷ +90°"),
@@ -3079,8 +3194,9 @@ function previewPanel() {
     h("button", { type: "button", onclick: () => setRotate(180, false), title: "Rotate 180°" }, "180°"),
     h("button", { type: "button", onclick: () => setRotate(0, false), title: "Reset rotation to 0°" }, "Reset 0°"),
     h("button", { type: "button", onclick: rotateAll, title: "Apply this rotation angle to all selected frames" }, "Apply to all selected"));
-  return h("div", {}, h("div", { class: "bar", style: "margin:0 0 .6rem" },
-    h("label", { for: "pvsize", style: "margin:0" }, "Preview size"), h("select", { id: "pvsize", style: "width:auto", onchange: () => schedulePreview(true) },
+  return h("div", {}, h("div", { class: "bar", style: "margin:0 0 .6rem;gap:.4rem;flex-wrap:wrap;align-items:center" },
+    navGroup,
+    h("label", { for: "pvsize", style: "margin:0 .1rem 0 .3rem" }, "Size"), h("select", { id: "pvsize", style: "width:auto", onchange: () => schedulePreview(true) },
       h("option", { value: 1280 }, "1280 px (default)"), h("option", { value: 720 }, "720 px"), h("option", { value: 2048 }, "2048 px")),
     h("button", { onclick: () => schedulePreview(true) }, "Refresh preview"),
     rotGroup,
@@ -3957,6 +4073,21 @@ window.addEventListener("wheel", e => {
     t.dispatchEvent(new Event("change", { bubbles: true }));
   }
 }, { passive: false });
+
+/* Keyboard navigation for quick frame switching (Left Arrow = Previous, Right Arrow = Next) */
+window.addEventListener("keydown", e => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  const tag = (document.activeElement && document.activeElement.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return;
+  if (document.activeElement && document.activeElement.id === "cut") return;
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    prevFrame();
+  } else if (e.key === "ArrowRight") {
+    e.preventDefault();
+    nextFrame();
+  }
+});
 
 /* ---------------- Service Worker & PWA Registration ---------------- */
 function setupPwa() {

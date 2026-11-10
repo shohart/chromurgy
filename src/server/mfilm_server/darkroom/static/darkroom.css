@@ -150,6 +150,15 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .stage .cut{position:absolute;top:0;bottom:0;width:2px;background:var(--safe2);cursor:ew-resize;z-index:3}
 .stage .cut::after{content:"";position:absolute;top:50%;left:-9px;width:20px;height:20px;border-radius:50%;background:var(--safe2);transform:translateY(-50%)}
 .pvinfo{font:.7rem var(--mono);color:var(--dim);margin-top:.45rem;display:flex;gap:1rem;flex-wrap:wrap}
+.pv-nav-group button{font-weight:600;padding:.32rem .65rem;font-size:.78rem}
+.stage-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:5;background:rgba(14,11,10,.65);
+  color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:.65rem .6rem;font-size:1.15rem;
+  line-height:1;cursor:pointer;transition:all .15s;opacity:.35;user-select:none}
+.stage:hover .stage-nav{opacity:.85}
+.stage-nav:hover{opacity:1;background:rgba(20,16,14,.92);border-color:var(--safe);color:var(--safe2)}
+.stage-nav:disabled{opacity:0;pointer-events:none}
+.stage-prev{left:.6rem}
+.stage-next{right:.6rem}
 .jobs{display:grid;gap:.8rem}
 .job{border:1px solid var(--line);background:var(--panel2);padding:.8rem 1rem;border-radius:2px}
 .job header{display:flex;gap:1rem;align-items:baseline;flex-wrap:wrap;font:.75rem var(--mono)}
