@@ -360,6 +360,90 @@ entries:
     highlight_warm_cool: small signed perceptual warmth offset
     green_hue_bias: small hue offset, normalized
     microcontrast_amount: 0..1 control
+- id: fujifilm_x100vi
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.08
+    toe_strength: 0.08
+    highlight_shoulder: 0.26
+    global_chroma_gain: 1.02
+    shadow_warm_cool: 0.00
+    highlight_warm_cool: 0.01
+    green_hue_bias: -0.01
+    microcontrast_amount: 0.15
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: zenit_e_ttl
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 0.98
+    toe_strength: 0.05
+    highlight_shoulder: 0.22
+    global_chroma_gain: 1.05
+    shadow_warm_cool: 0.02
+    highlight_warm_cool: 0.03
+    green_hue_bias: 0.04
+    microcontrast_amount: 0.06
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: pentax_k1000
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.10
+    toe_strength: 0.10
+    highlight_shoulder: 0.18
+    global_chroma_gain: 1.04
+    shadow_warm_cool: -0.01
+    highlight_warm_cool: 0.01
+    green_hue_bias: 0.02
+    microcontrast_amount: 0.12
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
+- id: zorki_4
+  status: IMPLEMENTED_IN_LINUX_CORE
+  evidence_tier: inspired
+  params:
+    contrast_gain: 1.04
+    toe_strength: 0.07
+    highlight_shoulder: 0.25
+    global_chroma_gain: 0.99
+    shadow_warm_cool: 0.01
+    highlight_warm_cool: 0.03
+    green_hue_bias: 0.02
+    microcontrast_amount: 0.08
+  parameter_domains:
+    contrast_gain: normalized exposure-domain gain
+    toe_strength: 0..1 control
+    highlight_shoulder: 0..1 control
+    global_chroma_gain: positive scalar
+    shadow_warm_cool: small signed perceptual warmth offset
+    highlight_warm_cool: small signed perceptual warmth offset
+    green_hue_bias: small hue offset, normalized
+    microcontrast_amount: 0..1 control
 - id: neutral
   status: UNVALIDATED_STARTER_VALUES_FOR_IMPLEMENTATION
   evidence_tier: baseline

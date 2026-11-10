@@ -1391,6 +1391,26 @@ const LOOK_SIGNATURES = {
     tag: "Medium Format 6×7 · SMC Takumar",
     summary: "Dreamy medium format portraiture with rich tonal transitions",
     detail: "Iconic field medium format SLR known for the legendary 105mm f/2.4 lens. Velvety shallow focus roll-off, rich dimensional microcontrast, and flattering warm skin tonality."
+  },
+  fujifilm_x100vi: {
+    tag: "X-Trans 5 HR · 40.2 MP",
+    summary: "Reala Ace tonality, ultra-high resolution, and wide highlight latitude",
+    detail: "Modern Fujifilm flagship compact with 40.2 MP X-Trans 5 HR sensor and redesigned Fujinon 23mm f/2 II lens. Neutral-warm fidelity, rich midtone clarity, wide dynamic range highlight preservation, and crisp micro-detail."
+  },
+  zenit_e_ttl: {
+    tag: "Soviet SLR · Helios 44 Glass",
+    summary: "Helios 58mm f/2 swirly character, amber flare warmth, and lifted earthy shadows",
+    detail: "The iconic mass-production Soviet 35mm SLR paired with the Biotar-derived Helios-44 (58mm f/2). Moderate vintage single-coating contrast, rich golden-amber flare glow, lifted shadow floor, and organic analog texture."
+  },
+  pentax_k1000: {
+    tag: "Mechanical 35mm SLR · SMC Pentax",
+    summary: "Super Multi-Coated clarity, deep clean blacks, and natural color balance",
+    detail: "The quintessential mechanical 35mm SLR beloved by generations of photographers. Super Multi-Coated (SMC) Takumar/Pentax 50mm glass gives exceptional flare control, deep clean shadows, and crisp natural color fidelity."
+  },
+  zorki_4: {
+    tag: "Soviet Rangefinder · Jupiter-8 Glass",
+    summary: "Zeiss Sonnar optical formula, creamy highlight bloom, and luminous portraits",
+    detail: "Classic Soviet Leica-thread rangefinder equipped with the Jupiter-8 (50mm f/2), an evolution of the Carl Zeiss Sonnar. Delivers luminous portrait roll-off, soft highlight bloom, rich midtone separation, and warm vintage amber tones."
   }
 };
 

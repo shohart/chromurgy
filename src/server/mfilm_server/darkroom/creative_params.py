@@ -174,6 +174,46 @@ LOOKS = {
   "green_hue_bias": 0.01,
   "microcontrast_amount": 0.10
  },
+ "fujifilm_x100vi": {
+  "contrast_gain": 1.08,
+  "toe_strength": 0.08,
+  "highlight_shoulder": 0.26,
+  "global_chroma_gain": 1.02,
+  "shadow_warm_cool": 0.0,
+  "highlight_warm_cool": 0.01,
+  "green_hue_bias": -0.01,
+  "microcontrast_amount": 0.15
+ },
+ "zenit_e_ttl": {
+  "contrast_gain": 0.98,
+  "toe_strength": 0.05,
+  "highlight_shoulder": 0.22,
+  "global_chroma_gain": 1.05,
+  "shadow_warm_cool": 0.02,
+  "highlight_warm_cool": 0.03,
+  "green_hue_bias": 0.04,
+  "microcontrast_amount": 0.06
+ },
+ "pentax_k1000": {
+  "contrast_gain": 1.10,
+  "toe_strength": 0.10,
+  "highlight_shoulder": 0.18,
+  "global_chroma_gain": 1.04,
+  "shadow_warm_cool": -0.01,
+  "highlight_warm_cool": 0.01,
+  "green_hue_bias": 0.02,
+  "microcontrast_amount": 0.12
+ },
+ "zorki_4": {
+  "contrast_gain": 1.04,
+  "toe_strength": 0.07,
+  "highlight_shoulder": 0.25,
+  "global_chroma_gain": 0.99,
+  "shadow_warm_cool": 0.01,
+  "highlight_warm_cool": 0.03,
+  "green_hue_bias": 0.02,
+  "microcontrast_amount": 0.08
+ },
  "neutral": {
   "contrast_gain": 1.0,
   "toe_strength": 0.0,
