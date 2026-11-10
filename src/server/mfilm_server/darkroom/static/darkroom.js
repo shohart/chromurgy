@@ -3219,143 +3219,14 @@ window.addEventListener("wheel", e => {
   }
 }, { passive: false });
 
-/* ---------------- PWA & Service Worker ---------------- */
-let deferredPwaPrompt = null;
-
-function isPwaStandalone() {
-  return window.matchMedia("(display-mode: standalone)").matches ||
-         window.navigator.standalone === true ||
-         document.referrer.includes("android-app://");
-}
-
-function showPwaInstallModal() {
-  const overlay = $("#modal_overlay");
-  if (!overlay) return;
-
-  const close = () => {
-    overlay.hidden = true;
-    overlay.replaceChildren();
-  };
-
-  const currentOrigin = window.location.origin;
-
-  const dialog = h("div", { class: "modal-dialog", style: "max-width:38rem" },
-    h("div", { class: "modal-head" },
-      h("h2", {}, "📲 Install Chromurgy as an App"),
-      h("button", { type: "button", class: "ghost", onclick: close, "aria-label": "Close" }, "✕")
-    ),
-    h("div", { class: "modal-body", style: "display:grid;gap:1.1rem;font-size:0.86rem;line-height:1.5" },
-      h("div", { style: "background:rgba(217,90,58,.08);border:1px solid rgba(217,90,58,.3);padding:.85rem 1rem;border-radius:4px" },
-        h("strong", { style: "color:var(--safe2);display:block;margin-bottom:.3rem;font-size:.9rem" }, "⚡ Quick Install in Google Chrome"),
-        h("ol", { style: "margin:0;padding-left:1.2rem;display:grid;gap:.35rem" },
-          h("li", {}, "Click the three dots menu (", h("b", {}, "⋮"), ") in the top-right corner of Chrome."),
-          h("li", {}, "Select ", h("b", {}, "“Save and share”"), " (or ", h("b", {}, "“Install Chromurgy”"), ")."),
-          h("li", {}, "Click ", h("b", {}, "“Install page as app…”"), " or ", h("b", {}, "“Create shortcut…”"), " (enable ", h("i", {}, "“Open as window”"), ").")
-        ),
-        h("div", { style: "margin-top:.6rem;font-size:.78rem;color:var(--dim)" },
-          "Chrome will create a standalone desktop app with Chromurgy's darkroom icon on your taskbar and desktop."
-        )
-      ),
-      h("div", { style: "background:var(--panel2);border:1px solid var(--line);padding:.85rem 1rem;border-radius:4px" },
-        h("strong", { style: "color:var(--ink);display:block;margin-bottom:.3rem" }, "📱 Mobile Installation (Android / iOS)"),
-        h("ul", { style: "margin:0;padding-left:1.2rem;display:grid;gap:.3rem" },
-          h("li", {}, h("b", {}, "Android (Chrome):"), " Tap menu (⋮) → ", h("b", {}, "“Add to Home screen”"), " or ", h("b", {}, "“Install app”"), "."),
-          h("li", {}, h("b", {}, "iOS (Safari):"), " Tap Share button (⎋) → ", h("b", {}, "“Add to Home Screen”"), ".")
-        )
-      ),
-      h("div", { style: "background:var(--panel2);border:1px solid var(--line);padding:.85rem 1rem;border-radius:4px" },
-        h("strong", { style: "color:var(--ink);display:block;margin-bottom:.3rem" }, "ℹ️ Why isn't there an automatic one-click banner?"),
-        h("p", { style: "margin:0;color:var(--dim);font-size:.8rem" },
-          "Browsers restrict the automatic one-click install prompt to HTTPS connections or localhost. Because this server is accessed over plain HTTP on your local network IP (",
-          h("code", { style: "color:var(--safe2)" }, currentOrigin),
-          "), Chrome requires installing via the browser menu above, OR enabling local IP in Chrome flags:"
-        ),
-        h("div", { style: "margin-top:.5rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center" },
-          h("input", { type: "text", readonly: true, value: "chrome://flags/#unsafely-treat-insecure-origin-as-secure", style: "flex:1;font-size:.75rem", onclick: e => e.target.select() }),
-          h("button", {
-            type: "button",
-            class: "btn",
-            style: "padding:.35rem .7rem;font-size:.75rem",
-            onclick: () => {
-              navigator.clipboard.writeText(currentOrigin).then(() => toast("Copied server URL to clipboard: " + currentOrigin));
-            }
-          }, "Copy Server URL")
-        )
-      )
-    ),
-    h("div", { class: "modal-foot" },
-      h("button", { type: "button", class: "primary", onclick: close }, "Got it")
-    )
-  );
-
-  overlay.replaceChildren(dialog);
-  overlay.hidden = false;
-  overlay.onclick = e => { if (e.target === overlay) close(); };
-}
-
+/* ---------------- Service Worker & PWA Registration ---------------- */
 function setupPwa() {
-  const btnInstall = document.getElementById("btn_pwa_install");
-
-  if (isPwaStandalone()) {
-    if (btnInstall) btnInstall.hidden = true;
-    return;
-  }
-
-  if (btnInstall) {
-    btnInstall.hidden = false;
-    btnInstall.onclick = async () => {
-      if (deferredPwaPrompt) {
-        btnInstall.disabled = true;
-        deferredPwaPrompt.prompt();
-        try {
-          const choice = await deferredPwaPrompt.userChoice;
-          if (choice && choice.outcome === "accepted") {
-            toast("Chromurgy installed successfully!");
-            btnInstall.hidden = true;
-          }
-        } catch (_) {}
-        deferredPwaPrompt = null;
-        btnInstall.disabled = false;
-      } else {
-        showPwaInstallModal();
-      }
-    };
-  }
-
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("/darkroom/sw.js", { scope: "/darkroom/" })
-        .then((reg) => {
-          reg.addEventListener("updatefound", () => {
-            const installing = reg.installing;
-            if (installing) {
-              installing.addEventListener("statechange", () => {
-                if (installing.state === "installed" && navigator.serviceWorker.controller) {
-                  console.log("[Chromurgy PWA] New version ready");
-                }
-              });
-            }
-          });
-        })
-        .catch((err) => {
-          console.warn("[Chromurgy PWA] Service Worker registration failed:", err);
-        });
+        .catch(() => {});
     });
   }
-
-  window.addEventListener("beforeinstallprompt", (e) => {
-    e.preventDefault();
-    deferredPwaPrompt = e;
-    if (btnInstall && !isPwaStandalone()) {
-      btnInstall.hidden = false;
-    }
-  });
-
-  window.addEventListener("appinstalled", () => {
-    deferredPwaPrompt = null;
-    if (btnInstall) btnInstall.hidden = true;
-    toast("Chromurgy is running as an installed application");
-  });
 }
 
 setupPwa();

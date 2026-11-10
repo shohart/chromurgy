@@ -79,8 +79,6 @@ button.primary{background:var(--safe);border-color:var(--safe);color:#160805;fon
 button.primary:hover:not(:disabled){background:var(--safe2);border-color:var(--safe2)}
 button:disabled{opacity:.4;cursor:not-allowed}
 button.ghost{background:none}
-#btn_pwa_install{display:inline-flex;align-items:center;gap:.35rem;border-color:rgba(217,90,58,.4);color:var(--safe2);background:rgba(217,90,58,.08)}
-#btn_pwa_install:hover:not(:disabled){border-color:var(--safe);background:rgba(217,90,58,.16);color:var(--ink)}
 input[type=text],input[type=password],input[type=number],select{background:#0b0807;color:var(--ink);border:1px solid var(--line);
   padding:.5rem .6rem;font:.85rem var(--mono);border-radius:2px;width:100%}
 input[type=range]{width:100%;accent-color:var(--safe);cursor:pointer}
