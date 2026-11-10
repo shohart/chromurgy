@@ -1,0 +1,68 @@
+{
+  "purpose": "Illustrative MCP workflow; IDs, tokens, server endpoints are placeholders, not real instances",
+  "workflow": [
+    {
+      "tool": "mfilm_search_assets",
+      "args": {
+        "source": "photoprism",
+        "album_uid": "EXAMPLE_ALBUM_UID",
+        "format": "nef",
+        "limit": 10
+      }
+    },
+    {
+      "tool": "mfilm_list_creative_options",
+      "args": {
+        "type": "combo",
+        "query": "Portra Soft Portrait"
+      }
+    },
+    {
+      "tool": "mfilm_create_draft",
+      "args": {
+        "asset_id": "EXAMPLE_ASSET_ID",
+        "preset_id": "portra-soft-portrait"
+      }
+    },
+    {
+      "tool": "mfilm_render_preview",
+      "args": {
+        "draft_id": "EXAMPLE_DRAFT_ID",
+        "revision": 1,
+        "max_side": 1024,
+        "format": "jpeg"
+      }
+    },
+    {
+      "tool": "mfilm_start_development",
+      "args": {
+        "draft_id": "EXAMPLE_DRAFT_ID",
+        "revision": 1,
+        "idempotency_key": "example-req-a197d3e2"
+      }
+    },
+    {
+      "tool": "mfilm_get_job",
+      "args": {
+        "job_id": "EXAMPLE_JOB_ID"
+      }
+    },
+    {
+      "requires_user_approval": "Publishing to PhotoPrism is a separate optional user-authorized step"
+    },
+    {
+      "tool": "mfilm_publish_render",
+      "args": {
+        "render_id": "EXAMPLE_RENDER_ID",
+        "destination": {
+          "instance_id": "EXAMPLE_INSTANCE",
+          "folder_id": "EXAMPLE_MANAGED_FOLDER",
+          "album_uid": "EXAMPLE_ALBUM_UID",
+          "create_missing_album": false
+        },
+        "idempotency_key": "example-publish-b118d3f2",
+        "approval_token": "EXAMPLE_SHORT_LIVED_APPROVAL_TOKEN"
+      }
+    }
+  ]
+}

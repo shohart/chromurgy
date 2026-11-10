@@ -33,6 +33,10 @@ class Config:
 def load(path: str | os.PathLike | None) -> Config:
     path = path or os.environ.get("MFILM_CONFIG")
     if not path:
+        user_cfg = Path.home() / ".config" / "mfilm" / "config.toml"
+        if user_cfg.is_file():
+            path = user_cfg
+    if not path:
         return Config()
     raw = tomllib.loads(Path(path).read_text(encoding="utf-8"))
     cfg = Config()

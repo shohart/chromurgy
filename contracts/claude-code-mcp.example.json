@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mfilm": {
+      "command": "/opt/mfilm/venv/bin/python",
+      "args": [
+        "-m",
+        "mfilm_server.mcp"
+      ],
+      "env": {
+        "MFILM_API_BASE_URL": "http://127.0.0.1:8080"
+      }
+    }
+  }
+}

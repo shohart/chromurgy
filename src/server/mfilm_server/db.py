@@ -247,6 +247,19 @@ MIGRATIONS: list[str] = [
         updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     )
     """,
+    # 10: MCP versioned recipe drafts
+    """
+    CREATE TABLE mcp_drafts (
+        id          TEXT PRIMARY KEY,
+        asset_id    TEXT NOT NULL REFERENCES sources(id),
+        revision    INTEGER NOT NULL DEFAULT 1,
+        recipe      TEXT NOT NULL,
+        recipe_hash TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE INDEX mcp_drafts_asset ON mcp_drafts(asset_id);
+    """,
 ]
 
 

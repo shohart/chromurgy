@@ -19,6 +19,8 @@ mfilmctl = "mfilm_server.cli:main"
 mfilm-develop = "mfilm_server.develop:main"
 mfilm-receiver = "mfilm_server.api:main"
 mfilm-web = "mfilm_server.darkroom.app:main"
+mfilm-mcp = "mfilm_server.mcp.__main__:main"
+chromurgy-mcp = "mfilm_server.mcp.__main__:main"
 
 [build-system]
 requires = ["setuptools>=68"]

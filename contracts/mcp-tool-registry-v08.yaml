@@ -1,0 +1,304 @@
+schema_version: '0.8'
+status: PROPOSED — implement in existing Linux M-Film; tool declarations not deployed
+transport: stdio
+default_mode: compact
+tools:
+- name: mfilm_status
+  description: Inspect deployed engine status and feature flags
+  effect: read
+  inputSchema:
+    type: object
+    properties: {}
+    required: []
+    additionalProperties: false
+- name: mfilm_list_sources
+  description: Find authorized source containers
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      kind:
+        type: string
+        enum:
+        - mfilm_library
+        - roll
+        - upload
+        - photoprism
+      cursor: &id001
+        type: string
+        minLength: 1
+      limit:
+        type: integer
+        minimum: 1
+        maximum: 100
+    required: []
+    additionalProperties: false
+- name: mfilm_search_assets
+  description: Search actual asset catalog with pagination
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      source:
+        type: string
+        enum:
+        - mfilm_library
+        - roll
+        - upload
+        - photoprism
+      query:
+        type: string
+        maxLength: 200
+      album_uid: *id001
+      folder_id: *id001
+      camera_model: *id001
+      format:
+        type: string
+        enum:
+        - nef
+        - dng
+        - cr2
+        - cr3
+        - arw
+        - raf
+        - jpeg
+        - tiff
+      cursor: *id001
+      limit:
+        type: integer
+        minimum: 1
+        maximum: 100
+    required:
+    - source
+    additionalProperties: false
+- name: mfilm_inspect_asset
+  description: Inspect one authorized RAW asset
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      asset_id: *id001
+    required:
+    - asset_id
+    additionalProperties: false
+- name: mfilm_list_creative_options
+  description: List installed profiles, optical effects, curated combos
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      type:
+        type: string
+        enum:
+        - camera_look
+        - film
+        - optical
+        - combo
+      query:
+        type: string
+        maxLength: 150
+      cursor: *id001
+      limit:
+        type: integer
+        minimum: 1
+        maximum: 100
+    required: []
+    additionalProperties: false
+- name: mfilm_get_recipe_schema
+  description: Expose authoritative recipe schema
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      schema_version:
+        type: integer
+        enum:
+        - 2
+    required: []
+    additionalProperties: false
+- name: mfilm_list_photoprism_destinations
+  description: Find writable PhotoPrism albums/folders
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      instance_id: *id001
+      kind:
+        type: string
+        enum:
+        - album
+        - folder
+      query:
+        type: string
+        maxLength: 150
+      cursor: *id001
+    required:
+    - kind
+    additionalProperties: false
+- name: mfilm_create_draft
+  description: Create editable versioned recipe for existing source
+  effect: draft
+  inputSchema:
+    type: object
+    properties:
+      asset_id: *id001
+      preset_id: *id001
+      recipe:
+        type: object
+    required:
+    - asset_id
+    additionalProperties: false
+- name: mfilm_get_draft
+  description: Inspect versioned recipe draft
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      draft_id: *id001
+    required:
+    - draft_id
+    additionalProperties: false
+- name: mfilm_update_draft
+  description: Apply validated RFC7396 partial patch to draft
+  effect: draft
+  inputSchema:
+    type: object
+    properties:
+      draft_id: *id001
+      expected_revision: &id002
+        type: integer
+        minimum: 1
+      patch:
+        type: object
+        minProperties: 1
+    required:
+    - draft_id
+    - expected_revision
+    - patch
+    additionalProperties: false
+- name: mfilm_render_preview
+  description: Return actual rendered preview image as MCP image content
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      draft_id: *id001
+      revision: *id002
+      max_side:
+        type: integer
+        minimum: 128
+        maximum: 1536
+        default: 1024
+      format:
+        type: string
+        enum:
+        - png
+        - jpeg
+        default: jpeg
+    required:
+    - draft_id
+    - revision
+    additionalProperties: false
+- name: mfilm_compare_drafts
+  description: Compare 2-4 versioned drafts of same source
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      draft_ids:
+        type: array
+        minItems: 2
+        maxItems: 4
+        uniqueItems: true
+        items: *id001
+      max_side:
+        type: integer
+        minimum: 128
+        maximum: 1536
+      layout:
+        type: string
+        enum:
+        - separate
+        - grid
+    required:
+    - draft_ids
+    additionalProperties: false
+- name: mfilm_start_development
+  description: Queue durable full-quality develop job on existing worker
+  effect: render
+  inputSchema:
+    type: object
+    properties:
+      draft_id: *id001
+      revision: *id002
+      idempotency_key: &id003
+        type: string
+        minLength: 8
+        maxLength: 128
+      output:
+        type: object
+        properties:
+          format:
+            type: string
+            enum:
+            - jpeg
+            - tiff
+            - png
+          quality:
+            type: integer
+            minimum: 1
+            maximum: 100
+        required: []
+        additionalProperties: false
+    required:
+    - draft_id
+    - revision
+    - idempotency_key
+    additionalProperties: false
+- name: mfilm_get_job
+  description: Read state and progress of authorized render job
+  effect: read
+  inputSchema:
+    type: object
+    properties:
+      job_id: *id001
+    required:
+    - job_id
+    additionalProperties: false
+- name: mfilm_cancel_job
+  description: Cancel own active render job when possible
+  effect: render
+  inputSchema:
+    type: object
+    properties:
+      job_id: *id001
+    required:
+    - job_id
+    additionalProperties: false
+- name: mfilm_publish_render
+  description: Publish completed immutable render into authorized PhotoPrism destination
+  effect: publish
+  inputSchema:
+    type: object
+    properties:
+      render_id: *id001
+      destination:
+        type: object
+        properties:
+          instance_id: *id001
+          folder_id: *id001
+          album_uid: *id001
+          create_missing_album:
+            type: boolean
+            const: false
+        required:
+        - instance_id
+        - folder_id
+        additionalProperties: false
+      idempotency_key: *id003
+      approval_token: *id001
+    required:
+    - render_id
+    - destination
+    - idempotency_key
+    additionalProperties: false
