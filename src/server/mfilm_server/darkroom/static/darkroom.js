@@ -82,6 +82,7 @@ const S = { catalog: null, assets: [], allSourceCount: 0, selected: new Set(), c
   colorGradeFilter: "",
   colorGradeQuery: "",
   frameGradeOverrides: JSON.parse(localStorage.getItem("mfilm.frame_grades") || "{}"),
+  autoAnalysis: {},
   aspect: "free", cropMode: false, cropRect: null, cropImg: null };
 const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Color grades", "My presets"];
 
@@ -143,28 +144,188 @@ function curRotate() {
   return S.current && S.rotates[S.current] ? normDeg(S.rotates[S.current]) : 0;
 }
 
+const analysisPending = new Set();
+async function ensureSourceAnalysis(asset) {
+  if (!asset || !asset.asset_id || analysisPending.has(asset.asset_id)) return;
+  const meta = asset.meta || {};
+  if (meta.auto_exposure_ev !== undefined && meta.auto_wb && meta.auto_wb.kelvin) {
+    if (!S.autoAnalysis[asset.asset_id]) {
+      S.autoAnalysis[asset.asset_id] = {
+        baseline_ev: meta.baseline_ev || 0.0,
+        auto_exposure_ev: meta.auto_exposure_ev,
+        auto_wb: meta.auto_wb,
+        camera_wb: meta.camera_wb
+      };
+    }
+    return;
+  }
+  analysisPending.add(asset.asset_id);
+  try {
+    const an = await api(`/sources/${asset.asset_id}/analysis`);
+    if (an) {
+      if (!asset.meta) asset.meta = {};
+      asset.meta.baseline_ev = an.baseline_ev;
+      asset.meta.auto_exposure_ev = an.auto_exposure_ev;
+      asset.meta.camera_wb = an.camera_wb;
+      asset.meta.auto_wb = an.auto_wb;
+      S.autoAnalysis[asset.asset_id] = an;
+
+      const curAdj = S.adjustments[asset.asset_id];
+      let changed = false;
+      if (curAdj && curAdj.autoExposure && Math.abs(curAdj.tone.brightness) < 1e-4) {
+        curAdj.tone.brightness = an.auto_exposure_ev;
+        changed = true;
+      }
+      if (curAdj && curAdj.autoWb && an.auto_wb && an.auto_wb.kelvin) {
+        curAdj.wbSel = "custom";
+        curAdj.wbCustom = { k: an.auto_wb.kelvin, t: an.auto_wb.tint };
+        changed = true;
+      }
+      if (changed) saveAdjustments();
+
+      if (S.current === asset.asset_id) {
+        loadFrameAdjustments(S.current);
+        syncControls();
+        scheduleLiveTone();
+      }
+    }
+  } catch (e) {
+    console.warn("Analysis failed for asset", asset.asset_id, e);
+  } finally {
+    analysisPending.delete(asset.asset_id);
+  }
+}
+
+function getFrameAutoExposureVal(id) {
+  const asset = S.assets.find(a => a.asset_id === id);
+  const meta = asset && asset.meta ? asset.meta : {};
+  if (meta.auto_exposure_ev !== undefined) return meta.auto_exposure_ev;
+  if (S.autoAnalysis[id] && S.autoAnalysis[id].auto_exposure_ev !== undefined) return S.autoAnalysis[id].auto_exposure_ev;
+  return 0.0;
+}
+
+function getFrameAutoWbData(id) {
+  const asset = S.assets.find(a => a.asset_id === id);
+  const meta = asset && asset.meta ? asset.meta : {};
+  if (meta.auto_wb && meta.auto_wb.kelvin) return meta.auto_wb;
+  if (S.autoAnalysis[id] && S.autoAnalysis[id].auto_wb) return S.autoAnalysis[id].auto_wb;
+  return { kelvin: 5500, tint: 0, gains: [1.0, 1.0, 1.0] };
+}
+
+function isFrameAutoExposure(id) {
+  if (!id) return true;
+  const adj = S.adjustments[id];
+  if (adj && adj.autoExposure !== undefined) return Boolean(adj.autoExposure);
+  return true;
+}
+
+function setFrameAutoExposure(id, val) {
+  if (!id) return;
+  if (!S.adjustments[id]) {
+    S.adjustments[id] = {
+      tone: { ...S.baseTone, brightness: getFrameAutoExposureVal(id) },
+      wbSel: S.wbSel,
+      wbCustom: { ...S.wbCustom },
+      autoWb: isFrameAutoWb(id)
+    };
+  }
+  S.adjustments[id].autoExposure = Boolean(val);
+}
+
+function isFrameAutoWb(id) {
+  if (!id) return true;
+  const adj = S.adjustments[id];
+  if (adj && adj.autoWb !== undefined) return Boolean(adj.autoWb);
+  return true;
+}
+
+function setFrameAutoWb(id, val) {
+  if (!id) return;
+  if (!S.adjustments[id]) {
+    const awb = getFrameAutoWbData(id);
+    S.adjustments[id] = {
+      tone: { ...S.baseTone, brightness: getFrameAutoExposureVal(id) },
+      autoExposure: isFrameAutoExposure(id),
+      wbSel: awb && awb.kelvin ? "custom" : S.baseWbSel,
+      wbCustom: awb && awb.kelvin ? { k: awb.kelvin, t: awb.tint } : { ...S.baseWbCustom }
+    };
+  }
+  S.adjustments[id].autoWb = Boolean(val);
+}
+
+function initAssetAutoAdjustments(a) {
+  const meta = a.meta || {};
+  const autoEv = (meta.auto_exposure_ev !== undefined) ? meta.auto_exposure_ev : 0.0;
+  const hasAutoWb = Boolean(meta.auto_wb && meta.auto_wb.kelvin);
+  const autoK = hasAutoWb ? meta.auto_wb.kelvin : 5500;
+  const autoT = hasAutoWb ? meta.auto_wb.tint : 0;
+  S.adjustments[a.asset_id] = {
+    tone: { ...S.baseTone, brightness: autoEv },
+    wbSel: hasAutoWb ? "custom" : S.baseWbSel,
+    wbCustom: { ...S.baseWbCustom, k: autoK, t: autoT },
+    autoExposure: true,
+    autoWb: hasAutoWb,
+    rawBaselineEv: meta.baseline_ev || 0.0
+  };
+}
+
 function loadFrameAdjustments(id) {
   if (!id) return;
+  const asset = S.assets.find(a => a.asset_id === id);
+  if (asset) ensureSourceAnalysis(asset);
+
   const adj = S.adjustments[id];
   if (adj && adj.tone) {
     Object.assign(S.tone, S.baseTone, adj.tone);
   } else {
-    Object.assign(S.tone, S.baseTone);
+    const autoEv = getFrameAutoExposureVal(id);
+    Object.assign(S.tone, S.baseTone, { brightness: autoEv });
   }
+
   if (adj && adj.wbSel !== undefined) {
     S.wbSel = adj.wbSel;
   } else {
-    S.wbSel = S.baseWbSel;
+    const autoWb = getFrameAutoWbData(id);
+    if (autoWb && autoWb.kelvin && isFrameAutoWb(id)) {
+      S.wbSel = "custom";
+    } else {
+      S.wbSel = S.baseWbSel;
+    }
   }
   S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight";
+
   if (adj && adj.wbCustom) {
     Object.assign(S.wbCustom, S.baseWbCustom, adj.wbCustom);
   } else {
-    Object.assign(S.wbCustom, S.baseWbCustom);
+    const autoWb = getFrameAutoWbData(id);
+    if (autoWb && autoWb.kelvin && isFrameAutoWb(id)) {
+      Object.assign(S.wbCustom, S.baseWbCustom, { k: autoWb.kelvin, t: autoWb.tint });
+    } else {
+      Object.assign(S.wbCustom, S.baseWbCustom);
+    }
+  }
+
+  const chkExp = $("#chk_auto_exposure");
+  if (chkExp) chkExp.checked = isFrameAutoExposure(id);
+  const chkWb = $("#chk_auto_wb");
+  if (chkWb) chkWb.checked = isFrameAutoWb(id);
+
+  const rawBadge = $("#badge_raw_ev");
+  if (rawBadge && asset && asset.meta) {
+    const meta = asset.meta;
+    const parts = [];
+    if (meta.baseline_ev !== undefined && Math.abs(meta.baseline_ev) > 1e-4) {
+      parts.push(`RAW: ${(meta.baseline_ev > 0 ? "+" : "") + meta.baseline_ev.toFixed(2)} EV`);
+    }
+    if (meta.iso) parts.push(`ISO ${meta.iso}`);
+    rawBadge.textContent = parts.length ? `(${parts.join(" · ")})` : "";
   }
 }
+
 function markFrameAdjusted() {
   if (!S.current) return;
+  const autoExp = isFrameAutoExposure(S.current);
+  const autoWb = isFrameAutoWb(S.current);
   const toneDiff = Math.abs(S.tone.brightness - S.baseTone.brightness) > 1e-4 ||
                    Math.abs(S.tone.contrast - S.baseTone.contrast) > 1e-4 ||
                    Math.abs(S.tone.develop - S.baseTone.develop) > 1e-4 ||
@@ -172,11 +333,13 @@ function markFrameAdjusted() {
                    Math.abs(S.tone.filterStrength - S.baseTone.filterStrength) > 1e-4;
   const wbDiff = S.wbSel !== S.baseWbSel ||
                  (S.wbSel === "custom" && (Math.abs(S.wbCustom.k - S.baseWbCustom.k) > 1 || Math.abs(S.wbCustom.t - S.baseWbCustom.t) > 1));
-  if (toneDiff || wbDiff) {
+  if (toneDiff || wbDiff || autoExp || autoWb) {
     S.adjustments[S.current] = {
       tone: { ...S.tone },
       wbSel: S.wbSel,
-      wbCustom: { ...S.wbCustom }
+      wbCustom: { ...S.wbCustom },
+      autoExposure: autoExp,
+      autoWb: autoWb
     };
   } else {
     delete S.adjustments[S.current];
@@ -1095,6 +1258,12 @@ async function refreshAssets() {
   const r = await api("/sources?count=500");
   S.allSourceCount = r.items.length;
   S.assets = r.items.filter(a => !S.dismissed.has(a.asset_id));
+  for (const a of S.assets) {
+    if (!S.adjustments[a.asset_id]) {
+      initAssetAutoAdjustments(a);
+    }
+    ensureSourceAnalysis(a);
+  }
   for (const id of [...S.selected]) if (!S.assets.some(a => a.asset_id === id)) S.selected.delete(id);
   if (!S.current || !S.assets.find(a => a.asset_id === S.current)) S.current = S.assets.length ? S.assets[0].asset_id : null;
   if (!S.current) clearPreviewStage();
@@ -1943,6 +2112,24 @@ function syncControls() {
   if ($("#wbsel")) { renderWb(); }
   syncRotateUi();
   renderPresets();
+
+  const sg = v => (v > 0 ? "+" : "") + v.toFixed(2) + " EV";
+  if ($("#sl_bright")) $("#sl_bright").value = S.tone.brightness;
+  if ($("#v_bright")) $("#v_bright").textContent = sg(S.tone.brightness);
+  if ($("#chk_auto_exposure")) $("#chk_auto_exposure").checked = isFrameAutoExposure(S.current);
+  if ($("#chk_auto_wb")) $("#chk_auto_wb").checked = isFrameAutoWb(S.current);
+
+  const curAsset = S.assets.find(a => a.asset_id === S.current);
+  const rawBadge = $("#badge_raw_ev");
+  if (rawBadge && curAsset && curAsset.meta) {
+    const meta = curAsset.meta;
+    const parts = [];
+    if (meta.baseline_ev !== undefined && Math.abs(meta.baseline_ev) > 1e-4) {
+      parts.push(`RAW: ${(meta.baseline_ev > 0 ? "+" : "") + meta.baseline_ev.toFixed(2)} EV`);
+    }
+    if (meta.iso) parts.push(`ISO ${meta.iso}`);
+    rawBadge.textContent = parts.length ? `(${parts.join(" · ")})` : "";
+  }
 }
 
 /* ---------------- step 5: operator presets (the whole Darkroom setting under a name, stored on the server) ---------------- */
@@ -2592,12 +2779,134 @@ function slider(id, label, min, max, step, get, set, fmt, def, title, liveOnly =
   S.sliders.push({ inp, out, get, fmt });
   return h("div", {}, h("label", { for: id }, label, " ", out), inp);
 }
+function exposureControl() {
+  const sg = v => (v > 0 ? "+" : "") + v.toFixed(2) + " EV";
+  const valSpan = h("span", { id: "v_bright", class: "val" }, sg(S.tone.brightness));
+  const rawBadge = h("small", { id: "badge_raw_ev", class: "dim", style: "font-size:.72rem;margin-left:.35rem" });
+  const chk = h("input", {
+    type: "checkbox",
+    id: "chk_auto_exposure",
+    checked: isFrameAutoExposure(S.current),
+    onchange: e => onToggleAutoExposure(e.target.checked)
+  });
+  const chkLabel = h("label", {
+    style: "font-size:.78rem;cursor:pointer;display:inline-flex;align-items:center;gap:.25rem;margin:0;font-weight:normal"
+  }, chk, "Auto");
+
+  const header = h("div", {
+    style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:.2rem"
+  },
+    h("label", { for: "sl_bright", style: "margin:0" }, "Exposure compensation ", valSpan, rawBadge),
+    chkLabel
+  );
+
+  const inp = h("input", {
+    type: "range",
+    id: "sl_bright",
+    min: -3,
+    max: 3,
+    step: 0.05,
+    value: S.tone.brightness,
+    "aria-label": "Exposure compensation in stops",
+    title: "Double-click resets to 0. Moving slider switches Auto off.",
+    oninput: e => {
+      setFrameAutoExposure(S.current, false);
+      const c = $("#chk_auto_exposure"); if (c) c.checked = false;
+      S.tone.brightness = +e.target.value;
+      valSpan.textContent = sg(S.tone.brightness);
+      markFrameAdjusted();
+      scheduleLiveTone();
+    },
+    ondblclick: () => {
+      setFrameAutoExposure(S.current, false);
+      const c = $("#chk_auto_exposure"); if (c) c.checked = false;
+      S.tone.brightness = 0;
+      inp.value = 0;
+      valSpan.textContent = sg(0);
+      markFrameAdjusted();
+      scheduleLiveTone();
+    }
+  });
+
+  return h("div", {}, header, inp);
+}
+
+function onToggleAutoExposure(checked) {
+  setFrameAutoExposure(S.current, checked);
+  if (checked) {
+    const autoEv = getFrameAutoExposureVal(S.current);
+    S.tone.brightness = autoEv;
+    const inp = $("#sl_bright"); if (inp) inp.value = autoEv;
+    const v = $("#v_bright"); if (v) v.textContent = (autoEv > 0 ? "+" : "") + autoEv.toFixed(2) + " EV";
+    markFrameAdjusted();
+    scheduleLiveTone();
+    toast(`Auto exposure applied: ${(autoEv > 0 ? "+" : "") + autoEv.toFixed(2)} EV`);
+  } else {
+    markFrameAdjusted();
+  }
+}
+
+function onToggleAutoWb(checked) {
+  setFrameAutoWb(S.current, checked);
+  if (checked) {
+    const awb = getFrameAutoWbData(S.current);
+    if (awb && awb.kelvin) {
+      S.wbSel = "custom";
+      S.wbCustom.k = awb.kelvin;
+      S.wbCustom.t = awb.tint;
+      markFrameAdjusted();
+      renderWb();
+      schedulePreview(true);
+      toast(`Auto white balance applied: ${awb.kelvin} K, tint ${awb.tint > 0 ? "+" : ""}${awb.tint}`);
+    } else {
+      S.wbSel = "as-shot";
+      markFrameAdjusted();
+      renderWb();
+      schedulePreview(true);
+      toast("Auto white balance: camera as-shot");
+    }
+  } else {
+    markFrameAdjusted();
+  }
+}
+
+function applyWbToAll() {
+  const curWbSel = S.wbSel;
+  const curWbCustom = { ...S.wbCustom };
+  const curAutoWb = isFrameAutoWb(S.current);
+  S.baseWbSel = curWbSel;
+  S.baseWbCustom = { ...curWbCustom };
+  for (const a of S.assets) {
+    if (!S.adjustments[a.asset_id]) {
+      S.adjustments[a.asset_id] = {
+        tone: { ...S.baseTone, brightness: getFrameAutoExposureVal(a.asset_id) },
+        autoExposure: isFrameAutoExposure(a.asset_id)
+      };
+    }
+    S.adjustments[a.asset_id].wbSel = curWbSel;
+    S.adjustments[a.asset_id].wbCustom = { ...curWbCustom };
+    S.adjustments[a.asset_id].autoWb = curAutoWb;
+  }
+  saveAdjustments();
+  renderAssets();
+  renderWb();
+  schedulePreview(true);
+  toast(`White balance applied to all ${S.assets.length} frames on table`);
+}
+
 function adjustPanel() {
   S.sliders = [];
-  const sg = v => (v > 0 ? "+" : "") + v.toFixed(2);
   const filter = h("select", { id: "filter", "aria-label": "Tone filter", onchange: e => { S.tone.filter = e.target.value; markFrameAdjusted(); syncControls(); scheduleLiveTone(); } },
     h("option", { value: "none" }, "No filter"), h("option", { value: "grayscale" }, "Black & white (plain grayscale)"), h("option", { value: "silver" }, "Silver B&W film (grain, film curve)"), h("option", { value: "sepia" }, "Sepia"));
-  const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => { S.wbSel = e.target.value; S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight"; markFrameAdjusted(); renderWb(); schedulePreview(true); } });
+  const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => {
+    S.wbSel = e.target.value;
+    S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight";
+    setFrameAutoWb(S.current, false);
+    const c = $("#chk_auto_wb"); if (c) c.checked = false;
+    markFrameAdjusted();
+    renderWb();
+    schedulePreview(true);
+  } });
   const file = h("input", { type: "file", id: "wbfile", multiple: true, hidden: true, accept: ".json,.csv,.xmp,.lrtemplate,.pp3", onchange: wbImport });
 
   const gradeSel = h("select", { id: "framesel_grade", "aria-label": "Creative Color Grade", onchange: e => onFrameGradeChange(e.target.value) });
@@ -2608,19 +2917,37 @@ function adjustPanel() {
   return h("div", { class: "adjust-box" },
     h("h3", { class: "sub-head" }, "Adjustments ", h("small", { class: "dim" }, "· real-time in preview & full render")),
     h("div", { class: "adjust-stack" },
-      slider("sl_bright", "Brightness (exposure, stops)", -3, 3, 0.05, () => S.tone.brightness, v => { S.tone.brightness = v; markFrameAdjusted(); }, sg, 0, "Exposure compensation in stops.", true),
+      exposureControl(),
       slider("sl_contrast", "Contrast", -1, 1, 0.01, () => S.tone.contrast, v => { S.tone.contrast = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 0, "S-curve around the mid-tones.", true),
       slider("sl_develop", "Development strength", 0, 1, 0.01, () => S.tone.develop, v => { S.tone.develop = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 1, "0 % = developed without film, 100 % = the full film look.", true),
       h("div", { class: "grid2-compact", style: "margin-top:.2rem" },
         h("div", {}, h("label", { for: "filter" }, "Filter"), filter,
           h("div", { style: "margin-top:.3rem" }, slider("filterstr", "Strength", 0, 1, 0.01, () => S.tone.filterStrength, v => { S.tone.filterStrength = v; markFrameAdjusted(); }, v => Math.round(v * 100) + "%", 1, "Filter blend strength.", true))),
-        h("div", {}, h("label", { for: "wbsel" }, "White balance"), wbsel,
-          h("div", { class: "bar compact", style: "margin-top:.3rem" },
+        h("div", {},
+          h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:.2rem" },
+            h("label", { for: "wbsel", style: "margin:0" }, "White balance"),
+            h("label", { style: "font-size:.78rem;cursor:pointer;display:inline-flex;align-items:center;gap:.25rem;margin:0;font-weight:normal" },
+              h("input", {
+                type: "checkbox",
+                id: "chk_auto_wb",
+                checked: isFrameAutoWb(S.current),
+                onchange: e => onToggleAutoWb(e.target.checked)
+              }),
+              "Auto"
+            )
+          ),
+          wbsel,
+          h("div", { class: "bar compact", style: "margin-top:.3rem;gap:.3rem;flex-wrap:wrap" },
             h("button", { onclick: () => $("#wbfile").click(), title: "Import .json .csv .xmp .lrtemplate .pp3" }, "Import profile…"),
-            h("button", { id: "wbdel", hidden: true, onclick: wbDelete }, "Delete"), file))),
+            h("button", { id: "btn_wb_all", type: "button", onclick: applyWbToAll, title: "Apply current frame's white balance to all frames on table" }, "Apply WB to all"),
+            h("button", { id: "wbdel", hidden: true, onclick: wbDelete }, "Delete"),
+            file
+          )
+        )
+      ),
       h("div", { id: "wbcustom", hidden: true, style: "margin-top:.2rem" },
-        slider("sl_kelvin", "Light colour temperature", 2000, 12000, 50, () => S.wbCustom.k, v => { S.wbCustom.k = v; markFrameAdjusted(); }, v => v + " K", 5500),
-        slider("sl_tint", "Tint (− green · + magenta)", -100, 100, 1, () => S.wbCustom.t, v => { S.wbCustom.t = v; markFrameAdjusted(); }, v => (v > 0 ? "+" : "") + v, 0)),
+        slider("sl_kelvin", "Light colour temperature", 2000, 12000, 50, () => S.wbCustom.k, v => { S.wbCustom.k = v; setFrameAutoWb(S.current, false); const c = $("#chk_auto_wb"); if (c) c.checked = false; markFrameAdjusted(); }, v => v + " K", 5500),
+        slider("sl_tint", "Tint (− green · + magenta)", -100, 100, 1, () => S.wbCustom.t, v => { S.wbCustom.t = v; setFrameAutoWb(S.current, false); const c = $("#chk_auto_wb"); if (c) c.checked = false; markFrameAdjusted(); }, v => (v > 0 ? "+" : "") + v, 0)),
       h("p", { class: "dim", id: "wbnote", style: "font:.68rem var(--mono);margin:.1rem 0 0" }),
       h("div", { style: "margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--line)" },
         h("div", { style: "display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.3rem" },
@@ -2688,7 +3015,9 @@ function adjustAll() {
   const curAdj = {
     tone: { ...S.tone },
     wbSel: S.wbSel,
-    wbCustom: { ...S.wbCustom }
+    wbCustom: { ...S.wbCustom },
+    autoExposure: isFrameAutoExposure(S.current),
+    autoWb: isFrameAutoWb(S.current)
   };
   [...S.selected].forEach(id => {
     S.adjustments[id] = JSON.parse(JSON.stringify(curAdj));

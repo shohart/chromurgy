@@ -6,8 +6,13 @@ Prints one JSON object; exit 0 only for a file the decoder fully unpacked."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import resource
 import sys
+
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 TAG_DNGVERSION = 50706
 EXIF = 0x8769
@@ -47,6 +52,18 @@ def probe(path: str, thumb_out: str | None = None) -> dict:
     if thumb_out:
         meta["has_thumb"] = _thumb(path, thumb_out, meta.get("flip", 0))
     meta["format"] = "dng" if meta.get("is_dng") else ("nef" if (meta.get("make") or "").upper().startswith("NIKON") else "raw")
+    try:
+        from . import analysis
+    except ImportError:
+        import analysis
+    try:
+        an = analysis.analyze_raw_path(path)
+        meta["baseline_ev"] = an.get("baseline_ev", 0.0)
+        meta["auto_exposure_ev"] = an.get("auto_exposure_ev", 0.0)
+        meta["camera_wb"] = an.get("camera_wb")
+        meta["auto_wb"] = an.get("auto_wb")
+    except Exception:
+        pass
     return {"ok": True, "meta": meta}
 
 

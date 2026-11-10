@@ -581,6 +581,58 @@ def create_app(store: Store, cfg: config_mod.Config | None = None, config_path: 
             raise ApiError(404, "UNKNOWN_ASSET", asset_id)
         return sources.row_public(row)
 
+    @app.get(f"{API}/sources/{{asset_id}}/analysis")
+    def source_analysis(asset_id: str, _t: str = Depends(session), c=Depends(conn)):
+        row = source_row(c, asset_id)
+        meta = json.loads(row["meta"] or "{}")
+        if "auto_exposure_ev" in meta and "auto_wb" in meta:
+            return {
+                "asset_id": asset_id,
+                "baseline_ev": meta.get("baseline_ev", 0.0),
+                "auto_exposure_ev": meta.get("auto_exposure_ev", 0.0),
+                "camera_wb": meta.get("camera_wb"),
+                "auto_wb": meta.get("auto_wb")
+            }
+        from . import analysis
+        an = {}
+        try:
+            p = pp_sources.source_file(store, cfg.photoprism, row)
+            if p and p.is_file():
+                an = analysis.analyze_raw_path(p)
+        except Exception:
+            an = {}
+
+        if not an or "auto_exposure_ev" not in an:
+            tf = sources.thumb_path(store, row["sha256"])
+            if tf.is_file():
+                try:
+                    from PIL import Image
+                    with Image.open(tf) as im:
+                        an = analysis.analyze_image_array(np.asarray(im.convert("RGB")))
+                except Exception:
+                    an = {}
+
+        if not an:
+            an = {
+                "baseline_ev": 0.0,
+                "auto_exposure_ev": 0.0,
+                "camera_wb": None,
+                "auto_wb": {"kelvin": 5500, "tint": 0, "gains": [1.0, 1.0, 1.0]}
+            }
+
+        meta["baseline_ev"] = an.get("baseline_ev", 0.0)
+        meta["auto_exposure_ev"] = an.get("auto_exposure_ev", 0.0)
+        meta["camera_wb"] = an.get("camera_wb")
+        meta["auto_wb"] = an.get("auto_wb")
+        c.execute("UPDATE sources SET meta=? WHERE id=?", (json.dumps(meta), asset_id))
+        return {
+            "asset_id": asset_id,
+            "baseline_ev": meta.get("baseline_ev", 0.0),
+            "auto_exposure_ev": meta.get("auto_exposure_ev", 0.0),
+            "camera_wb": meta.get("camera_wb"),
+            "auto_wb": meta.get("auto_wb")
+        }
+
     @app.get(f"{API}/sources/{{asset_id}}/thumbnail")
     def source_thumbnail(asset_id: str, sync: int = 0, _t: str = Depends(session), c=Depends(conn)):
         row = source_row(c, asset_id)
