@@ -82,7 +82,7 @@ def test_resolve_output_size_ladder_and_oversize():
     # Extremely cropped frame (600, 800) requested 3000x2000 -> falls back to original (0, 0) with warning
     w, h, warn = develop.resolve_output_size((600, 800), 3000, 2000)
     assert (w, h) == (0, 0)
-    assert warn is not None and "исходном размере" in warn
+    assert warn is not None and "native size" in warn
 
     # Oversized non-preset request (9000x6000) -> raises OUTPUT_LARGER_THAN_SOURCE
     with pytest.raises(develop.DevelopError) as e:

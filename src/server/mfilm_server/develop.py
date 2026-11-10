@@ -163,10 +163,10 @@ def resolve_output_size(img_shape: tuple[int, int, ...], width: int, height: int
         else:
             cw, ch = lw, lh
         if (max(cw, ch) < req_max or (max(cw, ch) == req_max and min(cw, ch) < req_min)) and cw <= w and ch <= h:
-            warning = f"Целевой размер {width}×{height} превышает разрешение кадра ({w}×{h}); сгенерирован {cw}×{ch}"
+            warning = f"Target size {width}×{height} exceeds frame resolution ({w}×{h}); rendered at {cw}×{ch}"
             return cw, ch, warning
 
-    warning = f"Целевой размер {width}×{height} превышает разрешение кадра ({w}×{h}); сгенерирован в исходном размере ({w}×{h})"
+    warning = f"Target size {width}×{height} exceeds frame resolution ({w}×{h}); rendered at native size ({w}×{h})"
     return 0, 0, warning
 
 

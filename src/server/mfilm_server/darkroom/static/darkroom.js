@@ -1539,14 +1539,14 @@ function renderLooks() {
     container.replaceChildren(
       h("div", { class: "look-category" },
         h("div", { class: "look-category-head" },
-          h("span", {}, "🎞️ Film Cameras · Плёночные легенды"),
+          h("span", {}, "🎞️ Film Cameras · Analog Classics"),
           h("small", {}, `${filmLooks.length} profiles`)
         ),
         h("div", { class: "cards" }, ...filmLooks.map(makeLookCard))
       ),
       h("div", { class: "look-category" },
         h("div", { class: "look-category-head" },
-          h("span", {}, "📷 Digital Cameras & CCD Era · Цифровая классика"),
+          h("span", {}, "📷 Digital Cameras · CCD & Modern Sensors"),
           h("small", {}, `${digitalLooks.length} profiles`)
         ),
         h("div", { class: "cards" }, ...digitalLooks.map(makeLookCard))
@@ -3249,8 +3249,8 @@ function showPwaInstallModal() {
         h("strong", { style: "color:var(--safe2);display:block;margin-bottom:.3rem;font-size:.9rem" }, "⚡ Quick Install in Google Chrome"),
         h("ol", { style: "margin:0;padding-left:1.2rem;display:grid;gap:.35rem" },
           h("li", {}, "Click the three dots menu (", h("b", {}, "⋮"), ") in the top-right corner of Chrome."),
-          h("li", {}, "Select ", h("b", {}, "“Save and share”"), " (в русском Chrome: ", h("b", {}, "«Сохранить и поделиться»"), ")."),
-          h("li", {}, "Click ", h("b", {}, "“Install page as app…”"), " or ", h("b", {}, "“Create shortcut…”"), " (check ", h("i", {}, "“Open as window”"), ").")
+          h("li", {}, "Select ", h("b", {}, "“Save and share”"), " (or ", h("b", {}, "“Install Chromurgy”"), ")."),
+          h("li", {}, "Click ", h("b", {}, "“Install page as app…”"), " or ", h("b", {}, "“Create shortcut…”"), " (enable ", h("i", {}, "“Open as window”"), ").")
         ),
         h("div", { style: "margin-top:.6rem;font-size:.78rem;color:var(--dim)" },
           "Chrome will create a standalone desktop app with Chromurgy's darkroom icon on your taskbar and desktop."
