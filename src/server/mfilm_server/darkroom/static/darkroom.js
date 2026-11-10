@@ -2103,12 +2103,18 @@ function renderGrades() {
       class: "card" + (isSelected ? " on" : ""),
       "aria-pressed": String(isSelected),
       onclick: () => {
-        S.colorGrade = {
-          mode: "preset",
-          preset_id: p.id,
-          preset_version: p.version || "1.0.0",
-          overrides: {}
-        };
+        if (isSelected) {
+          S.colorGrade = { mode: "none" };
+          toast(`Color grade cleared: ${p.name}`);
+        } else {
+          S.colorGrade = {
+            mode: "preset",
+            preset_id: p.id,
+            preset_version: p.version || "1.0.0",
+            overrides: {}
+          };
+          toast(`Applied grade: ${p.name}`);
+        }
         saveColorGrade();
         renderGrades();
         renderFrameGrade();
