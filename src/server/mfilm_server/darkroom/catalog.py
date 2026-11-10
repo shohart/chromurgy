@@ -53,6 +53,11 @@ OPTICAL_EFFECTS = [
 # the operators added in spec v0.6 (darkroom/optics.py), in engine order; the six above keep their own list
 OPTICAL_EFFECTS_V06 = [(i, reg.new_effects()[i]["name"]) for i in creative.NEW_EFFECTS]
 ALL_EFFECT_IDS = [i for i, _ in OPTICAL_EFFECTS] + [i for i, _ in OPTICAL_EFFECTS_V06]
+FILM_LOOKS = {
+    "hasselblad_500cm", "leica_m6_rangefinder", "contax_t2_sonnar", "mamiya_7_ii",
+    "olympus_om1_zuiko", "pentax_k1000", "pentax_67", "rolleiflex_28f_tlr",
+    "zenit_e_ttl", "zorki_4", "polaroid_sx70_instant", "lomo_lca",
+}
 # implemented in darkroom/creative.py + optics.py (numpy, Linux server only)
 SUPPORTED_LOOKS = {i for i, _, _ in CAMERA_LOOKS}
 SUPPORTED_EFFECTS = set(ALL_EFFECT_IDS) | {"golden_haze", "vintage_glass"}
@@ -106,7 +111,8 @@ def build(bundle: core.Bundle) -> dict:
         "profile_bundle_hash": bundle.sha256,
         "film_core_version": core.core_version(),
         "creative_version": creative.VERSION,
-        "camera_looks": [{"id": i, "name": n, "evidence_tier": t, "supported": i in SUPPORTED_LOOKS, "params": _LOOKS[i]}
+        "camera_looks": [{"id": i, "name": n, "evidence_tier": t, "supported": i in SUPPORTED_LOOKS,
+                          "category": "film" if i in FILM_LOOKS else "digital", "params": _LOOKS[i]}
                          for i, n, t in CAMERA_LOOKS],
         "films": films(bundle),
         "optical_effects": [effect_view(i, n) for i, n in [*OPTICAL_EFFECTS, *OPTICAL_EFFECTS_V06]],

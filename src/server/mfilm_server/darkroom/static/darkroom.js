@@ -1458,34 +1458,101 @@ window.addEventListener("scroll", hideLookTooltip, { passive: true });
 window.addEventListener("pointerdown", hideLookTooltip);
 window.addEventListener("keydown", hideLookTooltip);
 
-function looksPanel() { return h("div", {}, h("div", { class: "cards", id: "looks" }),
-  h("div", { class: "grid2", style: "margin-top:1rem" }, h("div", {},
-    h("label", { for: "strength" }, "Look intensity ", h("span", { id: "lookv", class: "val" }, "100%")),
-    h("input", { type: "range", id: "strength", min: 0, max: 400, value: 100, disabled: true, title: "Double-click resets to 100%",
-      ondblclick: e => { e.target.value = 100; S.strength = 1.0; if ($("#lookv")) $("#lookv").textContent = "100%"; scheduleLiveTone(); schedulePreview(); },
-      oninput: e => { S.strength = e.target.value / 100; if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; scheduleLiveTone(); schedulePreview(); } })))); }
+const FILM_LOOK_IDS = new Set([
+  "hasselblad_500cm", "leica_m6_rangefinder", "contax_t2_sonnar", "mamiya_7_ii",
+  "olympus_om1_zuiko", "pentax_k1000", "pentax_67", "rolleiflex_28f_tlr",
+  "zenit_e_ttl", "zorki_4", "polaroid_sx70_instant", "lomo_lca"
+]);
+
+function setLookFilter(cat) {
+  S.lookCategory = cat;
+  const tabs = document.querySelectorAll(".look-tab");
+  tabs.forEach(t => t.setAttribute("aria-pressed", String(t.dataset.cat === cat)));
+  renderLooks();
+}
+
+function makeLookCard(l) {
+  const isFilm = (l.category === "film") || FILM_LOOK_IDS.has(l.id);
+  const catLabel = isFilm ? "Film" : "Digital";
+  const catClass = isFilm ? "cat-badge cat-film" : "cat-badge cat-digital";
+  const b = h("button", { class: "card", "aria-pressed": String(S.look === l.id), "aria-disabled": String(!l.supported),
+    title: l.supported ? "" : "Not implemented in this engine yet", onclick: () => {
+      hideLookTooltip();
+      if (!l.supported) return toast(`${l.name}: not implemented in this engine yet`);
+      S.look = l.id; syncControls(); schedulePreview(); } },
+    h("span", { class: catClass }, catLabel),
+    h("strong", {}, l.name), h("small", {}, l.evidence_tier), h("span", { class: "tag" }, l.supported ? "available" : "not available"));
+
+  b.addEventListener("pointerenter", e => {
+    if (e.pointerType === "touch") return;
+    hideLookTooltip();
+    lookHoverTimer = setTimeout(() => {
+      if (b.matches(":hover")) showLookTooltip(b, l.id);
+    }, 1000);
+  });
+  b.addEventListener("pointerleave", hideLookTooltip);
+  b.addEventListener("mouseleave", hideLookTooltip);
+
+  return b;
+}
+
+function looksPanel() {
+  S.lookCategory = S.lookCategory || "all";
+  const tabs = h("div", { class: "look-filter-tabs", role: "tablist" },
+    h("button", { class: "look-tab", "data-cat": "all", "aria-pressed": String(S.lookCategory === "all"),
+      onclick: () => setLookFilter("all") }, "All Cameras"),
+    h("button", { class: "look-tab", "data-cat": "film", "aria-pressed": String(S.lookCategory === "film"),
+      onclick: () => setLookFilter("film") }, "🎞️ Film Cameras"),
+    h("button", { class: "look-tab", "data-cat": "digital", "aria-pressed": String(S.lookCategory === "digital"),
+      onclick: () => setLookFilter("digital") }, "📷 Digital Cameras")
+  );
+
+  return h("div", {},
+    tabs,
+    h("div", { id: "looks" }),
+    h("div", { class: "grid2", style: "margin-top:1rem" }, h("div", {},
+      h("label", { for: "strength" }, "Look intensity ", h("span", { id: "lookv", class: "val" }, "100%")),
+      h("input", { type: "range", id: "strength", min: 0, max: 400, value: 100, disabled: true, title: "Double-click resets to 100%",
+        ondblclick: e => { e.target.value = 100; S.strength = 1.0; if ($("#lookv")) $("#lookv").textContent = "100%"; scheduleLiveTone(); schedulePreview(); },
+        oninput: e => { S.strength = e.target.value / 100; if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; scheduleLiveTone(); schedulePreview(); } }))));
+}
+
 function renderLooks() {
   hideLookTooltip();
-  $("#looks").replaceChildren(...S.catalog.camera_looks.map(l => {
-    const b = h("button", { class: "card", "aria-pressed": String(S.look === l.id), "aria-disabled": String(!l.supported),
-      title: l.supported ? "" : "Not implemented in this engine yet", onclick: () => {
-        hideLookTooltip();
-        if (!l.supported) return toast(`${l.name}: not implemented in this engine yet`);
-        S.look = l.id; syncControls(); schedulePreview(); } },
-      h("strong", {}, l.name), h("small", {}, l.evidence_tier), h("span", { class: "tag" }, l.supported ? "available" : "not available"));
+  const container = $("#looks");
+  if (!container || !S.catalog || !S.catalog.camera_looks) return;
+  const allLooks = S.catalog.camera_looks;
+  const cat = S.lookCategory || "all";
 
-    b.addEventListener("pointerenter", e => {
-      if (e.pointerType === "touch") return;
-      hideLookTooltip();
-      lookHoverTimer = setTimeout(() => {
-        if (b.matches(":hover")) showLookTooltip(b, l.id);
-      }, 1000);
-    });
-    b.addEventListener("pointerleave", hideLookTooltip);
-    b.addEventListener("mouseleave", hideLookTooltip);
+  const filmLooks = allLooks.filter(l => l.category === "film" || FILM_LOOK_IDS.has(l.id));
+  const digitalLooks = allLooks.filter(l => !(l.category === "film" || FILM_LOOK_IDS.has(l.id)));
 
-    return b;
-  }));
+  if (cat === "film") {
+    container.replaceChildren(
+      h("div", { class: "cards" }, ...filmLooks.map(makeLookCard))
+    );
+  } else if (cat === "digital") {
+    container.replaceChildren(
+      h("div", { class: "cards" }, ...digitalLooks.map(makeLookCard))
+    );
+  } else {
+    container.replaceChildren(
+      h("div", { class: "look-category" },
+        h("div", { class: "look-category-head" },
+          h("span", {}, "🎞️ Film Cameras · Плёночные легенды"),
+          h("small", {}, `${filmLooks.length} profiles`)
+        ),
+        h("div", { class: "cards" }, ...filmLooks.map(makeLookCard))
+      ),
+      h("div", { class: "look-category" },
+        h("div", { class: "look-category-head" },
+          h("span", {}, "📷 Digital Cameras & CCD Era · Цифровая классика"),
+          h("small", {}, `${digitalLooks.length} profiles`)
+        ),
+        h("div", { class: "cards" }, ...digitalLooks.map(makeLookCard))
+      )
+    );
+  }
 }
 
 /* ---------------- step 3: film ---------------- */
