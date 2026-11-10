@@ -57,8 +57,8 @@ section.step{background:var(--panel);border:1px solid var(--line);border-radius:
 section.step:nth-of-type(2){animation-delay:.05s}section.step:nth-of-type(3){animation-delay:.1s}
 section.step:nth-of-type(4){animation-delay:.15s}section.step:nth-of-type(5){animation-delay:.2s}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}}
-section.step>h2{margin:0 0 .85rem;font-size:1.05rem;font-weight:600;display:flex;align-items:baseline;gap:.8rem}
-section.step>h2 .n{font:.8rem var(--mono);color:var(--safe);border:1px solid var(--safe);border-radius:50%;width:1.7rem;height:1.7rem;display:inline-grid;place-items:center}
+section.step>h2{margin:0 0 .85rem;font-size:1.05rem;font-weight:600;display:flex;align-items:center;gap:.8rem;flex-shrink:0}
+section.step>h2 .n{font:.8rem var(--mono);color:var(--safe);border:1px solid var(--safe);border-radius:50%;width:1.7rem;height:1.7rem;min-width:1.7rem;min-height:1.7rem;max-width:1.7rem;max-height:1.7rem;flex-shrink:0;aspect-ratio:1/1;box-sizing:border-box;display:inline-grid;place-items:center}
 section.step>h2 .hint{font:.75rem var(--mono);color:var(--dim);margin-left:auto;font-weight:400}
 section.step.collapsible>h2{cursor:pointer;user-select:none;transition:color .15s}
 section.step.collapsible>h2:hover{color:var(--safe2)}
