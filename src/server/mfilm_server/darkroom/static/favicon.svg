@@ -1,19 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
   <defs>
     <radialGradient id="lampGlow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#fff5ea" />
-      <stop offset="20%" stop-color="#ffb050" />
-      <stop offset="45%" stop-color="#ff4a2b" />
-      <stop offset="75%" stop-color="#ff4a2b" stop-opacity="0.35" />
+      <stop offset="0%" stop-color="#fff8f0" />
+      <stop offset="25%" stop-color="#ffb050" stop-opacity="0.9" />
+      <stop offset="55%" stop-color="#ff4a2b" stop-opacity="0.6" />
+      <stop offset="85%" stop-color="#ff4a2b" stop-opacity="0.2" />
       <stop offset="100%" stop-color="#ff4a2b" stop-opacity="0" />
     </radialGradient>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1d1511" />
-      <stop offset="100%" stop-color="#0c0807" />
+      <stop offset="0%" stop-color="#1c1410" />
+      <stop offset="100%" stop-color="#0a0706" />
     </linearGradient>
     <linearGradient id="filmGrad" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#241913" />
-      <stop offset="100%" stop-color="#130d0a" />
+      <stop offset="100%" stop-color="#120c09" />
+    </linearGradient>
+    <linearGradient id="chromaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff6b4a" />
+      <stop offset="35%" stop-color="#ffbe53" />
+      <stop offset="70%" stop-color="#4ae0b5" />
+      <stop offset="100%" stop-color="#6e8eff" />
+    </linearGradient>
+    <linearGradient id="cLetterGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="60%" stop-color="#f5e6d6" />
+      <stop offset="100%" stop-color="#e8cfb5" />
     </linearGradient>
   </defs>
 
@@ -40,14 +51,17 @@
   <!-- Inner Negative Window -->
   <rect x="136" y="76" width="240" height="348" rx="16" fill="#090605" stroke="#ff4a2b" stroke-width="3" stroke-opacity="0.75" />
 
-  <!-- Ambient Safelight Glow Behind -->
-  <circle cx="256" cy="164" r="86" fill="url(#lampGlow)" />
+  <!-- Ambient Safelight Glow Behind C -->
+  <circle cx="256" cy="250" r="110" fill="url(#lampGlow)" />
 
-  <!-- Safelight Lamp Orb -->
-  <circle cx="256" cy="164" r="26" fill="#ff4a2b" />
-  <circle cx="256" cy="164" r="13" fill="#ff9d42" />
-  <circle cx="256" cy="164" r="5.5" fill="#ffffff" />
+  <!-- Subtle Chromatic Dispersion Prism Arc behind C -->
+  <path d="M 315 195 A 86 86 0 1 0 315 305" fill="none" stroke="url(#chromaGrad)" stroke-width="12" stroke-linecap="round" stroke-opacity="0.85" />
 
-  <!-- Bold Styled 'M' -->
-  <polygon points="170,392 170,238 214,238 256,316 298,238 342,238 342,392 306,392 306,296 256,380 206,296 206,392" fill="#f5e6d6" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" />
+  <!-- Bold Styled 'C' for Chromurgy -->
+  <path d="M 315 195 A 72 72 0 1 0 315 305" fill="none" stroke="url(#cLetterGrad)" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Core Safelight Lamp Spark inside C aperture -->
+  <circle cx="256" cy="250" r="22" fill="#ff4a2b" />
+  <circle cx="256" cy="250" r="11" fill="#ff9d42" />
+  <circle cx="256" cy="250" r="4.5" fill="#ffffff" />
 </svg>

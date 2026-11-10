@@ -1,6 +1,6 @@
-# 27 — Web Darkroom: Product Specification
+# 27 — Chromurgy Web Darkroom: Product Specification
 
-**Status: implementation required on Linux, not an optional research item.** This adds a web application to the existing M-Film server-first architecture. It does not replace roll ingestion, the same C film engine, or offline CHDK development. See [28 UI](28-web-darkroom-ui.md), [29 PhotoPrism](29-photoprism-source-and-destination.md), [30 RAW](30-web-raw-ingest.md), [31 Jobs](31-web-previews-and-jobs.md), [32 Publishing](32-web-publication.md), [33 Security](33-web-security-deployment.md), [34 Delivery](34-web-implementation-and-acceptance.md).
+**Status: implementation required on Linux, not an optional research item.** This adds a web application to the Chromurgy server-first architecture. It does not replace roll ingestion, the same C film engine, or offline CHDK development. See [28 UI](28-web-darkroom-ui.md), [29 PhotoPrism](29-photoprism-source-and-destination.md), [30 RAW](30-web-raw-ingest.md), [31 Jobs](31-web-previews-and-jobs.md), [32 Publishing](32-web-publication.md), [33 Security](33-web-security-deployment.md), [34 Delivery](34-web-implementation-and-acceptance.md).
 
 ## Scope and defining user journey
 

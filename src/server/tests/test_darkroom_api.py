@@ -252,7 +252,7 @@ def test_favicon_and_icons_served(client):
 
     r_manifest = client.get("/darkroom/static/site.webmanifest")
     assert r_manifest.status_code == 200
-    assert "M-Film Darkroom" in r_manifest.text
+    assert "Chromurgy Darkroom" in r_manifest.text
 
 
 def test_operator_presets_roundtrip(logged, client):

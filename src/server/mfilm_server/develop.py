@@ -214,7 +214,7 @@ def write_jpeg(img: np.ndarray, out: Path, quality: int, comment: str, captured_
     icc = srgb_icc()
     im = Image.fromarray(px, "RGB")
     exif = Image.Exif()
-    exif[0x0131] = "M-Film CHDK Edition (mfilm-develop)"     # Software
+    exif[0x0131] = "Chromurgy Digital Darkroom (chromurgy-develop)"     # Software
     exif[0x010E] = comment                                    # ImageDescription
     if captured_at:                                           # so PhotoPrism dates the frame as shot
         try:

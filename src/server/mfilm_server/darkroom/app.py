@@ -54,7 +54,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
             lane["l"].close()
 
     lane: dict[str, preview.PreviewLane] = {}
-    app = FastAPI(title="M-Film Web Darkroom", version="0.5-draft", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app = FastAPI(title="Chromurgy Web Darkroom", version="0.7-draft", docs_url=None, redoc_url=None, lifespan=lifespan)
     c0 = db.connect(store.db_path)
     db.migrate(c0)
     c0.close()

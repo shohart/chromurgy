@@ -1,7 +1,7 @@
 [project]
-name = "mfilm-server"
-version = "0.0.1"
-description = "M-Film CHDK Edition: Linux receiver, archive and SD importer (server-first developer)"
+name = "chromurgy"
+version = "0.7.0"
+description = "Chromurgy: An open-source digital darkroom for RAW development, film emulation and computational photography"
 license = { text = "GPL-2.0-only" }
 requires-python = ">=3.11"
 dependencies = ["jsonschema>=4.20", "numpy>=1.26", "rawpy>=0.21", "pillow>=10", "fastapi>=0.110", "uvicorn>=0.29"]
@@ -12,6 +12,9 @@ tools = ["numpy>=2.4,<3"]
 calib = ["scipy>=1.11", "opencv-python-headless>=4.8"]   # tools/fit_lens.py only
 
 [project.scripts]
+chromurgy-web = "mfilm_server.darkroom.app:main"
+chromurgy-develop = "mfilm_server.develop:main"
+chromurgyctl = "mfilm_server.cli:main"
 mfilmctl = "mfilm_server.cli:main"
 mfilm-develop = "mfilm_server.develop:main"
 mfilm-receiver = "mfilm_server.api:main"

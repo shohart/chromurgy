@@ -1,5 +1,6 @@
 # 17 — Glossary and Stable Terms
 
+- **Chromurgy** — (from *Chroma* [color] + *-urgy* [craft / transmutation, as in metallurgy or thaumaturgy]) The open-source digital darkroom platform for RAW development, film emulation, camera sensor reproduction, optical simulation, and computational photography.
 - **Original** — unchanged DNG/RAW from the camera; never a Canon JPEG proxy or a resized preview.
 - **Stock Canon JPEG** — native JPEG the Canon firmware may create alongside CHDK RAW. It must not be shown as a developed film image.
 - **Roll** — immutable group of intended exposures sharing one profile and roll ID, sealed before batch processing.

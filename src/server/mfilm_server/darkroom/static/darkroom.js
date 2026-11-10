@@ -1,5 +1,5 @@
 "use strict";
-/* M-Film Web Darkroom UI. All text goes through textContent: file names and metadata are untrusted. */
+/* Chromurgy Web Darkroom UI. All text goes through textContent: file names and metadata are untrusted. */
 const API = "/api/v1/darkroom";
 const $ = (s, r = document) => r.querySelector(s);
 function h(tag, attrs = {}, ...kids) {
@@ -358,7 +358,7 @@ async function boot() {
   const left = h("div", { class: "pane-left", id: "leftPane" },
     step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
-    step(3, "Film stock", `${S.catalog.films.length} profiles from the shared M-Film engine`, filmPanel()),
+    step(3, "Film stock", `${S.catalog.films.length} profiles from the shared film engine`, filmPanel()),
     step(4, "Optical effects", "presets, bundles and individual operators", opticsPanel()),
     step(5, "My presets", "the whole setting — look, film, optics, adjustments — saved under a name", presetsPanel()));
   const tabBtnAdj = h("button", { id: "tab_btn_adjust", role: "tab", "aria-selected": "true", onclick: () => switchRightTab("adjust_dev") }, "✦ Adjust & Develop");
@@ -389,7 +389,7 @@ function materialPanel() {
     for (const b of ev.target.parentNode.children) b.setAttribute("aria-selected", String(b === ev.target));
     panes.forEach(x => { x.hidden = x !== pane; });
     if (pane === ppPane) ppInit(); if (pane === rollPane) rollsInit(); } }, label);
-  const tabs = h("div", { class: "tabs", role: "tablist" }, mk("Upload RAW", upPane, true), mk("PhotoPrism", ppPane), mk("M-Film rolls", rollPane));
+  const tabs = h("div", { class: "tabs", role: "tablist" }, mk("Upload RAW", upPane, true), mk("PhotoPrism", ppPane), mk("Camera rolls", rollPane));
   return h("div", {}, tabs, upPane, ppPane, rollPane,
     h("div", { class: "bar", style: "flex-wrap:wrap;gap:.4rem;align-items:center" },
       h("button", { onclick: () => selectAll(true) }, "Select all"),
@@ -438,7 +438,7 @@ function rollPaneEl() {
     h("div", { class: "cards", id: "rolllist" }));
 }
 async function rollsInit() {
-  await withLoading("Loading M-Film rolls…", "Reading archived camera rolls from the server…", async () => {
+  await withLoading("Loading camera rolls…", "Reading archived camera rolls from the server…", async () => {
     try {
       const r = await api("/rolls");
       rawRolls = r.items || [];
@@ -912,7 +912,7 @@ function renderAssets() {
   if (rest) { rest.hidden = !(S.assets.length === 0 && S.allSourceCount > 0); rest.textContent = `Restore ${S.allSourceCount} archived`; }
   $("#selcount").textContent = S.assets.length
     ? `${S.selected.size} of ${S.assets.length} selected for Develop · click a frame to preview it, tick to include it`
-    : "Workspace empty · choose RAWs from Upload, PhotoPrism or M-Film rolls";
+    : "Workspace empty · choose RAWs from Upload, PhotoPrism or Camera rolls";
   updateDevelop();
 }
 async function loadThumb(id, v = "0") {
@@ -1889,7 +1889,7 @@ function renderWb() {
   const sel = $("#wbsel"); if (!sel) return;
   const L = S.wbl || { builtin: [], imported: [] }, groups = {};
   L.builtin.forEach(p => (groups[p.group] = groups[p.group] || []).push(p));
-  sel.replaceChildren(h("option", { value: "daylight" }, "Daylight (M-Film default, decoder)"), h("option", { value: "as-shot" }, "As shot (camera)"), h("option", { value: "custom" }, "Custom Kelvin / tint…"),
+  sel.replaceChildren(h("option", { value: "daylight" }, "Daylight (standard, decoder)"), h("option", { value: "as-shot" }, "As shot (camera)"), h("option", { value: "custom" }, "Custom Kelvin / tint…"),
     ...(L.imported.length ? [h("optgroup", { label: "Imported" }, L.imported.map(p => h("option", { value: p.id }, `${p.name}${p.kelvin ? " · " + p.kelvin + " K" : ""}`)))] : []),
     ...Object.entries(groups).map(([g, ps]) => h("optgroup", { label: g }, ps.map(p => h("option", { value: p.id }, p.name)))));
   sel.value = S.wbSel;
@@ -2524,7 +2524,7 @@ function destPanel() {
     h("option", { value: "none" }, "Save on the server only (download later)"), h("option", { value: "pp" }, "Publish to PhotoPrism"));
   return h("div", { style: "margin-top:.7rem" }, h("label", { for: "dest" }, "Destination (independent of sources)"), mode,
     h("div", { id: "destbox", hidden: true, class: "grid2-compact", style: "margin-top:.55rem" },
-      h("div", {}, h("label", { for: "dfolder" }, "Output folder under originals (blank = managed default)"), h("input", { type: "text", id: "dfolder", placeholder: "M-Film/Developed/<year>/<job>" })),
+      h("div", {}, h("label", { for: "dfolder" }, "Output folder under originals (blank = managed default)"), h("input", { type: "text", id: "dfolder", placeholder: "Chromurgy/Developed/<year>/<job>" })),
       h("div", {}, h("label", { for: "dalbum" }, "Album"), h("select", { id: "dalbum" }, h("option", { value: "" }, "No album")),
         h("input", { type: "text", id: "dnew", placeholder: "…or a new album name", style: "margin-top:.35rem" }))));
 }

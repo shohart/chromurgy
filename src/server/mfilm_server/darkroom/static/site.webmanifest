@@ -1,6 +1,7 @@
 {
-  "name": "M-Film Darkroom",
-  "short_name": "Darkroom",
+  "name": "Chromurgy Darkroom",
+  "short_name": "Chromurgy",
+  "description": "An open-source digital darkroom for RAW development, film emulation and computational photography",
   "icons": [
     {
       "src": "/darkroom/static/favicon-32x32.png",

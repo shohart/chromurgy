@@ -65,10 +65,10 @@ BUILTIN: list[tuple[str, str, float, float, str, str]] = [
     ("nikon-shade-8000", "Shade 8000 K (Nikon preset)", 8000, 0, "Daylight", SRC_NIKON),
     ("red-shade-9000", "Deep shade (RED camera preset) 9000 K", 9000, 0, "Daylight", SRC_RED),
     ("blue-hour-12000", "Blue hour / clear blue sky 12000 K", 12000, 0, "Daylight", SRC_GUIDE),
-    ("look-warm", "Creative: warm (+600 K)", 6100, 0, "Creative", "M-Film Darkroom"),
-    ("look-cool", "Creative: cool (-600 K)", 4900, 0, "Creative", "M-Film Darkroom"),
-    ("look-magenta", "Creative: magenta push (+20 tint)", 5500, 20, "Creative", "M-Film Darkroom"),
-    ("look-green", "Creative: green push (-20 tint)", 5500, -20, "Creative", "M-Film Darkroom"),
+    ("look-warm", "Creative: warm (+600 K)", 6100, 0, "Creative", "Chromurgy"),
+    ("look-cool", "Creative: cool (-600 K)", 4900, 0, "Creative", "Chromurgy"),
+    ("look-magenta", "Creative: magenta push (+20 tint)", 5500, 20, "Creative", "Chromurgy"),
+    ("look-green", "Creative: green push (-20 tint)", 5500, -20, "Creative", "Chromurgy"),
 ]
 
 
