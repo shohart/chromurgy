@@ -237,6 +237,16 @@ MIGRATIONS: list[str] = [
         updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     )
     """,
+    # 9: creative color grade user presets
+    """
+    CREATE TABLE color_grade_presets (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        data        TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    )
+    """,
 ]
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import copy
 import hashlib
 import json
 import os
@@ -26,7 +27,7 @@ from .. import core, db
 from ..bundles import Bundles
 from ..store import Store, UnsafePath, safe_id
 from . import wb as wbmod
-from . import auth, catalog, combos, cropping, engine, jobs, optics, pp_sources, preview, recipe2, rolls, sources
+from . import auth, catalog, combos, cropping, engine, grades, grades_catalog, jobs, optics, pp_sources, preview, recipe2, rolls, sources
 from . import photoprism as pp
 
 API = "/api/v1/darkroom"
@@ -1092,6 +1093,211 @@ def create_app(store: Store, cfg: config_mod.Config | None = None, config_path: 
         if not c.execute("DELETE FROM darkroom_presets WHERE id=?", (preset_id,)).rowcount:
             raise ApiError(404, "UNKNOWN_PRESET", preset_id)
         return {"deleted": preset_id}
+
+    # ---- Creative Color Grades (spec v1.1) -----------------------------------------------------
+    def _user_presets_map(c) -> dict[str, dict]:
+        try:
+            rows = c.execute("SELECT id, data FROM color_grade_presets").fetchall()
+            return {r["id"]: json.loads(r["data"]) for r in rows}
+        except Exception:
+            return {}
+
+    @app.get(f"{API}/color-grades")
+    @app.get("/api/v1/color-grades")
+    def list_color_grades(tag: str | None = None, category: str | None = None, q: str | None = None,
+                          _t: str = Depends(session), c=Depends(conn)):
+        builtins = grades_catalog.list_presets(tag=tag, category=category, query=q)
+        user_p = []
+        for p in _user_presets_map(c).values():
+            if not p.get("enabled", True):
+                continue
+            if category and p.get("category", "").lower() != category.lower():
+                continue
+            if tag and not any(t.lower() == tag.lower() for t in p.get("tags", [])):
+                continue
+            if q:
+                ql = q.lower()
+                if not (ql in p["name"].lower() or ql in p.get("description", "").lower() or any(ql in t.lower() for t in p.get("tags", []))):
+                    continue
+            user_p.append(p)
+        return {"items": builtins + user_p}
+
+    @app.get(f"{API}/color-grades/{{preset_id}}")
+    @app.get("/api/v1/color-grades/{{preset_id}}")
+    def get_color_grade(preset_id: str, _t: str = Depends(session), c=Depends(conn)):
+        p = grades_catalog.get_preset(preset_id) or _user_presets_map(c).get(preset_id)
+        if not p:
+            raise ApiError(404, "UNKNOWN_COLOR_GRADE", f"preset {preset_id!r} not found")
+        return p
+
+    @app.post(f"{API}/color-grades", status_code=201)
+    @app.post("/api/v1/color-grades", status_code=201)
+    async def create_user_color_grade(request: Request, _t: str = Depends(session), c=Depends(conn)):
+        body = json.loads(await request.body())
+        schema = json.loads((core.REPO / "contracts" / "creative-color-grade.schema.json").read_text())
+        import jsonschema
+        try:
+            jsonschema.validate(body, schema)
+        except jsonschema.ValidationError as e:
+            raise ApiError(422, "INVALID_PRESET", e.message) from None
+        pid = body["id"]
+        if grades_catalog.get_preset(pid):
+            raise ApiError(409, "PRESET_EXISTS", f"cannot overwrite built-in preset {pid}")
+        blob = json.dumps(body)
+        c.execute("INSERT OR REPLACE INTO color_grade_presets(id, name, data, updated_at) VALUES (?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                  (pid, body["name"], blob))
+        return body
+
+    @app.put(f"{API}/color-grades/{{preset_id}}")
+    @app.put("/api/v1/color-grades/{{preset_id}}")
+    async def update_user_color_grade(preset_id: str, request: Request, _t: str = Depends(session), c=Depends(conn)):
+        if grades_catalog.get_preset(preset_id):
+            raise ApiError(403, "BUILTIN_PRESET_READONLY", "built-in presets cannot be modified")
+        body = json.loads(await request.body())
+        schema = json.loads((core.REPO / "contracts" / "creative-color-grade.schema.json").read_text())
+        import jsonschema
+        try:
+            jsonschema.validate(body, schema)
+        except jsonschema.ValidationError as e:
+            raise ApiError(422, "INVALID_PRESET", e.message) from None
+        blob = json.dumps(body)
+        if not c.execute("UPDATE color_grade_presets SET name=?, data=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+                         (body["name"], blob, preset_id)).rowcount:
+            raise ApiError(404, "UNKNOWN_COLOR_GRADE", preset_id)
+        return body
+
+    @app.delete(f"{API}/color-grades/{{preset_id}}")
+    @app.delete("/api/v1/color-grades/{{preset_id}}")
+    def delete_user_color_grade(preset_id: str, _t: str = Depends(session), c=Depends(conn)):
+        if grades_catalog.get_preset(preset_id):
+            raise ApiError(403, "BUILTIN_PRESET_READONLY", "built-in presets cannot be deleted")
+        if not c.execute("DELETE FROM color_grade_presets WHERE id=?", (preset_id,)).rowcount:
+            raise ApiError(404, "UNKNOWN_COLOR_GRADE", preset_id)
+        return {"deleted": preset_id}
+
+    @app.post(f"{API}/color-grades/duplicate/{{preset_id}}", status_code=201)
+    @app.post("/api/v1/color-grades/duplicate/{{preset_id}}", status_code=201)
+    def duplicate_color_grade(preset_id: str, _t: str = Depends(session), c=Depends(conn)):
+        base = grades_catalog.get_preset(preset_id) or _user_presets_map(c).get(preset_id)
+        if not base:
+            raise ApiError(404, "UNKNOWN_COLOR_GRADE", preset_id)
+        dup = copy.deepcopy(base)
+        new_id = f"{preset_id}-copy-{uuid.uuid4().hex[:6]}"
+        dup["id"] = new_id
+        dup["name"] = f"{base['name']} (Copy)"
+        dup["provenance"] = {"classification": "original", "notes": f"Cloned from {base['name']}"}
+        blob = json.dumps(dup)
+        c.execute("INSERT INTO color_grade_presets(id, name, data) VALUES (?,?,?)", (new_id, dup["name"], blob))
+        return dup
+
+    @app.get(f"{API}/jobs/{{job_id}}/creative-color-grades")
+    @app.get("/api/v1/jobs/{{job_id}}/creative-color-grades")
+    def job_color_grades(job_id: str, _t: str = Depends(session), c=Depends(conn)):
+        jid = job_id_ok(job_id)
+        row = c.execute("SELECT recipe FROM darkroom_jobs WHERE id=?", (jid,)).fetchone()
+        if not row:
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        rec = json.loads(row["recipe"])
+        return {
+            "job_id": jid,
+            "creative_color_grade": rec.get("creative_color_grade", {"mode": "none"}),
+            "frame_color_grade_overrides": rec.get("frame_color_grade_overrides", {}),
+            "revision": 0,
+        }
+
+    @app.patch(f"{API}/jobs/{{job_id}}/creative-color-grade")
+    @app.patch("/api/v1/jobs/{{job_id}}/creative-color-grade")
+    async def patch_job_color_grade(job_id: str, request: Request, _t: str = Depends(session), c=Depends(conn)):
+        jid = job_id_ok(job_id)
+        row = c.execute("SELECT recipe, request FROM darkroom_jobs WHERE id=?", (jid,)).fetchone()
+        if not row:
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        body = json.loads(await request.body())
+        preserve = body.get("preserve_frame_overrides", True)
+        global_sel = body.get("creative_color_grade") or body
+        rec = json.loads(row["recipe"])
+        req = json.loads(row["request"])
+        if global_sel.get("mode") == "none":
+            rec["creative_color_grade"] = {"mode": "none"}
+        elif global_sel.get("mode") == "preset":
+            rec["creative_color_grade"] = {
+                "mode": "preset",
+                "preset_id": global_sel["preset_id"],
+                "preset_version": global_sel.get("preset_version", "1.0.0"),
+                "overrides": global_sel.get("overrides", {}),
+            }
+        if not preserve:
+            rec.pop("frame_color_grade_overrides", None)
+            for a in req.get("source", {}).get("assets", []):
+                a.pop("creative_color_grade", None)
+        req["recipe"] = rec
+        c.execute("UPDATE darkroom_jobs SET recipe=?, request=? WHERE id=?",
+                  (json.dumps(rec, sort_keys=True), json.dumps(req, sort_keys=True), jid))
+        return {
+            "job_id": jid,
+            "creative_color_grade": rec.get("creative_color_grade"),
+            "frame_color_grade_overrides": rec.get("frame_color_grade_overrides", {}),
+        }
+
+    @app.put(f"{API}/jobs/{{job_id}}/frames/{{frame_id}}/creative-color-grade")
+    @app.put("/api/v1/jobs/{{job_id}}/frames/{{frame_id}}/creative-color-grade")
+    async def put_frame_color_grade(job_id: str, frame_id: str, request: Request, _t: str = Depends(session), c=Depends(conn)):
+        jid = job_id_ok(job_id)
+        row = c.execute("SELECT recipe, request FROM darkroom_jobs WHERE id=?", (jid,)).fetchone()
+        if not row:
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        body = json.loads(await request.body())
+        mode = body.get("mode")
+        if mode not in ("preset", "none"):
+            raise ApiError(422, "INVALID_OVERRIDE", "mode must be 'preset' or 'none'")
+        rec = json.loads(row["recipe"])
+        req = json.loads(row["request"])
+        fcos = rec.setdefault("frame_color_grade_overrides", {})
+        if mode == "none":
+            override = {"mode": "none"}
+        else:
+            override = {
+                "mode": "preset",
+                "preset_id": body["preset_id"],
+                "preset_version": body.get("preset_version", "1.0.0"),
+                "overrides": body.get("overrides", {}),
+            }
+        fcos[frame_id] = override
+        for a in req.get("source", {}).get("assets", []):
+            if a.get("asset_id") == frame_id:
+                a["creative_color_grade"] = override
+        c.execute("UPDATE darkroom_jobs SET recipe=?, request=? WHERE id=?",
+                  (json.dumps(rec, sort_keys=True), json.dumps(req, sort_keys=True), jid))
+        return grades.effective_grade_summary(rec.get("creative_color_grade"), fcos, frame_id, user_presets=_user_presets_map(c))
+
+    @app.delete(f"{API}/jobs/{{job_id}}/frames/{{frame_id}}/creative-color-grade")
+    @app.delete("/api/v1/jobs/{{job_id}}/frames/{{frame_id}}/creative-color-grade")
+    def delete_frame_color_grade(job_id: str, frame_id: str, _t: str = Depends(session), c=Depends(conn)):
+        jid = job_id_ok(job_id)
+        row = c.execute("SELECT recipe, request FROM darkroom_jobs WHERE id=?", (jid,)).fetchone()
+        if not row:
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        rec = json.loads(row["recipe"])
+        req = json.loads(row["request"])
+        fcos = rec.get("frame_color_grade_overrides", {})
+        fcos.pop(frame_id, None)
+        for a in req.get("source", {}).get("assets", []):
+            if a.get("asset_id") == frame_id:
+                a.pop("creative_color_grade", None)
+        c.execute("UPDATE darkroom_jobs SET recipe=?, request=? WHERE id=?",
+                  (json.dumps(rec, sort_keys=True), json.dumps(req, sort_keys=True), jid))
+        return grades.effective_grade_summary(rec.get("creative_color_grade"), fcos, frame_id, user_presets=_user_presets_map(c))
+
+    @app.get(f"{API}/jobs/{{job_id}}/frames/{{frame_id}}/creative-color-grade/effective")
+    @app.get("/api/v1/jobs/{{job_id}}/frames/{{frame_id}}/creative-color-grade/effective")
+    def get_effective_frame_color_grade(job_id: str, frame_id: str, _t: str = Depends(session), c=Depends(conn)):
+        jid = job_id_ok(job_id)
+        row = c.execute("SELECT recipe FROM darkroom_jobs WHERE id=?", (jid,)).fetchone()
+        if not row:
+            raise ApiError(404, "UNKNOWN_JOB", job_id)
+        rec = json.loads(row["recipe"])
+        fcos = rec.get("frame_color_grade_overrides", {})
+        return grades.effective_grade_summary(rec.get("creative_color_grade"), fcos, frame_id, user_presets=_user_presets_map(c))
 
     @app.get(f"{API}/jobs/{{job_id}}/zip")
     def job_zip(job_id: str, _t: str = Depends(session), c=Depends(conn)):

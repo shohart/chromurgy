@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mfilm.local/schemas/frame-color-grade-overrides.schema.json",
+  "title": "M-Film Creative Color Grade: Batch Selection and Per-Frame Overrides",
+  "type": "object",
+  "required": ["schema_version", "batch_id", "creative_color_grade", "frame_color_grade_overrides"],
+  "properties": {
+    "schema_version": {"const": "render-recipe-v2"},
+    "batch_id": {"type": "string", "minLength": 1},
+    "creative_color_grade": {"$ref": "#/$defs/selection"},
+    "frame_color_grade_overrides": {
+      "type": "object",
+      "description": "Sparse override map keyed by immutable frame ID. Absence means inherit the global selection.",
+      "propertyNames": {"minLength": 1},
+      "additionalProperties": {"$ref": "#/$defs/frame_override"}
+    },
+    "revision": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "none": {
+      "type": "object", "required": ["mode"],
+      "properties": {"mode": {"const": "none"}}, "additionalProperties": false
+    },
+    "preset": {
+      "type": "object", "required": ["mode", "preset_id", "preset_version"],
+      "properties": {
+        "mode": {"const": "preset"},
+        "preset_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "preset_version": {"type": "string", "minLength": 1},
+        "overrides": {"type": "object"}
+      }, "additionalProperties": false
+    },
+    "selection": {"oneOf": [ {"$ref": "#/$defs/none"}, {"$ref": "#/$defs/preset"} ]},
+    "frame_override": {"oneOf": [ {"$ref": "#/$defs/none"}, {"$ref": "#/$defs/preset"} ]}
+  }
+}

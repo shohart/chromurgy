@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from .. import core
-from . import creative, optics
+from . import creative, grades_catalog, optics
 from . import optical_registry as reg
 from .creative_params import EFFECTS as _FX
 from .creative_params import LOOKS as _LOOKS
@@ -129,5 +129,6 @@ def build(bundle: core.Bundle) -> dict:
                             {"id": "golden_haze", "name": "Golden Haze (composite)", "supported": "golden_haze" in SUPPORTED_EFFECTS},
                             {"id": "vintage_glass", "name": "Vintage Glass (compound: barrel + CA + edge softness + vignette)",
                              "supported": True, "expands_to": [e for e, _ in creative.PRESETS["vintage_glass"]]}],
+        "color_grades": grades_catalog.CATALOG_PRESETS,
         "output": {"formats": ["jpeg"], "color_spaces": ["srgb"], "quality": [1, 100]},
     }

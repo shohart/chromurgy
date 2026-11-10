@@ -78,8 +78,25 @@ const S = { catalog: null, assets: [], allSourceCount: 0, selected: new Set(), c
   adjustments: JSON.parse(localStorage.getItem("mfilm.adjustments") || "{}"),
   crops: JSON.parse(localStorage.getItem("mfilm.crops") || "{}"),
   rotates: JSON.parse(localStorage.getItem("mfilm.rotates") || "{}"), rotOpen: false,
+  colorGrade: JSON.parse(localStorage.getItem("mfilm.color_grade") || '{"mode":"none"}'),
+  colorGradeFilter: "",
+  colorGradeQuery: "",
+  frameGradeOverrides: JSON.parse(localStorage.getItem("mfilm.frame_grades") || "{}"),
   aspect: "free", cropMode: false, cropRect: null, cropImg: null };
-const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "My presets"];
+const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Color grades", "My presets"];
+
+function saveColorGrade() {
+  try { localStorage.setItem("mfilm.color_grade", JSON.stringify(S.colorGrade)); } catch (e) {}
+}
+function saveFrameGrades() {
+  try { localStorage.setItem("mfilm.frame_grades", JSON.stringify(S.frameGradeOverrides)); } catch (e) {}
+}
+function getEffectiveFrameGrade(id) {
+  if (id && S.frameGradeOverrides && S.frameGradeOverrides[id]) {
+    return { scope: "individual", ...S.frameGradeOverrides[id] };
+  }
+  return { scope: "inherited", ...(S.colorGrade || { mode: "none" }) };
+}
 
 function saveDismissed() {
   try { localStorage.setItem("mfilm.dismissed", JSON.stringify([...S.dismissed])); } catch (e) {}
@@ -230,6 +247,17 @@ function recipe(withCrop = true) {
     render: { output_format: "jpeg", output_color_space: "srgb", quality: S.quality },
     seed: S.seed, extensions: { white_balance: S.wbSel === "as-shot" ? "as-shot" : "daylight" } };
   if (S.comboPreset) r.preset_id = S.comboPreset;
+  const effGrade = getEffectiveFrameGrade(S.current);
+  if (effGrade && effGrade.mode === "preset") {
+    r.creative_color_grade = {
+      mode: "preset",
+      preset_id: effGrade.preset_id,
+      preset_version: effGrade.preset_version || "1.0.0",
+      overrides: effGrade.overrides || {},
+    };
+  } else if (effGrade && effGrade.mode === "none") {
+    r.creative_color_grade = { mode: "none" };
+  }
   const tn = toneExt(); if (Object.keys(tn).length) r.extensions.tone = tn;
   const wp = wbExt(); if (wp) r.extensions.wb_profile = wp;
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
@@ -245,6 +273,19 @@ function baseJobRecipe() {
     render: { output_format: "jpeg", output_color_space: "srgb", quality: S.quality },
     seed: S.seed, extensions: { white_balance: S.baseWbSel === "as-shot" ? "as-shot" : "daylight" } };
   if (S.comboPreset) r.preset_id = S.comboPreset;
+  if (S.colorGrade && S.colorGrade.mode === "preset") {
+    r.creative_color_grade = {
+      mode: "preset",
+      preset_id: S.colorGrade.preset_id,
+      preset_version: S.colorGrade.preset_version || "1.0.0",
+      overrides: S.colorGrade.overrides || {},
+    };
+  } else {
+    r.creative_color_grade = { mode: "none" };
+  }
+  if (S.frameGradeOverrides && Object.keys(S.frameGradeOverrides).length) {
+    r.frame_color_grade_overrides = { ...S.frameGradeOverrides };
+  }
   const tn = frameToneExt(S.baseTone); if (Object.keys(tn).length) r.extensions.tone = tn;
   const wp = frameWbExt(S.baseWbSel, S.baseWbCustom); if (wp) r.extensions.wb_profile = wp;
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
@@ -540,7 +581,7 @@ function expandStep(n) {
 }
 
 function step(n, title, hint, ...body) {
-  const isCollapsible = n >= 1 && n <= 5;
+  const isCollapsible = n >= 1 && n <= 6;
   if (!isCollapsible) {
     return h("section", { class: "step", id: "s" + n },
       h("h2", {}, h("span", { class: "n" }, n), title, hint ? h("span", { class: "hint" }, hint) : null),
@@ -588,7 +629,8 @@ async function boot() {
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared film engine`, filmPanel()),
     step(4, "Optical effects", "presets, bundles and individual operators", opticsPanel()),
-    step(5, "My presets", "the whole setting — look, film, optics, adjustments — saved under a name", presetsPanel()));
+    step(5, "Creative Color Grades", "VSCO, Instagram Classics, and finishing grades", gradesPanel()),
+    step(6, "My presets", "the whole setting — look, film, optics, adjustments — saved under a name", presetsPanel()));
   const tabBtnAdj = h("button", { id: "tab_btn_adjust", role: "tab", "aria-selected": "true", onclick: () => switchRightTab("adjust_dev") }, "✦ Adjust & Develop");
   const tabBtnJobs = h("button", { id: "tab_btn_jobs", role: "tab", "aria-selected": "false", onclick: () => switchRightTab("jobs") }, "⚙ Jobs & History");
   const rightTabs = h("div", { class: "right-tabs", role: "tablist" }, tabBtnAdj, tabBtnJobs);
@@ -599,7 +641,7 @@ async function boot() {
     jobsPanel()
   );
   const right = h("div", { class: "pane-right", id: "rightPane" },
-    step(6, "Preview, develop", "",
+    step(7, "Preview, develop", "",
       h("div", { class: "pv-pin" }, previewPanel()),
       rightTabs,
       paneAdjust,
@@ -1126,7 +1168,7 @@ function renderAssets() {
     const el = h("div", { class: "asset" + (S.current === a.asset_id ? " cur" : ""), role: "button", tabindex: "0", "aria-pressed": String(sel),
       title: "Click: show in the preview · tick: include in Develop · ×: remove from workspace" },
       th, h("span", { class: "tick", title: "Include in Develop" }, sel ? "✓" : ""), rmBtn,
-      h("div", { class: "meta" }, h("b", {}, a.filename, S.crops[a.asset_id] ? " ✂" : "", rot ? ` ⟳${rot}°` : "", S.adjustments[a.asset_id] ? " 🎛" : ""), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
+      h("div", { class: "meta" }, h("b", {}, a.filename, S.crops[a.asset_id] ? " ✂" : "", rot ? ` ⟳${rot}°` : "", S.adjustments[a.asset_id] ? " 🎛" : "", (S.frameGradeOverrides && S.frameGradeOverrides[a.asset_id]) ? " ✦" : ""), [m.model, m.width && `${m.width}×${m.height}`, m.iso && `ISO ${m.iso}`].filter(Boolean).join(" · "),
         (m.warnings || []).length ? h("span", { class: "err" }, " ⚠ " + m.warnings[0]) : null));
     const toggle = () => { sel ? S.selected.delete(a.asset_id) : S.selected.add(a.asset_id); renderAssets(); updateDevelop(); };
     el.addEventListener("click", ev => { if (ev.target.classList.contains("tick")) toggle(); else { if (S.cropMode && a.asset_id !== S.current) endCrop(false); setCurrent(a.asset_id); } });
@@ -1875,7 +1917,7 @@ function renderFx() {
   renderFxWarnings();
 }
 function syncControls() {
-  renderLooks(); renderFilms(); renderFx();
+  renderLooks(); renderFilms(); renderFx(); renderGrades(); renderFrameGrade();
   if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; }
   if ($("#fxstrength")) { $("#fxstrength").value = Math.round(S.fxStrength * 100); $("#fxv").textContent = S.fxStrength.toFixed(2); }
   ["grain", "halation", "softness"].forEach(k => {
@@ -1949,6 +1991,241 @@ function presetSummary(st) {
     t.filter && t.filter !== "none" ? t.filter : ""].filter(Boolean);
   return [look, film, fx, ...adj].join(" · ");
 }
+/* ---------------- step 5: creative color grades ---------------- */
+function gradesPanel() {
+  const tagList = [
+    { id: "", label: "All grades" },
+    { id: "VSCO", label: "VSCO" },
+    { id: "Instagram Classics", label: "Instagram Classics" },
+    { id: "Matte", label: "Matte" },
+    { id: "Vintage", label: "Vintage" },
+    { id: "Portrait", label: "Portrait" },
+    { id: "Editorial", label: "Editorial" },
+    { id: "Pastel", label: "Pastel" },
+    { id: "Cinematic", label: "Cinematic" },
+    { id: "Moody", label: "Moody" },
+    { id: "Warm", label: "Warm" },
+    { id: "Cool", label: "Cool" },
+    { id: "Earthy", label: "Earthy" },
+    { id: "Faded", label: "Faded" },
+    { id: "Monochrome", label: "Monochrome" }
+  ];
+
+  const chips = h("div", { class: "chips", id: "gradechips", style: "margin-bottom:.6rem;flex-wrap:wrap;gap:.35rem" },
+    ...tagList.map(t => h("button", {
+      type: "button",
+      class: "combo-chip",
+      "data-tag": t.id,
+      "aria-pressed": String((t.id === "" && !S.colorGradeFilter) || (S.colorGradeFilter === t.id)),
+      onclick: () => { S.colorGradeFilter = t.id; gradeChipsSync(); renderGrades(); }
+    }, t.label))
+  );
+
+  const search = h("input", {
+    type: "search",
+    id: "gradesearch",
+    placeholder: "Search color grades (name, style, category)...",
+    style: "margin-bottom:.6rem;width:100%",
+    oninput: e => { S.colorGradeQuery = e.target.value.toLowerCase().trim(); renderGrades(); }
+  });
+
+  const cardsContainer = h("div", { class: "cards", id: "gradecards" });
+  const overridesBar = h("div", { id: "grade_overrides_bar", style: "margin-top:.5rem;font-size:.78rem", class: "dim" });
+
+  return h("div", {}, chips, search, overridesBar, cardsContainer);
+}
+
+function gradeChipsSync() {
+  const container = $("#gradechips");
+  if (!container) return;
+  for (const b of container.querySelectorAll("button[data-tag]")) {
+    const t = b.getAttribute("data-tag");
+    b.setAttribute("aria-pressed", String((t === "" && !S.colorGradeFilter) || (S.colorGradeFilter === t)));
+  }
+}
+
+function renderGrades() {
+  const box = $("#gradecards");
+  if (!box || !S.catalog || !S.catalog.color_grades) return;
+
+  const overridesCount = S.frameGradeOverrides ? Object.keys(S.frameGradeOverrides).length : 0;
+  const obar = $("#grade_overrides_bar");
+  if (obar) {
+    if (overridesCount > 0) {
+      obar.replaceChildren(
+        h("span", {}, `Batch default applies to inheriting frames. ${overridesCount} frame(s) have individual overrides. `),
+        h("button", { class: "ghost compact", style: "font-size:.72rem;padding:.15rem .4rem", onclick: resetAllFrameGradeOverrides }, "Reset all frame overrides")
+      );
+    } else {
+      obar.replaceChildren();
+    }
+  }
+
+  const query = (S.colorGradeQuery || "").toLowerCase();
+  const filterTag = (S.colorGradeFilter || "").toLowerCase();
+
+  const presets = S.catalog.color_grades.filter(p => {
+    if (filterTag && !p.tags.some(t => t.toLowerCase() === filterTag)) return false;
+    if (query) {
+      const match = p.name.toLowerCase().includes(query) ||
+                    (p.description || "").toLowerCase().includes(query) ||
+                    (p.category || "").toLowerCase().includes(query) ||
+                    p.tags.some(t => t.toLowerCase().includes(query));
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  const isGlobalNone = !S.colorGrade || S.colorGrade.mode === "none";
+  const noneCard = h("button", {
+    type: "button",
+    class: "card" + (isGlobalNone ? " on" : ""),
+    "aria-pressed": String(isGlobalNone),
+    onclick: () => {
+      S.colorGrade = { mode: "none" };
+      saveColorGrade();
+      renderGrades();
+      renderFrameGrade();
+      schedulePreview(true);
+    }
+  },
+    h("strong", {}, "None"),
+    h("small", { class: "dim" }, "No creative color grade (natural camera look / film stock)")
+  );
+
+  const presetCards = presets.map(p => {
+    const isSelected = S.colorGrade && S.colorGrade.mode === "preset" && S.colorGrade.preset_id === p.id;
+    const tagSpans = (p.tags || []).map(t => h("span", { class: "tag", style: "margin-right:.25rem" }, t));
+    const provClassification = p.provenance ? p.provenance.classification : "";
+
+    return h("button", {
+      type: "button",
+      class: "card" + (isSelected ? " on" : ""),
+      "aria-pressed": String(isSelected),
+      onclick: () => {
+        S.colorGrade = {
+          mode: "preset",
+          preset_id: p.id,
+          preset_version: p.version || "1.0.0",
+          overrides: {}
+        };
+        saveColorGrade();
+        renderGrades();
+        renderFrameGrade();
+        schedulePreview(true);
+      }
+    },
+      h("strong", {}, p.name),
+      h("small", {}, p.description),
+      h("div", { style: "margin-top:.35rem" }, ...tagSpans),
+      provClassification ? h("small", { class: "dim", style: "display:block;margin-top:.2rem;font-size:.68rem" }, provClassification) : null
+    );
+  });
+
+  box.replaceChildren(noneCard, ...presetCards);
+}
+
+function resetAllFrameGradeOverrides() {
+  if (confirm("Reset all individual frame color grade overrides to inherit global?")) {
+    S.frameGradeOverrides = {};
+    saveFrameGrades();
+    renderAssets();
+    renderGrades();
+    renderFrameGrade();
+    schedulePreview(true);
+    toast("All frame grade overrides reset to global");
+  }
+}
+
+function renderFrameGrade() {
+  const sel = $("#framesel_grade");
+  if (!sel || !S.catalog || !S.catalog.color_grades) return;
+  const curId = S.current;
+  const globalMode = S.colorGrade ? S.colorGrade.mode : "none";
+  const globalPid = (globalMode === "preset" && S.colorGrade) ? S.colorGrade.preset_id : null;
+  const globalPreset = globalPid ? S.catalog.color_grades.find(x => x.id === globalPid) : null;
+  const globalName = globalPreset ? globalPreset.name : (globalMode === "none" ? "None" : globalPid);
+
+  const fo = curId && S.frameGradeOverrides ? S.frameGradeOverrides[curId] : null;
+  const isIndividual = !!fo;
+
+  // 1. Inherit option
+  const inheritLabel = `Use Global: ${globalName} — Inherited`;
+  const inheritOpt = h("option", { value: "__inherit__" }, inheritLabel);
+  // 2. None (this frame)
+  const noneOpt = h("option", { value: "__none__" }, "None (this frame)");
+  // 3. Preset groups
+  const presetOpts = S.catalog.color_grades.map(p => h("option", { value: p.id }, p.name));
+
+  sel.replaceChildren(
+    inheritOpt,
+    noneOpt,
+    h("optgroup", { label: "All Color Grades" }, ...presetOpts)
+  );
+
+  if (!isIndividual) {
+    sel.value = "__inherit__";
+  } else if (fo.mode === "none") {
+    sel.value = "__none__";
+  } else if (fo.mode === "preset") {
+    sel.value = fo.preset_id;
+  }
+
+  // Update UI tags
+  const indTag = $("#tag_individual_grade");
+  if (indTag) indTag.hidden = !isIndividual;
+  const resetBtn = $("#btn_reset_grade");
+  if (resetBtn) resetBtn.hidden = !isIndividual;
+
+  // Effective style tags
+  const eff = getEffectiveFrameGrade(curId);
+  const tagsBox = $("#grade_style_tags");
+  if (tagsBox) {
+    if (eff && eff.mode === "preset") {
+      const p = S.catalog.color_grades.find(x => x.id === eff.preset_id);
+      if (p && p.tags && p.tags.length) {
+        tagsBox.textContent = `Style tags: ${p.tags.join(" · ")}`;
+      } else {
+        tagsBox.textContent = "";
+      }
+    } else {
+      tagsBox.textContent = "No color grade applied to this frame";
+    }
+  }
+}
+
+function onFrameGradeChange(val) {
+  if (!S.current) return;
+  if (val === "__inherit__") {
+    resetFrameGrade();
+    return;
+  }
+  if (!S.frameGradeOverrides) S.frameGradeOverrides = {};
+  if (val === "__none__") {
+    S.frameGradeOverrides[S.current] = { mode: "none" };
+  } else {
+    S.frameGradeOverrides[S.current] = {
+      mode: "preset",
+      preset_id: val,
+      preset_version: "1.0.0",
+      overrides: {}
+    };
+  }
+  saveFrameGrades();
+  renderAssets();
+  renderFrameGrade();
+  schedulePreview(true);
+}
+
+function resetFrameGrade() {
+  if (!S.current || !S.frameGradeOverrides) return;
+  delete S.frameGradeOverrides[S.current];
+  saveFrameGrades();
+  renderAssets();
+  renderFrameGrade();
+  schedulePreview(true);
+}
+
 function presetsPanel() {
   const name = h("input", { type: "text", id: "presetname", maxlength: 80, placeholder: "Preset name, e.g. Autumn Portra soft", style: "flex:1 1 14rem",
     onkeydown: e => { if (e.key === "Enter") { e.preventDefault(); savePreset(); } } });
@@ -2222,6 +2499,12 @@ function adjustPanel() {
     h("option", { value: "none" }, "No filter"), h("option", { value: "grayscale" }, "Black & white (plain grayscale)"), h("option", { value: "silver" }, "Silver B&W film (grain, film curve)"), h("option", { value: "sepia" }, "Sepia"));
   const wbsel = h("select", { id: "wbsel", "aria-label": "White balance", onchange: e => { S.wbSel = e.target.value; S.wb = S.wbSel === "as-shot" ? "as-shot" : "daylight"; markFrameAdjusted(); renderWb(); schedulePreview(true); } });
   const file = h("input", { type: "file", id: "wbfile", multiple: true, hidden: true, accept: ".json,.csv,.xmp,.lrtemplate,.pp3", onchange: wbImport });
+
+  const gradeSel = h("select", { id: "framesel_grade", "aria-label": "Creative Color Grade", onchange: e => onFrameGradeChange(e.target.value) });
+  const gradeResetBtn = h("button", { id: "btn_reset_grade", class: "ghost compact", hidden: true, style: "font-size:.72rem;padding:.2rem .4rem;margin-left:.4rem", onclick: () => resetFrameGrade() }, "Reset to Global");
+  const gradeIndTag = h("span", { id: "tag_individual_grade", class: "tag", hidden: true, style: "background:var(--safe,#d86e3b);color:#fff;font-weight:600;padding:.12rem .35rem;border-radius:2px;font-size:.7rem;margin-left:.4rem" }, "Individual");
+  const gradeStyleTags = h("div", { id: "grade_style_tags", class: "dim", style: "font-size:.74rem;margin-top:.2rem" });
+
   return h("div", { class: "adjust-box" },
     h("h3", { class: "sub-head" }, "Adjustments ", h("small", { class: "dim" }, "· real-time in preview & full render")),
     h("div", { class: "adjust-stack" },
@@ -2239,6 +2522,14 @@ function adjustPanel() {
         slider("sl_kelvin", "Light colour temperature", 2000, 12000, 50, () => S.wbCustom.k, v => { S.wbCustom.k = v; markFrameAdjusted(); }, v => v + " K", 5500),
         slider("sl_tint", "Tint (− green · + magenta)", -100, 100, 1, () => S.wbCustom.t, v => { S.wbCustom.t = v; markFrameAdjusted(); }, v => (v > 0 ? "+" : "") + v, 0)),
       h("p", { class: "dim", id: "wbnote", style: "font:.68rem var(--mono);margin:.1rem 0 0" }),
+      h("div", { style: "margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--line)" },
+        h("div", { style: "display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.3rem" },
+          h("label", { for: "framesel_grade", style: "font-weight:600;display:flex;align-items:center" }, "Creative Color Grade", gradeIndTag),
+          gradeResetBtn
+        ),
+        h("div", { style: "margin-top:.25rem" }, gradeSel),
+        gradeStyleTags
+      ),
       h("div", { class: "bar compact", style: "margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--line)" },
         h("button", { onclick: resetAdjust, title: "Reset adjustments for this frame back to preset/defaults" }, "Reset adjustments"),
         h("button", { onclick: adjustAll, title: "Apply adjustments of this frame to all selected frames" }, "Apply to all selected"),
@@ -2295,6 +2586,8 @@ function adjustAll() {
 }
 function everythingOff() {
   S.look = "neutral"; S.fx.clear(); S.fxPreset = "none"; S.activePreset = null; S.policy = "film"; S.film = "none";
+  S.colorGrade = { mode: "none" }; saveColorGrade();
+  S.frameGradeOverrides = {}; saveFrameGrades();
   Object.assign(S.baseTone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 });
   S.baseWbSel = "daylight"; Object.assign(S.baseWbCustom, { k: 5500, t: 0 });
   resetAllFrameOverrides();
@@ -2924,6 +3217,9 @@ async function develop() {
       const item = { asset_id: a.asset_id };
       if (S.crops[a.asset_id]) item.crop = S.crops[a.asset_id];
       if (S.rotates[a.asset_id] && normDeg(S.rotates[a.asset_id])) item.rotate = normDeg(S.rotates[a.asset_id]);
+      if (S.frameGradeOverrides && S.frameGradeOverrides[a.asset_id]) {
+        item.creative_color_grade = S.frameGradeOverrides[a.asset_id];
+      }
       if (isAdjusted) {
         const tn = frameToneExt(tone);
         if (Object.keys(tn).length) item.tone = tn;

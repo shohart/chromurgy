@@ -312,6 +312,53 @@
    "type": "integer",
    "minimum": 0
   },
+  "creative_color_grade": {
+   "oneOf": [
+    {
+     "type": "object",
+     "required": ["mode"],
+     "properties": {"mode": {"const": "none"}},
+     "additionalProperties": false
+    },
+    {
+     "type": "object",
+     "required": ["mode", "preset_id"],
+     "properties": {
+      "mode": {"const": "preset"},
+      "preset_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+      "preset_version": {"type": "string", "minLength": 1},
+      "overrides": {"type": "object"}
+     },
+     "additionalProperties": false
+    }
+   ]
+  },
+  "frame_color_grade_overrides": {
+   "type": "object",
+   "description": "Sparse override map keyed by immutable frame ID. Absence means inherit the global selection.",
+   "propertyNames": {"minLength": 1},
+   "additionalProperties": {
+    "oneOf": [
+     {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {"mode": {"const": "none"}},
+      "additionalProperties": false
+     },
+     {
+      "type": "object",
+      "required": ["mode", "preset_id"],
+      "properties": {
+       "mode": {"const": "preset"},
+       "preset_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+       "preset_version": {"type": "string", "minLength": 1},
+       "overrides": {"type": "object"}
+      },
+      "additionalProperties": false
+     }
+    ]
+   }
+  },
   "extensions": {
    "type": "object",
    "additionalProperties": true

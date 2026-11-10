@@ -165,7 +165,12 @@ def _render(job: dict) -> dict:
         img = tone.apply_post_tone(base_img, neutral, ev=ev_post, contrast=float(t.get("contrast", 0.0)),
                                    develop_strength=s, filter_name=t.get("filter", "none"),
                                    filter_strength=float(t.get("filter_strength", 1.0)), seed=seed)
+        if v1.get("color_grade"):
+            from . import grades
+            img = grades.apply_grade(img, v1["color_grade"])
         info = {"scanner_ev": None if scanner is None else round(scanner, 4)}
+        if v1.get("color_grade"):
+            info["effective_grade"] = v1["color_grade"].get("id")
         if report:
             info["optics_sources"] = report
     meta = {"width": int(img.shape[1]), "height": int(img.shape[0]), "elapsed_s": round(time.monotonic() - t0, 3),

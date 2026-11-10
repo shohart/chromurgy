@@ -109,6 +109,55 @@ def normalize(recipe: dict, bundle: core.Bundle, wb_lookup=None) -> dict:
         r["extensions"] = ext
     else:
         r.pop("extensions", None)                            # an empty block is no block: one identity for "nothing set"
+
+    if "creative_color_grade" in r:
+        cg = r["creative_color_grade"]
+        if not isinstance(cg, dict) or "mode" not in cg:
+            raise RecipeError("INVALID_RECIPE", "creative_color_grade must have 'mode'")
+        if cg["mode"] == "none":
+            r["creative_color_grade"] = {"mode": "none"}
+        elif cg["mode"] == "preset":
+            pid = cg.get("preset_id")
+            from . import grades_catalog
+            if not pid or not grades_catalog.get_preset(pid):
+                raise RecipeError("UNKNOWN_COLOR_GRADE", f"preset {pid!r} not found in catalog")
+            r["creative_color_grade"] = {
+                "mode": "preset",
+                "preset_id": pid,
+                "preset_version": cg.get("preset_version", "1.0.0"),
+                "overrides": cg.get("overrides", {}),
+            }
+        else:
+            raise RecipeError("INVALID_RECIPE", f"creative_color_grade mode {cg['mode']!r} invalid")
+
+    if "frame_color_grade_overrides" in r:
+        fcos = r["frame_color_grade_overrides"]
+        if not isinstance(fcos, dict):
+            raise RecipeError("INVALID_RECIPE", "frame_color_grade_overrides must be an object")
+        clean_fcos: dict[str, dict] = {}
+        from . import grades_catalog
+        for fid, fval in fcos.items():
+            if not isinstance(fval, dict) or "mode" not in fval:
+                raise RecipeError("INVALID_RECIPE", f"frame_color_grade_overrides[{fid}] must have 'mode'")
+            if fval["mode"] == "none":
+                clean_fcos[fid] = {"mode": "none"}
+            elif fval["mode"] == "preset":
+                pid = fval.get("preset_id")
+                if not pid or not grades_catalog.get_preset(pid):
+                    raise RecipeError("UNKNOWN_COLOR_GRADE", f"frame {fid} preset {pid!r} not found")
+                clean_fcos[fid] = {
+                    "mode": "preset",
+                    "preset_id": pid,
+                    "preset_version": fval.get("preset_version", "1.0.0"),
+                    "overrides": fval.get("overrides", {}),
+                }
+            else:
+                raise RecipeError("INVALID_RECIPE", f"frame {fid} override mode {fval['mode']!r} invalid")
+        if clean_fcos:
+            r["frame_color_grade_overrides"] = clean_fcos
+        else:
+            r.pop("frame_color_grade_overrides", None)
+
     if bool(rd.get("width")) != bool(rd.get("height")):
         raise RecipeError("INVALID_RECIPE", "render.width and render.height go together")
     return r
@@ -328,11 +377,23 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
             v1["creative"] = {"version": VERSION_OPTICS, "optics": IMPLEMENTATION_VERSION, "seed": int(r["seed"]), **creative}
         else:
             v1["creative"] = {"version": VERSION, **creative}
+    if r.get("creative_color_grade"):
+        cg = r["creative_color_grade"]
+        if cg.get("mode") == "preset":
+            from . import grades, grades_catalog
+            base = grades_catalog.get_preset(cg["preset_id"])
+            if base:
+                resolved = copy.deepcopy(base)
+                if cg.get("overrides"):
+                    resolved["parameters"] = grades.merge_overrides(resolved.get("parameters", {}), cg["overrides"])
+                if cg.get("preset_version"):
+                    resolved["version"] = cg["preset_version"]
+                v1["color_grade"] = resolved
     return v1
 
 
 def with_frame_overrides(r: dict, asset_req: dict, wb_lookup=None) -> dict:
-    """Copy of a normalized recipe carrying this frame's crop, rotation, tone, and white-balance overrides."""
+    """Copy of a normalized recipe carrying this frame's crop, rotation, tone, white-balance, and color-grade overrides."""
     out = copy.deepcopy(r)
     ext = dict(out.get("extensions") or {})
     if "crop" in asset_req:
@@ -367,6 +428,17 @@ def with_frame_overrides(r: dict, asset_req: dict, wb_lookup=None) -> dict:
         wb = asset_req["white_balance"]
         if wb in ("daylight", "as-shot"):
             ext["white_balance"] = wb
+
+    # Per-frame color grade override
+    frame_id = asset_req.get("asset_id") or asset_req.get("frame_id")
+    fcos = out.get("frame_color_grade_overrides") or {}
+    cg_override = asset_req.get("creative_color_grade") or (fcos.get(frame_id) if frame_id else None)
+    if cg_override:
+        if cg_override.get("mode") == "none":
+            out["creative_color_grade"] = {"mode": "none"}
+        elif cg_override.get("mode") == "preset":
+            out["creative_color_grade"] = copy.deepcopy(cg_override)
+    out.pop("frame_color_grade_overrides", None)
 
     if ext:
         out["extensions"] = ext
