@@ -16,9 +16,11 @@
 <header class="top">
   <h1><span class="lamp" aria-hidden="true"></span>Chromurgy <span style="font-size:0.75em;opacity:0.65;font-weight:400;letter-spacing:0.12em">Darkroom</span></h1>
   <nav id="steps" aria-label="Steps"></nav>
+  <button id="btn_settings" class="ghost" hidden title="Darkroom and PhotoPrism settings">⚙ Settings</button>
   <button id="logout" class="ghost" hidden>Log out</button>
 </header>
 <main id="app"></main>
+<div id="modal_overlay" class="modal-backdrop" hidden></div>
 <div id="loader" hidden role="status" aria-live="polite"></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script src="/darkroom/static/darkroom.js" defer></script>

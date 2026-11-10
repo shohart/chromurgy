@@ -259,17 +259,240 @@ function baseRecipe(opts = {}) {
   return r;
 }
 
+/* ---------------- setup & onboarding ---------------- */
+function setupForm(status, isModal = false, onClose = null) {
+  const cfg = (status && status.config) || {};
+  const authOk = Boolean(status && status.auth_configured);
+
+  const inpPw = h("input", { type: "password", id: "setup_pw", placeholder: authOk ? "Leave blank to keep current password" : "At least 10 characters", autocomplete: "new-password" });
+  const inpDataDir = h("input", { type: "text", id: "setup_data_dir", value: cfg.data_dir || "", placeholder: "/mnt/theVault/mfilm or ~/.local/share/mfilm" });
+  const inpOrigDir = h("input", { type: "text", id: "setup_orig_dir", value: cfg.photoprism_originals_dir || "", placeholder: "/mnt/theVault/RAW_LIB/photos" });
+  const inpPpUrl = h("input", { type: "text", id: "setup_pp_url", value: cfg.photoprism_url || "", placeholder: "http://localhost:2342" });
+  const inpPpTok = h("input", { type: "password", id: "setup_pp_tok", placeholder: cfg.photoprism_token_set ? `Configured (${cfg.photoprism_token_preview || '***'}), leave blank to keep` : "PhotoPrism app password / token", autocomplete: "off" });
+  const inpWebFolder = h("input", { type: "text", id: "setup_web_folder", value: cfg.photoprism_web_folder || "Chromurgy/Developed", placeholder: "Chromurgy/Developed" });
+  const inpIdxTmpl = h("input", { type: "text", id: "setup_idx_tmpl", value: cfg.photoprism_index_template || "docker exec photoprism photoprism index {path}", placeholder: "docker exec photoprism photoprism index {path}" });
+  const inpJobs = h("input", { type: "number", min: "1", max: "16", id: "setup_jobs", value: String(cfg.worker_jobs || 4) });
+
+  const testStatus = h("div", { class: "test-res", id: "setup_test_res" });
+  const testBtn = h("button", { type: "button", class: "btn ghost", onclick: async () => {
+    testStatus.className = "test-res pending";
+    testStatus.textContent = "Testing PhotoPrism connection…";
+    try {
+      const res = await api("/setup/test-photoprism", {
+        method: "POST",
+        json: {
+          url: inpPpUrl.value.trim(),
+          token: inpPpTok.value.trim() || undefined,
+          originals_dir: inpOrigDir.value.trim() || undefined
+        }
+      });
+      if (res.ok) {
+        testStatus.className = "test-res ok";
+        const v = res.version ? ` (v${res.version})` : "";
+        testStatus.textContent = `✓ Connected to PhotoPrism${v} · Originals accessible`;
+      } else {
+        testStatus.className = "test-res err";
+        testStatus.textContent = `✗ ${res.error || "Connection failed"}`;
+      }
+    } catch (e) {
+      testStatus.className = "test-res err";
+      testStatus.textContent = `✗ ${e.message}`;
+    }
+  } }, "⚡ Test Connection");
+
+  const saveBtn = h("button", { type: "submit", class: "primary" }, isModal ? "Save Settings" : "Save & Open Darkroom");
+
+  const form = h("form", { onsubmit: async ev => {
+    ev.preventDefault();
+    const pwVal = inpPw.value.trim();
+    if (!authOk && (!pwVal || pwVal.length < 10)) {
+      toast("Operator password must be at least 10 characters");
+      inpPw.focus();
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    try {
+      const payload = {
+        password: pwVal || undefined,
+        data_dir: inpDataDir.value.trim() || undefined,
+        photoprism_url: inpPpUrl.value.trim() || undefined,
+        photoprism_token: inpPpTok.value.trim() || undefined,
+        photoprism_originals_dir: inpOrigDir.value.trim() || undefined,
+        photoprism_web_folder: inpWebFolder.value.trim() || undefined,
+        photoprism_index_template: inpIdxTmpl.value.trim() || undefined,
+        worker_jobs: parseInt(inpJobs.value, 10) || 1
+      };
+      const res = await api("/setup/save", { method: "POST", json: payload });
+      toast(res.message || "Settings saved");
+      if (isModal) {
+        if (onClose) onClose();
+      } else {
+        boot();
+      }
+    } catch (e) {
+      toast("Setup error: " + e.message);
+      saveBtn.disabled = false;
+      saveBtn.textContent = isModal ? "Save Settings" : "Save & Open Darkroom";
+    }
+  } },
+    h("div", { class: "setup-sec" },
+      h("h3", {}, "🔑 Operator Security"),
+      h("div", { class: "setup-field" },
+        h("label", { for: "setup_pw" }, authOk ? "Update Operator Password" : "Set Operator Password"),
+        inpPw,
+        h("div", { class: "hint" }, authOk ? "Leave blank to keep your current password." : "Required for accessing the darkroom (minimum 10 characters).")
+      )
+    ),
+    h("div", { class: "setup-sec" },
+      h("h3", {}, "📁 Storage & Digital Negatives"),
+      h("div", { class: "setup-field" },
+        h("label", { for: "setup_orig_dir" }, "PhotoPrism Originals / RAW Negatives Path"),
+        inpOrigDir,
+        h("div", { class: "hint" }, "Local or mount path to the directory where your RAW negatives are stored on this server.")
+      ),
+      h("div", { class: "setup-field" },
+        h("label", { for: "setup_data_dir" }, "Chromurgy Data Storage Path"),
+        inpDataDir,
+        h("div", { class: "hint" }, "Directory for Chromurgy internal database, render cache, and sessions.")
+      )
+    ),
+    h("div", { class: "setup-sec" },
+      h("h3", {}, "🌐 PhotoPrism Cloud Integration"),
+      h("div", { class: "setup-grid" },
+        h("div", { class: "setup-field" },
+          h("label", { for: "setup_pp_url" }, "PhotoPrism API URL"),
+          inpPpUrl,
+          h("div", { class: "hint" }, "HTTP endpoint of your PhotoPrism instance (e.g. http://localhost:2342).")
+        ),
+        h("div", { class: "setup-field" },
+          h("label", { for: "setup_pp_tok" }, "App Password / API Token"),
+          inpPpTok,
+          h("div", { class: "hint" }, "Generated in PhotoPrism: Settings → Users → App Passwords.")
+        )
+      ),
+      h("div", { class: "test-bar" }, testBtn, testStatus),
+      h("div", { class: "setup-grid", style: "margin-top:1rem" },
+        h("div", { class: "setup-field" },
+          h("label", { for: "setup_web_folder" }, "Default Output Subfolder"),
+          inpWebFolder,
+          h("div", { class: "hint" }, "Subdirectory under PhotoPrism originals for developed film renditions.")
+        ),
+        h("div", { class: "setup-field" },
+          h("label", { for: "setup_idx_tmpl" }, "Index Command Template"),
+          inpIdxTmpl,
+          h("div", { class: "hint" }, "Executed on server after publish to update PhotoPrism index ({path} is replaced with relative folder).")
+        )
+      )
+    ),
+    h("div", { class: "setup-sec" },
+      h("h3", {}, "⚡ Performance & Workers"),
+      h("div", { class: "setup-field" },
+        h("label", { for: "setup_jobs" }, "Worker Concurrency (Parallel Frames)"),
+        inpJobs,
+        h("div", { class: "hint" }, "Number of frames rendered simultaneously (each full-resolution frame takes ~0.9 GB RAM).")
+      )
+    ),
+    h("div", { class: "bar", style: "justify-content:flex-end;margin-top:1.5rem" },
+      isModal ? h("button", { type: "button", class: "ghost", onclick: onClose }, "Cancel") : null,
+      saveBtn
+    )
+  );
+  return form;
+}
+
+function showOnboarding(status) {
+  $("#logout").hidden = true;
+  if ($("#btn_settings")) $("#btn_settings").hidden = true;
+  $("#steps").replaceChildren();
+
+  const container = h("div", { class: "onboarding-wrap" },
+    h("div", { class: "onboarding-card" },
+      h("div", { class: "onboarding-hero" },
+        h("span", { class: "lamp", style: "width:1.2rem;height:1.2rem;margin:0 auto .5rem;display:block" }),
+        h("h2", {}, "Welcome to Chromurgy"),
+        h("p", {}, "Digital Darkroom for RAW Development & Film Simulation"),
+        h("p", { class: "onboarding-intro" },
+          "Let's configure your darkroom environment. Specify the location of your digital RAW negatives and connect your PhotoPrism instance to enable instant browsing and publishing.")
+      ),
+      setupForm(status, false, null)
+    )
+  );
+
+  $("#app").replaceChildren(container);
+}
+
+async function showSettingsModal() {
+  const overlay = $("#modal_overlay");
+  if (!overlay) return;
+
+  let st = null;
+  try {
+    st = await api("/setup/status");
+  } catch (e) {
+    toast("Failed to load settings: " + e.message);
+    return;
+  }
+
+  const close = () => {
+    overlay.hidden = true;
+    overlay.replaceChildren();
+  };
+
+  const dialog = h("div", { class: "modal-dialog" },
+    h("div", { class: "modal-head" },
+      h("h2", {}, "⚙ Darkroom & PhotoPrism Settings"),
+      h("button", { type: "button", class: "ghost", onclick: close, "aria-label": "Close" }, "✕")
+    ),
+    h("div", { class: "modal-body" },
+      setupForm(st, true, close)
+    )
+  );
+
+  overlay.replaceChildren(dialog);
+  overlay.hidden = false;
+  overlay.onclick = e => { if (e.target === overlay) close(); };
+}
+
 /* ---------------- login ---------------- */
-function showLogin() {
-  $("#logout").hidden = true; $("#steps").replaceChildren();
+async function showLogin() {
+  $("#logout").hidden = true;
+  if ($("#btn_settings")) $("#btn_settings").hidden = true;
+  $("#steps").replaceChildren();
+
+  let setupSt = null;
+  try {
+    setupSt = await api("/setup/status");
+  } catch (e) {}
+
+  if (setupSt && setupSt.onboarding_needed) {
+    showOnboarding(setupSt);
+    return;
+  }
+
   const pw = h("input", { type: "password", id: "pw", autocomplete: "current-password", required: true });
   const form = h("form", { class: "step login", onsubmit: async ev => {
     ev.preventDefault();
-    try { await api("/login", { method: "POST", json: { password: pw.value } }); boot(); }
-    catch (e) { toast(e.message); }
-  } }, h("h2", {}, "Safelight on"), h("label", { for: "pw" }, "Operator password"), pw,
-    h("div", { class: "bar" }, h("button", { class: "primary" }, "Enter the darkroom")));
-  $("#app").replaceChildren(form); pw.focus();
+    try {
+      await api("/login", { method: "POST", json: { password: pw.value } });
+      boot();
+    } catch (e) {
+      if (e.code === "LOGIN_NOT_CONFIGURED") {
+        if (setupSt) showOnboarding(setupSt);
+        else toast(e.message);
+      } else {
+        toast(e.message);
+      }
+    }
+  } },
+    h("h2", {}, "Safelight on"),
+    h("label", { for: "pw" }, "Operator password"), pw,
+    h("div", { class: "bar" },
+      h("button", { class: "primary" }, "Enter the darkroom"),
+      h("button", { type: "button", class: "ghost", style: "font-size:.78rem;margin-left:auto",
+                   onclick: () => showOnboarding(setupSt || { config: {} }) }, "⚙ Setup")));
+  $("#app").replaceChildren(form);
+  pw.focus();
 }
 
 /* ---------------- layout ---------------- */
@@ -354,6 +577,11 @@ async function boot() {
   try { const c = await api("/combos"); S.combos = c.items || []; } catch (e) { S.combos = []; }
   if (!S.film) S.film = S.catalog.films.find(f => f.id === "portra400") ? "portra400" : S.catalog.films[0].id;
   $("#logout").hidden = false;
+  const btnSettings = $("#btn_settings");
+  if (btnSettings) {
+    btnSettings.hidden = false;
+    btnSettings.onclick = () => showSettingsModal();
+  }
   $("#steps").replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1), onclick: () => expandStep(i + 1) }, h("b", {}, i + 1), t)));
   const left = h("div", { class: "pane-left", id: "leftPane" },
     step(1, "Source material", "RAW only · originals are never modified", materialPanel()),

@@ -44,7 +44,7 @@ class ApiError(Exception):
         self.status, self.code, self.detail, self.extra = status, code, detail, extra
 
 
-def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
+def create_app(store: Store, cfg: config_mod.Config | None = None, config_path: Path | None = None) -> FastAPI:
     store.init()
     cfg = cfg or config_mod.Config()
     @contextlib.asynccontextmanager
@@ -64,6 +64,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
     except core.CoreError:
         pass
     app.state.store, app.state.cfg = store, cfg
+    app.state.config_path = config_path or config_mod.default_config_path()
     wb_lookup = wbmod.lookup(store.root)
     wb_users = wbmod.UserProfiles(store.root)
     def get_lane() -> preview.PreviewLane:          # started on first use: spawning costs a process
@@ -135,10 +136,148 @@ def create_app(store: Store, cfg: config_mod.Config | None = None) -> FastAPI:
     def readyz():
         try:
             b = engine.current_bundle()
+            onboarding_marker = store.root / "web" / "onboarding_done"
+            auth_ok = auth.configured(store)
+            pp_ok = bool(cfg.photoprism.url and cfg.photoprism.token_file and cfg.photoprism.token_file.is_file())
+            onboarding_needed = not (auth_ok and (onboarding_marker.is_file() or pp_ok))
             return {"status": "ok", "film_core": core.core_version(), "films": len(b.keys),
-                    "login_configured": auth.configured(store)}
+                    "login_configured": auth_ok, "onboarding_needed": onboarding_needed}
         except core.CoreError as e:
             return JSONResponse({"status": "unavailable", "error_code": e.code}, status_code=503)
+
+    # ---- setup / onboarding --------------------------------------------------------------------
+    @app.get(f"{API}/setup/status")
+    def setup_status():
+        onboarding_marker = store.root / "web" / "onboarding_done"
+        auth_ok = auth.configured(store)
+        pp_ok = bool(cfg.photoprism.url and cfg.photoprism.token_file and cfg.photoprism.token_file.is_file())
+        onboarding_needed = not (auth_ok and (onboarding_marker.is_file() or pp_ok))
+        token_exists = bool(cfg.photoprism.token_file and cfg.photoprism.token_file.is_file())
+        token_preview = ""
+        if token_exists:
+            try:
+                raw_tok = cfg.photoprism.token_file.read_text().strip()
+                if raw_tok:
+                    token_preview = raw_tok[:3] + "•••" + raw_tok[-2:] if len(raw_tok) > 6 else "••••••"
+            except Exception:
+                token_preview = "••••••"
+
+        active_config_path = getattr(app.state, "config_path", None) or config_mod.default_config_path()
+        return {
+            "onboarding_needed": onboarding_needed,
+            "auth_configured": auth_ok,
+            "photoprism_configured": pp_ok,
+            "config_path": str(active_config_path),
+            "config": {
+                "data_dir": str(cfg.data_dir),
+                "photoprism_url": cfg.photoprism.url or "",
+                "photoprism_token_set": token_exists,
+                "photoprism_token_preview": token_preview,
+                "photoprism_originals_dir": str(cfg.photoprism.originals_dir or ""),
+                "photoprism_export_dir": str(cfg.photoprism.export_dir or cfg.photoprism.originals_dir or ""),
+                "photoprism_web_folder": cfg.photoprism.web_folder or "Chromurgy/Developed",
+                "photoprism_index_template": " ".join(cfg.photoprism.index_template) if cfg.photoprism.index_template else "docker exec photoprism photoprism index {path}",
+                "worker_jobs": cfg.jobs or 1
+            }
+        }
+
+    @app.post(f"{API}/setup/test-photoprism")
+    async def setup_test_pp(request: Request):
+        try:
+            body = json.loads(await request.body()) or {}
+        except ValueError:
+            body = {}
+        url = body.get("url") or (cfg.photoprism.url or "")
+        token = body.get("token")
+        if not token and cfg.photoprism.token_file and cfg.photoprism.token_file.is_file():
+            try:
+                token = cfg.photoprism.token_file.read_text().strip()
+            except Exception:
+                token = None
+        orig_dir = body.get("originals_dir") or (cfg.photoprism.originals_dir or "")
+        return config_mod.test_photoprism_connection(url, token=token, originals_dir=orig_dir)
+
+    @app.post(f"{API}/setup/save")
+    async def setup_save(request: Request, response: Response, c=Depends(conn)):
+        try:
+            body = json.loads(await request.body()) or {}
+        except ValueError:
+            raise ApiError(400, "BAD_REQUEST", "JSON body required")
+
+        auth_ok = auth.configured(store)
+        tok = None
+        if auth_ok:
+            tok = session(request, request.headers.get("Authorization"), c)
+
+        pwd = (body.get("password") or "").strip()
+        if not auth_ok:
+            if not pwd or len(pwd) < auth.MIN_LEN:
+                raise ApiError(400, "WEAK_PASSWORD", f"Operator password must have at least {auth.MIN_LEN} characters")
+            auth.set_password(store, pwd)
+            tok = auth.new_session(c)
+            response.set_cookie(COOKIE, tok, httponly=True, samesite="strict", secure=request.url.scheme == "https",
+                                max_age=auth.SESSION_HOURS * 3600, path="/")
+        elif pwd:
+            if len(pwd) < auth.MIN_LEN:
+                raise ApiError(400, "WEAK_PASSWORD", f"Operator password must have at least {auth.MIN_LEN} characters")
+            auth.set_password(store, pwd)
+
+        active_config_path = getattr(app.state, "config_path", None) or config_mod.default_config_path()
+        pp_token = (body.get("photoprism_token") or "").strip()
+        if pp_token:
+            token_file = cfg.photoprism.token_file or (active_config_path.parent / "photoprism.token")
+            token_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = token_file.with_name(f".{token_file.name}.tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(pp_token)
+            os.replace(tmp, token_file)
+            cfg.photoprism.token_file = token_file
+
+        if "data_dir" in body and str(body["data_dir"]).strip():
+            cfg.data_dir = Path(os.path.expanduser(str(body["data_dir"]).strip()))
+
+        pp_url = (body.get("photoprism_url") or "").strip()
+        if pp_url:
+            if not pp_url.startswith("http://") and not pp_url.startswith("https://"):
+                pp_url = "http://" + pp_url
+            cfg.photoprism.url = pp_url.rstrip("/")
+
+        orig_dir = (body.get("photoprism_originals_dir") or "").strip()
+        if orig_dir:
+            cfg.photoprism.originals_dir = Path(os.path.expanduser(orig_dir))
+
+        exp_dir = (body.get("photoprism_export_dir") or "").strip()
+        if exp_dir:
+            cfg.photoprism.export_dir = Path(os.path.expanduser(exp_dir))
+        elif orig_dir:
+            cfg.photoprism.export_dir = Path(os.path.expanduser(orig_dir))
+
+        web_folder = (body.get("photoprism_web_folder") or "").strip()
+        if web_folder:
+            cfg.photoprism.web_folder = web_folder
+
+        idx_tmpl = (body.get("photoprism_index_template") or "").strip()
+        if idx_tmpl:
+            import shlex
+            cfg.photoprism.index_template = shlex.split(idx_tmpl)
+
+        jobs = body.get("worker_jobs")
+        if jobs is not None:
+            try:
+                jobs_int = int(jobs)
+                if jobs_int >= 1:
+                    cfg.jobs = jobs_int
+            except (ValueError, TypeError):
+                pass
+
+        config_mod.save(active_config_path, cfg)
+
+        onboarding_marker = store.root / "web" / "onboarding_done"
+        onboarding_marker.parent.mkdir(parents=True, exist_ok=True)
+        onboarding_marker.touch()
+
+        return {"ok": True, "message": "Configuration saved successfully", "authenticated": bool(tok)}
 
     # ---- login ---------------------------------------------------------------------------------
     @app.post(f"{API}/login")
@@ -985,13 +1124,14 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     import uvicorn
-    ap = argparse.ArgumentParser(prog="mfilm-web")
+    ap = argparse.ArgumentParser(prog="chromurgy-web")
     ap.add_argument("--config")
     ap.add_argument("--data-dir")
     ap.add_argument("--host", default="127.0.0.1", help="bind address (LAN only unless behind an HTTPS proxy)")
     ap.add_argument("--port", type=int, default=8766)
     a = ap.parse_args(argv)
-    cfg = config_mod.load(a.config)
-    store = Store(Path(a.data_dir or os.environ.get("MFILM_DATA_DIR") or cfg.data_dir))
-    uvicorn.run(create_app(store, cfg), host=a.host, port=a.port, log_level="info", access_log=False)
+    cfg_path = Path(a.config).resolve() if a.config else config_mod.default_config_path()
+    cfg = config_mod.load(cfg_path)
+    store = Store(Path(a.data_dir or os.environ.get("CHROMURGY_DATA_DIR") or os.environ.get("MFILM_DATA_DIR") or cfg.data_dir))
+    uvicorn.run(create_app(store, cfg, config_path=cfg_path), host=a.host, port=a.port, log_level="info", access_log=False)
     return 0
