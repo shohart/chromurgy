@@ -121,10 +121,14 @@ def normalize(recipe: dict, bundle: core.Bundle, wb_lookup=None) -> dict:
             from . import grades_catalog
             if not pid or not grades_catalog.get_preset(pid):
                 raise RecipeError("UNKNOWN_COLOR_GRADE", f"preset {pid!r} not found in catalog")
+            st = float(cg.get("strength", 1.0))
+            if st < 0.0:
+                raise RecipeError("INVALID_RECIPE", "creative_color_grade.strength must be >= 0")
             r["creative_color_grade"] = {
                 "mode": "preset",
                 "preset_id": pid,
                 "preset_version": cg.get("preset_version", "1.0.0"),
+                "strength": st,
                 "overrides": cg.get("overrides", {}),
             }
         else:
@@ -145,10 +149,14 @@ def normalize(recipe: dict, bundle: core.Bundle, wb_lookup=None) -> dict:
                 pid = fval.get("preset_id")
                 if not pid or not grades_catalog.get_preset(pid):
                     raise RecipeError("UNKNOWN_COLOR_GRADE", f"frame {fid} preset {pid!r} not found")
+                st = float(fval.get("strength", 1.0))
+                if st < 0.0:
+                    raise RecipeError("INVALID_RECIPE", f"frame {fid} override strength must be >= 0")
                 clean_fcos[fid] = {
                     "mode": "preset",
                     "preset_id": pid,
                     "preset_version": fval.get("preset_version", "1.0.0"),
+                    "strength": st,
                     "overrides": fval.get("overrides", {}),
                 }
             else:
@@ -388,6 +396,7 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
                     resolved["parameters"] = grades.merge_overrides(resolved.get("parameters", {}), cg["overrides"])
                 if cg.get("preset_version"):
                     resolved["version"] = cg["preset_version"]
+                resolved["strength"] = float(cg.get("strength", 1.0))
                 v1["color_grade"] = resolved
     return v1
 

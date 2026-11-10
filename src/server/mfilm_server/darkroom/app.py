@@ -1224,6 +1224,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None, config_path: 
                 "mode": "preset",
                 "preset_id": global_sel["preset_id"],
                 "preset_version": global_sel.get("preset_version", "1.0.0"),
+                "strength": float(global_sel.get("strength", 1.0)),
                 "overrides": global_sel.get("overrides", {}),
             }
         if not preserve:
@@ -1260,6 +1261,7 @@ def create_app(store: Store, cfg: config_mod.Config | None = None, config_path: 
                 "mode": "preset",
                 "preset_id": body["preset_id"],
                 "preset_version": body.get("preset_version", "1.0.0"),
+                "strength": float(body.get("strength", 1.0)),
                 "overrides": body.get("overrides", {}),
             }
         fcos[frame_id] = override

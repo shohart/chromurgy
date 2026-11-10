@@ -327,6 +327,7 @@
       "mode": {"const": "preset"},
       "preset_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
       "preset_version": {"type": "string", "minLength": 1},
+      "strength": {"type": "number", "minimum": 0.0},
       "overrides": {"type": "object"}
      },
      "additionalProperties": false
@@ -352,6 +353,7 @@
        "mode": {"const": "preset"},
        "preset_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
        "preset_version": {"type": "string", "minLength": 1},
+       "strength": {"type": "number", "minimum": 0.0},
        "overrides": {"type": "object"}
       },
       "additionalProperties": false

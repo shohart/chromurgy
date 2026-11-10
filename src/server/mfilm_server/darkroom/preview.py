@@ -171,6 +171,7 @@ def _render(job: dict) -> dict:
         info = {"scanner_ev": None if scanner is None else round(scanner, 4)}
         if v1.get("color_grade"):
             info["effective_grade"] = v1["color_grade"].get("id")
+            info["effective_grade_strength"] = v1["color_grade"].get("strength", 1.0)
         if report:
             info["optics_sources"] = report
     meta = {"width": int(img.shape[1]), "height": int(img.shape[0]), "elapsed_s": round(time.monotonic() - t0, 3),

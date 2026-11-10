@@ -324,7 +324,7 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
         "recipe_schema_version": recipe.get("schema_version", 1), "recipe": recipe, "grain_seed": f"{seed:016x}",
         "raw_adapter_version": RAW_ADAPTER_VERSION, "demosaic_mode": recipe.get("demosaic_mode", "reference"),
         "wb_mode": recipe.get("white_balance_mode", "as-shot"), "scanner_ev": round(scanner_ev, 4),
-        "lens_correction": lens_info, "creative": recipe.get("creative"), "color_grade": (recipe.get("color_grade") or {}).get("id"), "crop": recipe.get("crop"), "tone": recipe.get("tone"), "wb_profile": recipe.get("wb_profile"),
+        "lens_correction": lens_info, "creative": recipe.get("creative"), "color_grade": (recipe.get("color_grade") or {}).get("id"), "color_grade_strength": (recipe.get("color_grade") or {}).get("strength", 1.0) if recipe.get("color_grade") else None, "crop": recipe.get("crop"), "tone": recipe.get("tone"), "wb_profile": recipe.get("wb_profile"),
         "source_width": int(lin.shape[1]), "source_height": int(lin.shape[0]),
         "output_width": out_w, "output_height": out_h, "jpeg_quality": int(spec.get("jpeg_quality", 92)),
         "warning": warning,

@@ -253,6 +253,7 @@ function recipe(withCrop = true) {
       mode: "preset",
       preset_id: effGrade.preset_id,
       preset_version: effGrade.preset_version || "1.0.0",
+      strength: effGrade.strength !== undefined ? effGrade.strength : 1.0,
       overrides: effGrade.overrides || {},
     };
   } else if (effGrade && effGrade.mode === "none") {
@@ -278,6 +279,7 @@ function baseJobRecipe() {
       mode: "preset",
       preset_id: S.colorGrade.preset_id,
       preset_version: S.colorGrade.preset_version || "1.0.0",
+      strength: S.colorGrade.strength !== undefined ? S.colorGrade.strength : 1.0,
       overrides: S.colorGrade.overrides || {},
     };
   } else {
@@ -1920,6 +1922,13 @@ function syncControls() {
   renderLooks(); renderFilms(); renderFx(); renderGrades(); renderFrameGrade();
   if ($("#strength")) { $("#strength").disabled = S.look === "neutral"; $("#strength").value = Math.round(S.strength * 100); if ($("#lookv")) $("#lookv").textContent = Math.round(S.strength * 100) + "%"; }
   if ($("#fxstrength")) { $("#fxstrength").value = Math.round(S.fxStrength * 100); $("#fxv").textContent = S.fxStrength.toFixed(2); }
+  if ($("#gradestrength")) {
+    const isNone = !S.colorGrade || S.colorGrade.mode === "none";
+    const st = (S.colorGrade && S.colorGrade.strength !== undefined) ? S.colorGrade.strength : 1.0;
+    $("#gradestrength").disabled = isNone;
+    $("#gradestrength").value = Math.round(st * 100);
+    if ($("#gradev")) $("#gradev").textContent = Math.round(st * 100) + "%";
+  }
   ["grain", "halation", "softness"].forEach(k => {
     const el = $("#sl_" + k), val = $("#v_" + k);
     if (el) el.value = Math.round((S[k] !== undefined ? S[k] : 1) * 100);
@@ -1942,6 +1951,7 @@ let userPresets = [], activeUserPreset = null;
 function snapshotState() {
   return { v: PRESET_V, look: S.look, strength: S.strength, film: S.film, grain: S.grain, halation: S.halation, softness: S.softness,
     fxPreset: S.fxPreset, fx: [...S.fx], fxStrength: S.fxStrength, policy: S.policy, vpolicy: S.vpolicy, comboPreset: S.comboPreset, fxParams: { ...S.fxParams }, activePreset: S.activePreset,
+    colorGrade: S.colorGrade ? { ...S.colorGrade } : { mode: "none" },
     tone: { ...S.tone }, wbSel: S.wbSel, wbCustom: { ...S.wbCustom }, seed: S.seed };
 }
 function canon(x) {
@@ -1967,6 +1977,8 @@ function applyPresetState(st, name) {
   S.comboPreset = st.comboPreset || null;
   S.fxParams = (st.fxParams && typeof st.fxParams === "object") ? { ...st.fxParams } : {};
   S.activePreset = st.activePreset || null;
+  S.colorGrade = (st.colorGrade && typeof st.colorGrade === "object") ? { ...st.colorGrade } : { mode: "none" };
+  saveColorGrade();
   if (st.tone) {
     Object.assign(S.baseTone, { brightness: 0, contrast: 0, develop: 1, filter: "none", filterStrength: 1 }, st.tone);
   } else {
@@ -2032,7 +2044,45 @@ function gradesPanel() {
   const cardsContainer = h("div", { class: "cards", id: "gradecards" });
   const overridesBar = h("div", { id: "grade_overrides_bar", style: "margin-top:.5rem;font-size:.78rem", class: "dim" });
 
-  return h("div", {}, chips, search, overridesBar, cardsContainer);
+  const curStrength = (S.colorGrade && S.colorGrade.strength !== undefined) ? S.colorGrade.strength : 1.0;
+  const isNone = !S.colorGrade || S.colorGrade.mode === "none";
+  const strengthInp = h("input", {
+    type: "range",
+    id: "gradestrength",
+    min: 0,
+    max: 400,
+    value: Math.round(curStrength * 100),
+    disabled: isNone,
+    "aria-label": "Grade intensity",
+    title: "Double-click resets to 100%",
+    ondblclick: e => {
+      e.target.value = 100;
+      if (S.colorGrade && S.colorGrade.mode === "preset") {
+        S.colorGrade.strength = 1.0;
+        saveColorGrade();
+      }
+      if ($("#gradev")) $("#gradev").textContent = "100%";
+      schedulePreview(true);
+    },
+    oninput: e => {
+      const val = e.target.value / 100;
+      if (S.colorGrade && S.colorGrade.mode === "preset") {
+        S.colorGrade.strength = val;
+        saveColorGrade();
+      }
+      if ($("#gradev")) $("#gradev").textContent = Math.round(val * 100) + "%";
+      schedulePreview(true);
+    }
+  });
+
+  const controls = h("div", { class: "grid2", style: "margin-top:1rem" },
+    h("div", {},
+      h("label", { for: "gradestrength" }, "Grade intensity ", h("span", { id: "gradev", class: "val" }, Math.round(curStrength * 100) + "%")),
+      strengthInp
+    )
+  );
+
+  return h("div", {}, chips, search, overridesBar, cardsContainer, controls);
 }
 
 function gradeChipsSync() {
@@ -2084,6 +2134,7 @@ function renderGrades() {
     onclick: () => {
       S.colorGrade = { mode: "none" };
       saveColorGrade();
+      syncControls();
       renderGrades();
       renderFrameGrade();
       schedulePreview(true);
@@ -2107,15 +2158,18 @@ function renderGrades() {
           S.colorGrade = { mode: "none" };
           toast(`Color grade cleared: ${p.name}`);
         } else {
+          const oldStrength = (S.colorGrade && S.colorGrade.strength !== undefined) ? S.colorGrade.strength : 1.0;
           S.colorGrade = {
             mode: "preset",
             preset_id: p.id,
             preset_version: p.version || "1.0.0",
+            strength: oldStrength,
             overrides: {}
           };
           toast(`Applied grade: ${p.name}`);
         }
         saveColorGrade();
+        syncControls();
         renderGrades();
         renderFrameGrade();
         schedulePreview(true);
@@ -2198,6 +2252,42 @@ function renderFrameGrade() {
       tagsBox.textContent = "No color grade applied to this frame";
     }
   }
+
+  // Update frame grade intensity slider
+  const sBox = $("#frame_grade_slider_box");
+  const sInp = $("#sl_frame_gradestrength");
+  const sVal = $("#v_frame_gradestr");
+  if (sBox && sInp && sVal) {
+    if (!eff || eff.mode === "none") {
+      sBox.hidden = true;
+    } else {
+      sBox.hidden = false;
+      const st = eff.strength !== undefined ? eff.strength : 1.0;
+      sInp.value = Math.round(st * 100);
+      sVal.textContent = Math.round(st * 100) + "%";
+    }
+  }
+}
+
+function onFrameGradeStrengthChange(val) {
+  if (!S.current) return;
+  if (!S.frameGradeOverrides) S.frameGradeOverrides = {};
+  const curFo = S.frameGradeOverrides[S.current];
+  if (curFo && curFo.mode === "preset") {
+    curFo.strength = val;
+  } else if (!curFo && S.colorGrade && S.colorGrade.mode === "preset") {
+    S.frameGradeOverrides[S.current] = {
+      mode: "preset",
+      preset_id: S.colorGrade.preset_id,
+      preset_version: S.colorGrade.preset_version || "1.0.0",
+      strength: val,
+      overrides: {}
+    };
+  }
+  saveFrameGrades();
+  renderAssets();
+  renderFrameGrade();
+  schedulePreview(true);
 }
 
 function onFrameGradeChange(val) {
@@ -2210,10 +2300,14 @@ function onFrameGradeChange(val) {
   if (val === "__none__") {
     S.frameGradeOverrides[S.current] = { mode: "none" };
   } else {
+    const existingSt = (S.frameGradeOverrides[S.current] && S.frameGradeOverrides[S.current].strength !== undefined)
+      ? S.frameGradeOverrides[S.current].strength
+      : ((S.colorGrade && S.colorGrade.strength !== undefined) ? S.colorGrade.strength : 1.0);
     S.frameGradeOverrides[S.current] = {
       mode: "preset",
       preset_id: val,
       preset_version: "1.0.0",
+      strength: existingSt,
       overrides: {}
     };
   }
@@ -2534,6 +2628,20 @@ function adjustPanel() {
           gradeResetBtn
         ),
         h("div", { style: "margin-top:.25rem" }, gradeSel),
+        h("div", { id: "frame_grade_slider_box", style: "margin-top:.35rem", hidden: true },
+          h("label", { for: "sl_frame_gradestrength" }, "Grade intensity ", h("span", { id: "v_frame_gradestr", class: "val" }, "100%")),
+          h("input", {
+            type: "range",
+            id: "sl_frame_gradestrength",
+            min: 0,
+            max: 400,
+            value: 100,
+            "aria-label": "Frame grade intensity",
+            title: "Double-click resets to 100%",
+            ondblclick: () => onFrameGradeStrengthChange(1.0),
+            oninput: e => onFrameGradeStrengthChange(e.target.value / 100)
+          })
+        ),
         gradeStyleTags
       ),
       h("div", { class: "bar compact", style: "margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--line)" },

@@ -70,6 +70,7 @@ def resolve_effective_grade(
                 resolved["parameters"] = merge_overrides(resolved.get("parameters", {}), fo["overrides"])
             if fo.get("preset_version"):
                 resolved["version"] = fo["preset_version"]
+            resolved["strength"] = float(fo.get("strength", 1.0))
             return "individual", resolved
 
     # 2. Inherit from global grade
@@ -85,6 +86,7 @@ def resolve_effective_grade(
                 resolved["parameters"] = merge_overrides(resolved.get("parameters", {}), global_grade["overrides"])
             if global_grade.get("preset_version"):
                 resolved["version"] = global_grade["preset_version"]
+            resolved["strength"] = float(global_grade.get("strength", 1.0))
             return "inherited", resolved
 
     return "inherited", None
@@ -97,6 +99,7 @@ def effective_grade_hash(grade: dict[str, Any] | None) -> str:
     doc = {
         "id": grade.get("id"),
         "version": grade.get("version", "1.0.0"),
+        "strength": round(float(grade.get("strength", 1.0)), 4),
         "parameters": grade.get("parameters", {}),
     }
     return hashlib.sha256(canonical_json(doc)).hexdigest()
@@ -119,6 +122,7 @@ def effective_grade_summary(
             "mode": "none",
             "preset_id": None,
             "preset_version": None,
+            "strength": 0.0,
             "display_label": "None (this frame)" if is_override else "None — Inherited",
             "style_tags": [],
             "effective_grade_hash": effective_grade_hash(None),
@@ -132,6 +136,7 @@ def effective_grade_summary(
         "mode": "preset",
         "preset_id": grade["id"],
         "preset_version": grade.get("version", "1.0.0"),
+        "strength": float(grade.get("strength", 1.0)),
         "display_label": f"{grade['name']}{label_suffix}",
         "style_tags": grade.get("tags", []),
         "effective_grade_hash": effective_grade_hash(grade),
@@ -204,7 +209,12 @@ def apply_grade(img: np.ndarray, grade: dict[str, Any] | None) -> np.ndarray:
     if not params:
         return img
 
-    out = img.astype(np.float32, copy=True)
+    strength = float(grade.get("strength", 1.0))
+    if strength <= 1e-4:
+        return img
+
+    orig = img.astype(np.float32, copy=True)
+    out = orig.copy()
     g = params.get("global", {})
 
     # 1. Tone curve (RGB master)
@@ -328,5 +338,9 @@ def apply_grade(img: np.ndarray, grade: dict[str, Any] | None) -> np.ndarray:
             cur_sat = np.where(maxc > 1e-6, (maxc - minc) / np.maximum(maxc, 1e-6), 0.0)
             sat_mult = sat_mult * (1.0 + vibrance * (1.0 - cur_sat))
         out = luma[..., None] + (out - luma[..., None]) * np.maximum(0.0, sat_mult)[..., None]
+
+    if abs(strength - 1.0) > 1e-4:
+        delta = out - orig
+        out = orig + delta * strength
 
     return np.clip(out, 0.0, 1.0).astype(np.float32)

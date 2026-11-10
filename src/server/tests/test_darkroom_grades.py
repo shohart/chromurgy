@@ -394,3 +394,40 @@ def test_api_jobs_color_grades_overrides_flow(logged, store, base_recipe):
     assert eff1_reset.json()["preset_id"] == "moody-earth-portrait"
 
 
+def test_grade_strength_interpolation_and_amplification(bundle):
+    img = np.random.uniform(0.1, 0.9, (100, 100, 3)).astype(np.float32)
+    p = copy.deepcopy(grades_catalog.get_preset("warm-muted-matte"))
+
+    # 1. Strength 0.0 -> no effect
+    p_zero = {**p, "strength": 0.0}
+    out_zero = grades.apply_grade(img, p_zero)
+    np.testing.assert_allclose(out_zero, img, atol=1e-5)
+
+    # 2. Strength 1.0 -> standard grade
+    p_one = {**p, "strength": 1.0}
+    out_one = grades.apply_grade(img, p_one)
+    assert np.max(np.abs(out_one - img)) > 0.01
+
+    # 3. Strength 0.5 -> 50% blend
+    p_half = {**p, "strength": 0.5}
+    out_half = grades.apply_grade(img, p_half)
+    expected_half = np.clip(img + (out_one - img) * 0.5, 0.0, 1.0)
+    np.testing.assert_allclose(out_half, expected_half, atol=1e-5)
+
+    # 4. Strength 2.5 and 4.0 -> amplified intensity
+    p_high = {**p, "strength": 2.5}
+    out_high = grades.apply_grade(img, p_high)
+    expected_high = np.clip(img + (out_one - img) * 2.5, 0.0, 1.0)
+    np.testing.assert_allclose(out_high, expected_high, atol=1e-5)
+    assert out_high.min() >= 0.0 and out_high.max() <= 1.0
+
+    # 5. Recipe normalization with strength
+    r = json.loads((core.REPO / "contracts" / "v0.5" / "render-recipe-v2.example.json").read_text())
+    r["creative_color_grade"] = {"mode": "preset", "preset_id": "warm-muted-matte", "strength": 3.0}
+    norm_r = recipe2.normalize(r, bundle)
+    assert norm_r["creative_color_grade"]["strength"] == 3.0
+
+    v1 = recipe2.to_v1(norm_r)
+    assert v1["color_grade"]["strength"] == 3.0
+
+
