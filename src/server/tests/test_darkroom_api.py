@@ -254,6 +254,15 @@ def test_favicon_and_icons_served(client):
     assert r_manifest.status_code == 200
     assert "Chromurgy Darkroom" in r_manifest.text
 
+    r_sw = client.get("/darkroom/sw.js")
+    assert r_sw.status_code == 200
+    assert "Service-Worker-Allowed" in r_sw.headers
+    assert "chromurgy" in r_sw.text.lower()
+
+    r_root = client.get("/", follow_redirects=False)
+    assert r_root.status_code in (307, 308)
+    assert r_root.headers.get("location") == "/darkroom"
+
 
 def test_operator_presets_roundtrip(logged, client):
     P = f"{dapp.API}/presets"

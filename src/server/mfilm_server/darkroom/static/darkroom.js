@@ -3219,4 +3219,60 @@ window.addEventListener("wheel", e => {
   }
 }, { passive: false });
 
+/* ---------------- PWA & Service Worker ---------------- */
+let deferredPwaPrompt = null;
+
+function setupPwa() {
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/darkroom/sw.js", { scope: "/darkroom/" })
+        .then((reg) => {
+          reg.addEventListener("updatefound", () => {
+            const installing = reg.installing;
+            if (installing) {
+              installing.addEventListener("statechange", () => {
+                if (installing.state === "installed" && navigator.serviceWorker.controller) {
+                  console.log("[Chromurgy PWA] New version ready");
+                }
+              });
+            }
+          });
+        })
+        .catch((err) => {
+          console.warn("[Chromurgy PWA] Service Worker registration failed:", err);
+        });
+    });
+  }
+
+  const btnInstall = document.getElementById("btn_pwa_install");
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredPwaPrompt = e;
+    if (btnInstall) {
+      btnInstall.hidden = false;
+      btnInstall.onclick = async () => {
+        if (!deferredPwaPrompt) return;
+        btnInstall.disabled = true;
+        deferredPwaPrompt.prompt();
+        try {
+          const choice = await deferredPwaPrompt.userChoice;
+          if (choice && choice.outcome === "accepted") {
+            toast("Chromurgy installed successfully!");
+            btnInstall.hidden = true;
+          }
+        } catch (_) {}
+        deferredPwaPrompt = null;
+        btnInstall.disabled = false;
+      };
+    }
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredPwaPrompt = null;
+    if (btnInstall) btnInstall.hidden = true;
+    toast("Chromurgy is running as an installed application");
+  });
+}
+
+setupPwa();
 boot();

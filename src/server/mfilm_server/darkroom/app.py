@@ -19,7 +19,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from .. import config as config_mod
 from .. import core, db
@@ -102,14 +102,30 @@ def create_app(store: Store, cfg: config_mod.Config | None = None, config_path: 
             raise ApiError(503, e.code, e.detail) from None
 
     # ---- shell ---------------------------------------------------------------------------------
+    @app.get("/")
+    def root_redirect():
+        return RedirectResponse(url="/darkroom", status_code=307)
+
     @app.get("/darkroom")
     def ui():
         f = STATIC / "index.html"
         if not f.is_file():
             raise ApiError(404, "NO_UI", "static/index.html is missing")
         return FileResponse(f, media_type="text/html", headers={"Cache-Control": "no-store",
-                            "Content-Security-Policy": "default-src 'self'; img-src 'self' blob: data:; "
+                            "Content-Security-Policy": "default-src 'self'; worker-src 'self'; manifest-src 'self'; "
+                                                       "img-src 'self' blob: data:; "
                                                        "style-src 'self' 'unsafe-inline'"})
+
+    @app.api_route("/darkroom/sw.js", methods=["GET", "HEAD"])
+    @app.api_route("/sw.js", methods=["GET", "HEAD"])
+    def service_worker_file():
+        f = STATIC / "sw.js"
+        if f.is_file():
+            return FileResponse(f, media_type="application/javascript", headers={
+                "Cache-Control": "no-cache",
+                "Service-Worker-Allowed": "/darkroom/"
+            })
+        raise ApiError(404, "NOT_FOUND")
 
     @app.get("/darkroom/static/{name}")
     def static_file(name: str):

@@ -10,12 +10,18 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/darkroom/static/apple-touch-icon.png">
 <link rel="manifest" href="/darkroom/static/site.webmanifest">
 <meta name="theme-color" content="#120d0b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Chromurgy">
+<meta name="application-name" content="Chromurgy">
 <link rel="stylesheet" href="/darkroom/static/darkroom.css">
 </head>
 <body>
 <header class="top">
   <h1><span class="lamp" aria-hidden="true"></span>Chromurgy <span style="font-size:0.75em;opacity:0.65;font-weight:400;letter-spacing:0.12em">Darkroom</span></h1>
   <nav id="steps" aria-label="Steps"></nav>
+  <button id="btn_pwa_install" class="ghost" hidden title="Install Chromurgy as a desktop or mobile application">📲 Install App</button>
   <button id="btn_settings" class="ghost" hidden title="Darkroom and PhotoPrism settings">⚙ Settings</button>
   <button id="logout" class="ghost" hidden>Log out</button>
 </header>
