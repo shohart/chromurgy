@@ -82,6 +82,24 @@ const S = { catalog: null, assets: [], allSourceCount: 0, selected: new Set(), c
   colorGradeFilter: "",
   colorGradeQuery: "",
   frameGradeOverrides: JSON.parse(localStorage.getItem("mfilm.frame_grades") || "{}"),
+  studioMode: localStorage.getItem("mfilm.studio_mode") || "classic",
+  aiMode: localStorage.getItem("mfilm.ai_mode") || "pure",
+  aiAutoEnhance: true,
+  aiAutoEnhanceStrength: 1.0,
+  aiAutoEnhanceStyle: "standard",
+  aiStyleRef: false,
+  aiStyleRefStrength: 0.8,
+  aiStyleRefId: "warm_sunset",
+  aiStyleRefName: "Warm Sunset",
+  aiStyleRefThumb: "",
+  aiStyleRefPreserveSkin: true,
+  aiEngineEnabled: false,
+  aiEngineType: "rawnind",
+  aiChromaStrength: 0.6,
+  aiLumaStrength: 0.3,
+  aiDetailPreserve: 0.8,
+  aiUpscaleScale: 2,
+  aiUpscaleModel: "RealESRGAN_x2plus",
   autoAnalysis: {},
   aspect: "free", cropMode: false, cropRect: null, cropImg: null };
 const STEPS = ["Material", "Camera look", "Film stock", "Optical effects", "Color grades", "My presets"];
@@ -425,10 +443,41 @@ function recipe(withCrop = true) {
   }
   const tn = toneExt(); if (Object.keys(tn).length) r.extensions.tone = tn;
   const wp = wbExt(); if (wp) r.extensions.wb_profile = wp;
+  const ai = aiExt(); if (ai) r.extensions.ai = ai;
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
   if (withCrop && S.crops[S.current]) r.extensions.crop = S.crops[S.current];     // this frame's own framing
   if (withCrop && S.rotates[S.current]) r.extensions.rotate = normDeg(S.rotates[S.current]);
   return r;
+}
+function aiExt() {
+  if (S.studioMode !== "neural") return null;
+  const cfg = {
+    mode: S.aiMode || "pure",
+    auto_enhance: {
+      enabled: !!S.aiAutoEnhance,
+      strength: S.aiAutoEnhanceStrength !== undefined ? S.aiAutoEnhanceStrength : 1.0,
+      style: S.aiAutoEnhanceStyle || "standard",
+      model: "image_adaptive_3dlut"
+    },
+    style_reference: {
+      enabled: !!S.aiStyleRef,
+      strength: S.aiStyleRefStrength !== undefined ? S.aiStyleRefStrength : 1.0,
+      reference_id: S.aiStyleRefId || null,
+      preserve_skin: S.aiStyleRefPreserveSkin !== false,
+      model: "sa_lut"
+    },
+    neural_engine: {
+      enabled: !!S.aiEngineEnabled,
+      engine: S.aiEngineType || "rawnind",
+      chroma_strength: S.aiChromaStrength !== undefined ? S.aiChromaStrength : 0.6,
+      luma_strength: S.aiLumaStrength !== undefined ? S.aiLumaStrength : 0.3,
+      detail_preservation: S.aiDetailPreserve !== undefined ? S.aiDetailPreserve : 0.8,
+      upscale_scale: S.aiUpscaleScale || 2,
+      upscale_model: S.aiUpscaleModel || "RealESRGAN_x2plus"
+    }
+  };
+  const hasAny = cfg.auto_enhance.enabled || cfg.style_reference.enabled || cfg.neural_engine.enabled;
+  return hasAny ? cfg : null;
 }
 function baseJobRecipe() {
   const r = { schema_version: 2,
@@ -454,15 +503,22 @@ function baseJobRecipe() {
   }
   const tn = frameToneExt(S.baseTone); if (Object.keys(tn).length) r.extensions.tone = tn;
   const wp = frameWbExt(S.baseWbSel, S.baseWbCustom); if (wp) r.extensions.wb_profile = wp;
+  const ai = aiExt(); if (ai) r.extensions.ai = ai;
   if (S.width && S.height) { r.render.width = S.width; r.render.height = S.height; }
   return r;
 }
 function baseRecipe(opts = {}) {
   const r = recipe(true);
   if (r.extensions) delete r.extensions.tone;     // post-tone (brightness, contrast, develop, filter) is applied live on canvas
-  if (opts.noFilm) r.film = { id: "none", grain_scale: 1, halation_scale: 1, softness_scale: 1 };
-  if (opts.noFx) r.optical = { preset_id: "none", strength: 0, halation_policy: S.policy === "disabled" ? "disabled" : "film", stack: [] };
-  if (opts.noLook) r.camera_look = { id: "neutral", version: "1.0.0", strength: 1 };
+  if (S.studioMode === "neural" && S.aiMode === "pure") {
+    r.film = { id: "none", grain_scale: 1, halation_scale: 1, softness_scale: 1 };
+    r.camera_look = { id: "neutral", version: "1.0.0", strength: 1 };
+    r.optical = { preset_id: "none", strength: 0, halation_policy: "disabled", stack: [] };
+  } else {
+    if (opts.noFilm) r.film = { id: "none", grain_scale: 1, halation_scale: 1, softness_scale: 1 };
+    if (opts.noFx) r.optical = { preset_id: "none", strength: 0, halation_policy: S.policy === "disabled" ? "disabled" : "film", stack: [] };
+    if (opts.noLook) r.camera_look = { id: "neutral", version: "1.0.0", strength: 1 };
+  }
   return r;
 }
 
@@ -778,6 +834,32 @@ function step(n, title, hint, ...body) {
 
   return sec;
 }
+function updateTopNavSteps() {
+  const stepsNav = $("#steps");
+  if (!stepsNav) return;
+  if (S.studioMode === "neural") {
+    const nSteps = ["Material", "Neural Studio"];
+    stepsNav.replaceChildren(...nSteps.map((t, i) => h("a", { href: "#s" + (i + 1), onclick: () => expandStep(i + 1) }, h("b", {}, i + 1), t)));
+  } else {
+    stepsNav.replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1), onclick: () => expandStep(i + 1) }, h("b", {}, i + 1), t)));
+  }
+}
+
+function switchStudioMode(mode) {
+  S.studioMode = mode;
+  localStorage.setItem("mfilm.studio_mode", mode);
+  const btnClassic = $("#btn_mode_classic");
+  const btnNeural = $("#btn_mode_neural");
+  const classicCont = $("#classic_steps_container");
+  const neuralCont = $("#neural_steps_container");
+  if (btnClassic) btnClassic.className = "mode-tab" + (mode === "classic" ? " active" : "");
+  if (btnNeural) btnNeural.className = "mode-tab" + (mode === "neural" ? " active" : "");
+  if (classicCont) classicCont.hidden = (mode === "neural");
+  if (neuralCont) neuralCont.hidden = (mode !== "neural");
+  updateTopNavSteps();
+  schedulePreview(true);
+}
+
 async function boot() {
   try { S.catalog = await api("/catalog"); } catch (e) { if (e.status !== 401) toast(e.message); return; }
   try { S.wbl = await api("/wb-profiles"); } catch (e) { S.wbl = { builtin: [], imported: [] }; }
@@ -789,14 +871,38 @@ async function boot() {
     btnSettings.hidden = false;
     btnSettings.onclick = () => showSettingsModal();
   }
-  $("#steps").replaceChildren(...STEPS.map((t, i) => h("a", { href: "#s" + (i + 1), onclick: () => expandStep(i + 1) }, h("b", {}, i + 1), t)));
-  const left = h("div", { class: "pane-left", id: "leftPane" },
-    step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
+  updateTopNavSteps();
+  const modeBar = h("div", { class: "studio-mode-bar", role: "tablist" },
+    h("button", {
+      id: "btn_mode_classic",
+      class: "mode-tab" + (S.studioMode === "classic" ? " active" : ""),
+      onclick: () => switchStudioMode("classic")
+    }, "🎞 Classic Darkroom"),
+    h("button", {
+      id: "btn_mode_neural",
+      class: "mode-tab" + (S.studioMode === "neural" ? " active" : ""),
+      onclick: () => switchStudioMode("neural")
+    }, "🧠 Neural Studio")
+  );
+
+  const classicSteps = h("div", { id: "classic_steps_container", hidden: S.studioMode === "neural" },
     step(2, "Camera look", "independent of the camera that shot the frame", looksPanel()),
     step(3, "Film stock", `${S.catalog.films.length} profiles from the shared film engine`, filmPanel()),
     step(4, "Optical effects", "presets, bundles and individual operators", opticsPanel()),
     step(5, "Creative Color Grades", "VSCO, Instagram Classics, and finishing grades", gradesPanel()),
-    step(6, "My presets", "the whole setting — look, film, optics, adjustments — saved under a name", presetsPanel()));
+    step(6, "My presets", "the whole setting — look, film, optics, adjustments — saved under a name", presetsPanel())
+  );
+
+  const neuralSteps = h("div", { id: "neural_steps_container", hidden: S.studioMode !== "neural" },
+    step(2, "Neural Studio Processing", "Auto-Enhance, Reference Style Transfer, and Deep Sensor Engines", neuralStudioPanel())
+  );
+
+  const left = h("div", { class: "pane-left", id: "leftPane" },
+    modeBar,
+    step(1, "Source material", "RAW only · originals are never modified", materialPanel()),
+    classicSteps,
+    neuralSteps
+  );
   const tabBtnAdj = h("button", { id: "tab_btn_adjust", role: "tab", "aria-selected": "true", onclick: () => switchRightTab("adjust_dev") }, "✦ Adjust & Develop");
   const tabBtnJobs = h("button", { id: "tab_btn_jobs", role: "tab", "aria-selected": "false", onclick: () => switchRightTab("jobs") }, "⚙ Jobs & History");
   const rightTabs = h("div", { class: "right-tabs", role: "tablist" }, tabBtnAdj, tabBtnJobs);
@@ -2592,6 +2698,287 @@ function resetFrameGrade() {
   renderAssets();
   renderFrameGrade();
   schedulePreview(true);
+}
+
+const AI_SAMPLE_PRESETS = [
+  { id: "warm_sunset", name: "Warm Sunset", color: "#e07a5f", desc: "Golden hour warmth with lifted shadows" },
+  { id: "moody_film", name: "Moody Film", color: "#3d5a80", desc: "Deep cinematic blues and muted greens" },
+  { id: "tokyo_neon", name: "Tokyo Neon", color: "#b5179e", desc: "Vibrant magenta and teal contrast" },
+  { id: "nordic_teal", name: "Nordic Teal", color: "#2a9d8f", desc: "Clean, desaturated cool tones" },
+  { id: "vintage_sepia", name: "Vintage Sepia", color: "#d4a373", desc: "Warm monochrome nostalgic tone" },
+];
+
+function neuralStudioPanel() {
+  const pureBtn = h("button", {
+    type: "button",
+    class: "compat-pill" + (S.aiMode === "pure" ? " active" : ""),
+    onclick: () => setAiMode("pure")
+  }, "⚡ Pure AI Mode");
+  const hybridBtn = h("button", {
+    type: "button",
+    class: "compat-pill" + (S.aiMode === "hybrid" ? " active" : ""),
+    onclick: () => setAiMode("hybrid")
+  }, "🔀 Hybrid (AI + Film & Optics)");
+
+  const compatHelp = h("p", { class: "dim", style: "font-size:.76rem;margin:.4rem 0 0;line-height:1.4" },
+    S.aiMode === "pure"
+      ? "Pure AI Mode: Output is processed directly through neural models without classical film curves or optical diffusion."
+      : "Hybrid Mode: Neural models clean sensor noise and balance tones first, then selected Film Stocks and Optical Effects apply on top."
+  );
+
+  const compatBox = h("div", { class: "neural-compat-box" },
+    h("div", { class: "neural-compat-row" },
+      h("span", { style: "font-size:.82rem;font-weight:600" }, "Pipeline Workflow:"),
+      h("div", { class: "compat-pills" }, pureBtn, hybridBtn)
+    ),
+    compatHelp
+  );
+
+  function setAiMode(m) {
+    S.aiMode = m;
+    localStorage.setItem("mfilm.ai_mode", m);
+    pureBtn.className = "compat-pill" + (m === "pure" ? " active" : "");
+    hybridBtn.className = "compat-pill" + (m === "hybrid" ? " active" : "");
+    compatHelp.textContent = (m === "pure")
+      ? "Pure AI Mode: Output is processed directly through neural models without classical film curves or optical diffusion."
+      : "Hybrid Mode: Neural models clean sensor noise and balance tones first, then selected Film Stocks and Optical Effects apply on top.";
+    schedulePreview(true);
+  }
+
+  // --- Section 1: Auto Enhancement (Lightweight Model) ---
+  const aeToggle = h("input", {
+    type: "checkbox",
+    id: "ai_ae_enabled",
+    checked: S.aiAutoEnhance,
+    onchange: e => {
+      S.aiAutoEnhance = e.target.checked;
+      aeCard.className = "ai-section-card" + (S.aiAutoEnhance ? " active" : "");
+      schedulePreview(true);
+    }
+  });
+  const aeStyleSelect = h("select", {
+    id: "ai_ae_style",
+    style: "font-family:var(--mono);font-size:.78rem;padding:.2rem .4rem",
+    onchange: e => {
+      S.aiAutoEnhanceStyle = e.target.value;
+      schedulePreview(true);
+    }
+  },
+    h("option", { value: "standard", selected: S.aiAutoEnhanceStyle === "standard" }, "Standard / Natural Balance"),
+    h("option", { value: "vivid", selected: S.aiAutoEnhanceStyle === "vivid" }, "Vivid & Dynamic Range"),
+    h("option", { value: "portrait", selected: S.aiAutoEnhanceStyle === "portrait" }, "Soft Portrait (Skin-Aware)"),
+    h("option", { value: "cinematic", selected: S.aiAutoEnhanceStyle === "cinematic" }, "Cinematic Warmth")
+  );
+  const aeStrVal = h("span", { class: "ai-val-box" }, Math.round(S.aiAutoEnhanceStrength * 100) + "%");
+  const aeStrSlider = h("input", {
+    type: "range",
+    min: "0",
+    max: "100",
+    value: Math.round(S.aiAutoEnhanceStrength * 100),
+    oninput: e => {
+      S.aiAutoEnhanceStrength = parseFloat(e.target.value) / 100.0;
+      aeStrVal.textContent = e.target.value + "%";
+      schedulePreview(true);
+    }
+  });
+
+  const aeCard = h("div", { class: "ai-section-card" + (S.aiAutoEnhance ? " active" : "") },
+    h("div", { class: "ai-section-head" },
+      h("label", { class: "ai-section-title", style: "cursor:pointer" },
+        aeToggle,
+        h("span", {}, "1. Auto Enhancement"),
+        h("span", { class: "ai-badge" }, "3D LUT · ~500 KB · 3 ms")
+      )
+    ),
+    h("div", { class: "ai-control-group" },
+      h("div", { style: "display:flex;align-items:center;justify-content:space-between" },
+        h("label", { style: "font: .78rem var(--mono);color:var(--dim)" }, "Tonal Profile:"),
+        aeStyleSelect
+      ),
+      h("div", { class: "ai-slider-row" },
+        h("label", {}, "Intensity:"),
+        aeStrSlider,
+        aeStrVal
+      )
+    )
+  );
+
+  // --- Section 2: Style by Reference (Sample Matching) ---
+  const srToggle = h("input", {
+    type: "checkbox",
+    id: "ai_sr_enabled",
+    checked: S.aiStyleRef,
+    onchange: e => {
+      S.aiStyleRef = e.target.checked;
+      srCard.className = "ai-section-card" + (S.aiStyleRef ? " active" : "");
+      schedulePreview(true);
+    }
+  });
+  const srStrVal = h("span", { class: "ai-val-box" }, Math.round(S.aiStyleRefStrength * 100) + "%");
+  const srStrSlider = h("input", {
+    type: "range",
+    min: "0",
+    max: "100",
+    value: Math.round(S.aiStyleRefStrength * 100),
+    oninput: e => {
+      S.aiStyleRefStrength = parseFloat(e.target.value) / 100.0;
+      srStrVal.textContent = e.target.value + "%";
+      schedulePreview(true);
+    }
+  });
+  const srSkinCheck = h("input", {
+    type: "checkbox",
+    checked: S.aiStyleRefPreserveSkin,
+    onchange: e => {
+      S.aiStyleRefPreserveSkin = e.target.checked;
+      schedulePreview(true);
+    }
+  });
+
+  const refGallery = h("div", { class: "ref-gallery" },
+    ...AI_SAMPLE_PRESETS.map(p => {
+      const isSel = S.aiStyleRefId === p.id;
+      const card = h("div", {
+        class: "ref-thumb-card" + (isSel ? " selected" : ""),
+        onclick: () => {
+          S.aiStyleRefId = p.id;
+          S.aiStyleRefName = p.name;
+          refGallery.querySelectorAll(".ref-thumb-card").forEach(c => c.classList.remove("selected"));
+          card.classList.add("selected");
+          schedulePreview(true);
+        }
+      },
+        h("div", { class: "ref-placeholder", style: `background: linear-gradient(135deg, ${p.color} 0%, #150f0d 100%)` }, "✦"),
+        h("div", { class: "ref-thumb-label" }, p.name)
+      );
+      return card;
+    })
+  );
+
+  const srCard = h("div", { class: "ai-section-card" + (S.aiStyleRef ? " active" : "") },
+    h("div", { class: "ai-section-head" },
+      h("label", { class: "ai-section-title", style: "cursor:pointer" },
+        srToggle,
+        h("span", {}, "2. Style by Reference"),
+        h("span", { class: "ai-badge" }, "SA-LUT · 15 ms")
+      )
+    ),
+    h("div", { class: "ai-control-group" },
+      h("div", { style: "font: .78rem var(--mono);color:var(--dim)" }, "Choose style sample palette:"),
+      refGallery,
+      h("div", { class: "ai-slider-row" },
+        h("label", {}, "Transfer Strength:"),
+        srStrSlider,
+        srStrVal
+      ),
+      h("label", { style: "display:inline-flex;align-items:center;gap:.5rem;font:.78rem var(--mono);cursor:pointer" },
+        srSkinCheck,
+        "Preserve natural portrait skin tones"
+      )
+    )
+  );
+
+  // --- Section 3: Large Neural Engine (Advanced / Heavy Models) ---
+  const neToggle = h("input", {
+    type: "checkbox",
+    id: "ai_ne_enabled",
+    checked: S.aiEngineEnabled,
+    onchange: e => {
+      S.aiEngineEnabled = e.target.checked;
+      neCard.className = "ai-section-card" + (S.aiEngineEnabled ? " active" : "");
+      schedulePreview(true);
+    }
+  });
+
+  const neEngineSelect = h("select", {
+    id: "ai_ne_engine",
+    style: "font-family:var(--mono);font-size:.78rem;padding:.2rem .4rem",
+    onchange: e => {
+      S.aiEngineType = e.target.value;
+      schedulePreview(true);
+    }
+  },
+    h("option", { value: "rawnind", selected: S.aiEngineType === "rawnind" }, "RawNIND / NAFNet Sensor Denoise"),
+    h("option", { value: "neural_isp", selected: S.aiEngineType === "neural_isp" }, "Modular Neural ISP (RAW Reconstruction)"),
+    h("option", { value: "realesrgan", selected: S.aiEngineType === "realesrgan" }, "Real-ESRGAN Super-Resolution")
+  );
+
+  const chromaVal = h("span", { class: "ai-val-box" }, Math.round(S.aiChromaStrength * 100) + "%");
+  const chromaSlider = h("input", {
+    type: "range",
+    min: "0",
+    max: "100",
+    value: Math.round(S.aiChromaStrength * 100),
+    oninput: e => {
+      S.aiChromaStrength = parseFloat(e.target.value) / 100.0;
+      chromaVal.textContent = e.target.value + "%";
+      schedulePreview(true);
+    }
+  });
+
+  const lumaVal = h("span", { class: "ai-val-box" }, Math.round(S.aiLumaStrength * 100) + "%");
+  const lumaSlider = h("input", {
+    type: "range",
+    min: "0",
+    max: "100",
+    value: Math.round(S.aiLumaStrength * 100),
+    oninput: e => {
+      S.aiLumaStrength = parseFloat(e.target.value) / 100.0;
+      lumaVal.textContent = e.target.value + "%";
+      schedulePreview(true);
+    }
+  });
+
+  const detailVal = h("span", { class: "ai-val-box" }, Math.round(S.aiDetailPreserve * 100) + "%");
+  const detailSlider = h("input", {
+    type: "range",
+    min: "0",
+    max: "100",
+    value: Math.round(S.aiDetailPreserve * 100),
+    oninput: e => {
+      S.aiDetailPreserve = parseFloat(e.target.value) / 100.0;
+      detailVal.textContent = e.target.value + "%";
+      schedulePreview(true);
+    }
+  });
+
+  const neCard = h("div", { class: "ai-section-card" + (S.aiEngineEnabled ? " active" : "") },
+    h("div", { class: "ai-section-head" },
+      h("label", { class: "ai-section-title", style: "cursor:pointer" },
+        neToggle,
+        h("span", {}, "3. Large Neural Engine"),
+        h("span", { class: "ai-badge" }, "Tesla V100 · 16 GB")
+      )
+    ),
+    h("div", { class: "ai-control-group" },
+      h("div", { style: "display:flex;align-items:center;justify-content:space-between" },
+        h("label", { style: "font: .78rem var(--mono);color:var(--dim)" }, "Target Engine:"),
+        neEngineSelect
+      ),
+      h("div", { class: "ai-slider-row" },
+        h("label", {}, "Chroma Denoise:"),
+        chromaSlider,
+        chromaVal
+      ),
+      h("div", { class: "ai-slider-row" },
+        h("label", {}, "Luma Denoise:"),
+        lumaSlider,
+        lumaVal
+      ),
+      h("div", { class: "ai-slider-row" },
+        h("label", {}, "Detail Retention:"),
+        detailSlider,
+        detailVal
+      )
+    )
+  );
+
+  return h("div", {},
+    compatBox,
+    aeCard,
+    srCard,
+    neCard
+  );
 }
 
 function presetsPanel() {

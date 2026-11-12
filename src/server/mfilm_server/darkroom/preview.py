@@ -124,7 +124,8 @@ def _render(job: dict) -> dict:
     else:
         v1 = job["v1"]
         ckey = canonical_json({"sha": job["sha"], "wb": job["wb"], "rotate": job.get("rotate"), "crop": job.get("crop"),
-                               "edge": job["max_edge"], "wb_profile": v1.get("wb_profile"), "creative": v1.get("creative")}).decode()
+                               "edge": job["max_edge"], "wb_profile": v1.get("wb_profile"), "ai": v1.get("ai"),
+                               "creative": v1.get("creative")}).decode()
         cached = _CREATIVE_CACHE.get(ckey)
         report: dict = {}
         if cached is not None:
@@ -136,6 +137,9 @@ def _render(job: dict) -> dict:
             lin = _shrink(lin, job["max_edge"])
             if v1.get("wb_profile"):
                 lin = wb.apply(lin, v1["wb_profile"])
+            if v1.get("ai"):
+                from ..ai import apply_ai_pipeline
+                lin = apply_ai_pipeline(lin, v1["ai"])
             if v1.get("creative"):
                 lin = creative.apply_creative(lin, v1["creative"], salt=job["sha"], report=report)
             _cache_put(_CREATIVE_CACHE, ckey, (lin, report))

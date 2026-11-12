@@ -87,6 +87,7 @@ def normalize(recipe: dict, bundle: core.Bundle, wb_lookup=None) -> dict:
     ext = r.get("extensions") or {}
     _tone(ext)
     _wb_profile(ext, wb_lookup)
+    _ai(ext)
     if "crop" in ext:
         try:
             canon = cropping.normalize_crop(ext["crop"])
@@ -230,6 +231,26 @@ def _wb_profile(ext: dict, lookup) -> None:
         raise RecipeError("INVALID_WB_PROFILE", str(e)) from None
     if abs(max(ext["wb_profile"]["gains"]) - 1) < 1e-4 and abs(min(ext["wb_profile"]["gains"]) - 1) < 1e-4:
         ext.pop("wb_profile")                        # identity gains: the same picture as no profile
+
+
+def _ai(ext: dict) -> None:
+    """extensions.ai: AI Darkroom extension (Auto-Enhance, SA-LUT, Neural Engine)."""
+    if "ai" not in ext:
+        return
+    ai = ext["ai"]
+    if not isinstance(ai, dict):
+        raise RecipeError("INVALID_RECIPE", "extensions.ai must be an object")
+    from ..ai import AIRecipe
+    clean = AIRecipe.from_dict(ai).to_dict()
+    has_any = (
+        clean["auto_enhance"]["enabled"]
+        or clean["style_reference"]["enabled"]
+        or clean["neural_engine"]["enabled"]
+    )
+    if has_any:
+        ext["ai"] = clean
+    else:
+        ext.pop("ai", None)
 
 
 def _source_selection(eid: str, sel: dict) -> dict:
@@ -398,6 +419,10 @@ def to_v1(r: dict, *, width: int = 0, height: int = 0, quality: int | None = Non
                     resolved["version"] = cg["preset_version"]
                 resolved["strength"] = float(cg.get("strength", 1.0))
                 v1["color_grade"] = resolved
+    if ext.get("ai"):
+        v1["ai"] = copy.deepcopy(ext["ai"])
+        if ext["ai"].get("mode") == "pure":
+            v1["film_profile_id"] = "none"
     return v1
 
 
@@ -437,6 +462,14 @@ def with_frame_overrides(r: dict, asset_req: dict, wb_lookup=None) -> dict:
         wb = asset_req["white_balance"]
         if wb in ("daylight", "as-shot"):
             ext["white_balance"] = wb
+
+    if "ai" in asset_req:
+        ai_cfg = asset_req["ai"]
+        if ai_cfg:
+            ext["ai"] = copy.deepcopy(ai_cfg)
+            _ai(ext)
+        else:
+            ext.pop("ai", None)
 
     # Per-frame color grade override
     frame_id = asset_req.get("asset_id") or asset_req.get("frame_id")

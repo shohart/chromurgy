@@ -1411,3 +1411,8 @@ def main(argv: list[str] | None = None) -> int:
     store = Store(Path(a.data_dir or os.environ.get("CHROMURGY_DATA_DIR") or os.environ.get("MFILM_DATA_DIR") or cfg.data_dir))
     uvicorn.run(create_app(store, cfg, config_path=cfg_path), host=a.host, port=a.port, log_level="info", access_log=False)
     return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

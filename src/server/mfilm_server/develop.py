@@ -287,6 +287,9 @@ def develop(input_path: Path, output: Path, *, profile: str | None, recipe: dict
     if recipe.get("wb_profile"):                  # Web Darkroom white-balance profile (gains in sRGB-linear)
         from .darkroom import wb
         lin = wb.apply(lin, recipe["wb_profile"])
+    if recipe.get("ai"):                          # AI Darkroom processing (Auto-Enhance, SA-LUT, Neural Denoise)
+        from .ai import apply_ai_pipeline
+        lin = apply_ai_pipeline(lin, recipe["ai"])
     if recipe.get("creative"):                    # Web Darkroom optical effects + Camera Look, before the film stage
         from .darkroom import creative
         lin = creative.apply_creative(lin, recipe["creative"], salt=src_sha)

@@ -299,4 +299,180 @@ label{font:.75rem var(--mono);color:var(--dim);display:block;margin-bottom:.25re
 .modal-body{padding:1.4rem 1.6rem;overflow-y:auto;flex:1 1 auto}
 .modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:.8rem;padding:1rem 1.6rem;border-top:1px solid var(--line);background:rgba(14,11,10,.6)}
 
+/* Studio Mode Switcher & Neural Studio Panel */
+.studio-mode-bar {
+  display: flex;
+  gap: .5rem;
+  background: var(--panel2);
+  padding: .35rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin-bottom: .25rem;
+}
+.mode-tab {
+  flex: 1;
+  font: .82rem var(--mono);
+  padding: .55rem .8rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  transition: all .15s ease;
+}
+.mode-tab:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+.mode-tab.active {
+  background: var(--safe);
+  color: #120d0b;
+  font-weight: 700;
+  border-color: var(--safe);
+}
+.neural-compat-box {
+  background: rgba(23, 17, 15, 0.85);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: .85rem 1rem;
+  margin-bottom: 1rem;
+}
+.neural-compat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  margin-bottom: .45rem;
+}
+.compat-pills {
+  display: flex;
+  gap: .35rem;
+}
+.compat-pill {
+  font: .75rem var(--mono);
+  padding: .3rem .65rem;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--dim);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.compat-pill:hover {
+  color: var(--ink);
+  border-color: var(--safe2);
+}
+.compat-pill.active {
+  background: var(--safe2);
+  color: #120d0b;
+  border-color: var(--safe2);
+  font-weight: 600;
+}
+.ai-section-card {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: .9rem 1rem;
+  margin-bottom: .85rem;
+  transition: border-color .15s ease;
+}
+.ai-section-card.active {
+  border-color: rgba(255, 138, 61, 0.4);
+}
+.ai-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: .75rem;
+}
+.ai-section-title {
+  font-size: .95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+}
+.ai-badge {
+  font: .7rem var(--mono);
+  padding: .15rem .45rem;
+  border-radius: 3px;
+  background: rgba(255, 138, 61, 0.12);
+  color: var(--safe2);
+  border: 1px solid rgba(255, 138, 61, 0.25);
+  font-weight: 400;
+}
+.ai-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: .7rem;
+  margin-top: .6rem;
+}
+.ai-slider-row {
+  display: grid;
+  grid-template-columns: 8rem 1fr 3.2rem;
+  align-items: center;
+  gap: .6rem;
+  font: .78rem var(--mono);
+}
+.ai-slider-row label {
+  color: var(--ink);
+}
+.ai-slider-row input[type=range] {
+  width: 100%;
+  accent-color: var(--safe);
+}
+.ai-val-box {
+  text-align: right;
+  color: var(--safe2);
+  font-weight: 600;
+}
+.ref-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(75px, 1fr));
+  gap: .5rem;
+  margin: .6rem 0;
+}
+.ref-thumb-card {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: .25rem;
+  background: var(--panel);
+  cursor: pointer;
+  text-align: center;
+  transition: all .15s;
+}
+.ref-thumb-card:hover {
+  border-color: var(--safe2);
+}
+.ref-thumb-card.selected {
+  border-color: var(--safe);
+  box-shadow: 0 0 6px rgba(255, 74, 43, 0.4);
+}
+.ref-thumb-card img, .ref-thumb-card .ref-placeholder {
+  width: 100%;
+  aspect-ratio: 4/3;
+  object-fit: cover;
+  border-radius: 2px;
+  display: block;
+}
+.ref-placeholder {
+  background: linear-gradient(135deg, #2a1b16, #150f0d);
+  display: grid;
+  place-items: center;
+  font-size: .85rem;
+}
+.ref-thumb-label {
+  font: .68rem var(--mono);
+  color: var(--dim);
+  margin-top: .2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
 
